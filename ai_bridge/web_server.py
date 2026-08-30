@@ -53,6 +53,7 @@ from .openwa_integration import (
 )
 from .personality.persona_compiler import PersonaCompiler
 from .production_security import AuditLedger, CallPolicy, public_destination
+from .remote_link import RemoteLinkRelay, RemoteLinkSettings, load_remote_link_key
 from .runtime_config import ProviderConfig
 from .secure_storage import append_private_line, atomic_write_private, harden_private_file
 from .tasks.task_engine import TaskEngine
@@ -295,6 +296,11 @@ class PhoneAgentWebServer:
         self._active_process: asyncio.subprocess.Process | None = None
         self._dial_task: asyncio.Task[None] | None = None
         self._receptionist_process: asyncio.subprocess.Process | None = None
+        # When a handset tunnels in, the relay presents its gateway ports on
+        # this machine's loopback, so the voice host keeps talking to
+        # 127.0.0.1:8765-8768 and never learns the cable is gone.
+        self._remote_link_settings = RemoteLinkSettings.from_env()
+        self._remote_link: RemoteLinkRelay | None = None
         # A warm host does not exit when its call ends, so the end of a call is
         # learned from its published state transitions instead.
         self._warm_call_active = False
@@ -1455,7 +1461,8 @@ class PhoneAgentWebServer:
                 "call_state": self.call_state,
                 "phone_number": self.current_public_destination,
                 "clients_connected": len(self._ws_clients),
-                "inbound_receptionist": {
+                "remote_link": self.remote_link_status(),
+            "inbound_receptionist": {
                     "enabled": self.auto_answer_enabled,
                     "state": self.receptionist_state,
                 },
@@ -3388,12 +3395,49 @@ class PhoneAgentWebServer:
         await self._site.start()
         logger.info("PhoneAgent Studio is available at http://%s:%d", self.host, self.port)
 
+    async def _start_remote_link(self) -> None:
+        """Accept a handset that dials in instead of hanging off a cable."""
+
+        if not self._remote_link_settings.enabled:
+            return
+        try:
+            relay = RemoteLinkRelay(
+                load_remote_link_key(),
+                listen_host=self._remote_link_settings.listen_host,
+                listen_port=self._remote_link_settings.listen_port,
+            )
+            await relay.start()
+        except Exception:
+            # A relay that cannot bind must not stop a cabled phone from working.
+            logger.exception("remote link relay could not start")
+            return
+        self._remote_link = relay
+        logger.info(
+            "remote link relay accepting a handset on %s:%d",
+            self._remote_link_settings.listen_host,
+            self._remote_link_settings.listen_port,
+        )
+
+    def remote_link_status(self) -> dict[str, Any]:
+        if self._remote_link is None:
+            return {"enabled": self._remote_link_settings.enabled, "running": False}
+        return {
+            "enabled": True,
+            "running": True,
+            "listen_port": self._remote_link_settings.listen_port,
+            **self._remote_link.stats.snapshot(),
+        }
+
     async def _on_startup(self, app: web.Application) -> None:
+        await self._start_remote_link()
         await self._start_inbound_monitor()
         self._spawn_background_task(self._campaign_autopilot_loop())
 
     async def _on_shutdown(self, app: web.Application) -> None:
         self._shutting_down = True
+        if self._remote_link is not None:
+            await self._remote_link.close()
+            self._remote_link = None
         await self._stop_inbound_monitor()
         await self._terminate_owned_process()
         tasks = [task for task in self._background_tasks if not task.done()]

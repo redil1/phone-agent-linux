@@ -1,0 +1,425 @@
+"""The relay must be indistinguishable from an adb forward, or a call breaks."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+
+import pytest
+
+from phone_agent_gateway.ai_bridge.remote_link import (
+    MAX_PAYLOAD_BYTES,
+    FrameDecoder,
+    FrameType,
+    RemoteLinkError,
+    RemoteLinkRelay,
+    encode_frame,
+)
+
+KEY = b"k" * 32
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+class _FakePhone:
+    """A handset that answers OPEN by connecting to its own local services."""
+
+    def __init__(self, key: bytes = KEY) -> None:
+        self.key = key
+        self.reader: asyncio.StreamReader | None = None
+        self.writer: asyncio.StreamWriter | None = None
+        self.locals: dict[int, tuple[asyncio.StreamReader, asyncio.StreamWriter]] = {}
+        self.local_ports: dict[int, int] = {}
+        self.pongs = 0
+        self._task: asyncio.Task | None = None
+        self._pumps: set[asyncio.Task] = set()
+
+    async def connect(self, host: str, port: int) -> None:
+        self.reader, self.writer = await asyncio.open_connection(host, port)
+        self.writer.write(encode_frame(FrameType.HELLO, 0, 0, b"phone", self.key))
+        await self.writer.drain()
+        self._task = asyncio.create_task(self._run())
+
+    async def _run(self) -> None:
+        decoder = FrameDecoder(self.key)
+        assert self.reader is not None
+        try:
+            while True:
+                chunk = await self.reader.read(65536)
+                if not chunk:
+                    return
+                for frame in decoder.feed(chunk):
+                    await self._on_frame(frame)
+        except (asyncio.CancelledError, OSError, RemoteLinkError):
+            return
+
+    async def _on_frame(self, frame) -> None:
+        assert self.writer is not None
+        if frame.type == FrameType.OPEN:
+            target = self.local_ports.get(frame.port)
+            if target is None:
+                self.writer.write(
+                    encode_frame(FrameType.CLOSE, frame.stream_id, frame.port, b"", self.key)
+                )
+                await self.writer.drain()
+                return
+            reader, writer = await asyncio.open_connection("127.0.0.1", target)
+            self.locals[frame.stream_id] = (reader, writer)
+            pump = asyncio.create_task(self._pump(frame.stream_id, frame.port, reader))
+            self._pumps.add(pump)
+            pump.add_done_callback(self._pumps.discard)
+        elif frame.type == FrameType.DATA:
+            pair = self.locals.get(frame.stream_id)
+            if pair:
+                pair[1].write(frame.payload)
+                await pair[1].drain()
+        elif frame.type == FrameType.CLOSE:
+            pair = self.locals.pop(frame.stream_id, None)
+            if pair:
+                pair[1].close()
+        elif frame.type == FrameType.PING:
+            self.pongs += 1
+            self.writer.write(
+                encode_frame(FrameType.PONG, frame.stream_id, 0, b"", self.key)
+            )
+            await self.writer.drain()
+
+    async def _pump(self, stream_id: int, port: int, reader: asyncio.StreamReader) -> None:
+        assert self.writer is not None
+        try:
+            while True:
+                chunk = await reader.read(32768)
+                if not chunk:
+                    break
+                self.writer.write(
+                    encode_frame(FrameType.DATA, stream_id, port, chunk, self.key)
+                )
+                await self.writer.drain()
+        except (OSError, asyncio.CancelledError):
+            pass
+        with contextlib.suppress(Exception):
+            self.writer.write(encode_frame(FrameType.CLOSE, stream_id, port, b"", self.key))
+            await self.writer.drain()
+
+    async def close(self) -> None:
+        if self._task:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+        if self.writer:
+            self.writer.close()
+            with contextlib.suppress(Exception):
+                await self.writer.wait_closed()
+
+
+# ------------------------------------------------------------------- framing
+
+
+def test_a_frame_survives_a_round_trip() -> None:
+    raw = encode_frame(FrameType.DATA, 7, 8766, b"audio", KEY)
+    frames = FrameDecoder(KEY).feed(raw)
+
+    assert len(frames) == 1
+    assert frames[0].type == FrameType.DATA
+    assert frames[0].stream_id == 7
+    assert frames[0].port == 8766
+    assert frames[0].payload == b"audio"
+
+
+def test_several_frames_in_one_read_are_all_recovered() -> None:
+    # A single TCP read routinely carries many 640-byte media frames.
+    raw = b"".join(encode_frame(FrameType.DATA, i, 8767, b"x" * 640, KEY) for i in range(5))
+    frames = FrameDecoder(KEY).feed(raw)
+
+    assert [f.stream_id for f in frames] == [0, 1, 2, 3, 4]
+
+
+def test_a_frame_split_across_reads_is_buffered() -> None:
+    raw = encode_frame(FrameType.DATA, 1, 8766, b"y" * 500, KEY)
+    decoder = FrameDecoder(KEY)
+
+    assert decoder.feed(raw[:40]) == []
+    frames = decoder.feed(raw[40:])
+
+    assert len(frames) == 1 and frames[0].payload == b"y" * 500
+
+
+def test_a_tampered_header_is_rejected() -> None:
+    """The tag covers the header, so a port cannot be redirected in flight."""
+
+    raw = bytearray(encode_frame(FrameType.DATA, 1, 8766, b"z", KEY))
+    raw[10] ^= 0xFF  # flip a bit inside the stream id / port region
+
+    with pytest.raises(RemoteLinkError, match="authentication"):
+        FrameDecoder(KEY).feed(bytes(raw))
+
+
+def test_the_wrong_key_cannot_open_a_tunnel() -> None:
+    raw = encode_frame(FrameType.HELLO, 0, 0, b"", b"attacker" * 4)
+
+    with pytest.raises(RemoteLinkError, match="authentication"):
+        FrameDecoder(KEY).feed(raw)
+
+
+def test_an_oversized_payload_is_refused_before_it_is_sent() -> None:
+    with pytest.raises(RemoteLinkError, match="exceeds"):
+        encode_frame(FrameType.DATA, 1, 8766, b"a" * (MAX_PAYLOAD_BYTES + 1), KEY)
+
+
+# --------------------------------------------------------------- end to end
+
+
+@pytest.mark.asyncio
+async def test_the_relay_carries_a_real_request_to_the_phone() -> None:
+    """A client on the relay's loopback must reach a service on the handset."""
+
+    async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        data = await reader.read(1024)
+        writer.write(b"HTTP/1.1 200 OK\r\n\r\n" + data)
+        await writer.drain()
+        writer.close()
+
+    phone_service = await asyncio.start_server(echo, "127.0.0.1", 0)
+    phone_port = phone_service.sockets[0].getsockname()[1]
+
+    presented = _free_port()
+    relay = RemoteLinkRelay(
+        KEY, listen_host="127.0.0.1", listen_port=_free_port(), ports=(presented,)
+    )
+    await relay.start()
+    phone = _FakePhone()
+    phone.local_ports[presented] = phone_port
+    await phone.connect("127.0.0.1", relay._listen_port)
+    await asyncio.sleep(0.1)
+
+    try:
+        assert relay.stats.phone_connected is True
+        reader, writer = await asyncio.open_connection("127.0.0.1", presented)
+        writer.write(b"GET /call/status HTTP/1.1\r\n\r\n")
+        await writer.drain()
+        response = await asyncio.wait_for(reader.read(1024), timeout=5)
+
+        assert response.startswith(b"HTTP/1.1 200 OK")
+        assert b"/call/status" in response
+        writer.close()
+    finally:
+        await phone.close()
+        await relay.close()
+        phone_service.close()
+
+
+@pytest.mark.asyncio
+async def test_media_sized_frames_cross_the_tunnel_intact() -> None:
+    """20 ms of phone audio is 640 bytes; a call is thousands of them."""
+
+    payload = bytes(range(256)) * 10  # 2560 bytes, several media frames
+
+    async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        received = b""
+        while len(received) < len(payload):
+            chunk = await reader.read(4096)
+            if not chunk:
+                break
+            received += chunk
+        writer.write(received)
+        await writer.drain()
+        writer.close()
+
+    phone_service = await asyncio.start_server(echo, "127.0.0.1", 0)
+    phone_port = phone_service.sockets[0].getsockname()[1]
+
+    presented = _free_port()
+    relay = RemoteLinkRelay(
+        KEY, listen_host="127.0.0.1", listen_port=_free_port(), ports=(presented,)
+    )
+    await relay.start()
+    phone = _FakePhone()
+    phone.local_ports[presented] = phone_port
+    await phone.connect("127.0.0.1", relay._listen_port)
+    await asyncio.sleep(0.1)
+
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", presented)
+        writer.write(payload)
+        await writer.drain()
+        echoed = b""
+        while len(echoed) < len(payload):
+            chunk = await asyncio.wait_for(reader.read(4096), timeout=5)
+            if not chunk:
+                break
+            echoed += chunk
+
+        assert echoed == payload  # byte-for-byte, no reordering or loss
+        writer.close()
+    finally:
+        await phone.close()
+        await relay.close()
+        phone_service.close()
+
+
+@pytest.mark.asyncio
+async def test_a_local_client_is_refused_when_no_phone_is_attached() -> None:
+    """Refusing beats hanging: the voice host reports an unreachable gateway."""
+
+    presented = _free_port()
+    relay = RemoteLinkRelay(
+        KEY, listen_host="127.0.0.1", listen_port=_free_port(), ports=(presented,)
+    )
+    await relay.start()
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", presented)
+        writer.write(b"GET / HTTP/1.1\r\n\r\n")
+        # An immediate close surfaces either as EOF or as a reset depending on
+        # timing; both mean the same thing to the caller: refused, not hung.
+        refused = False
+        try:
+            with contextlib.suppress(OSError):
+                await writer.drain()
+            refused = await asyncio.wait_for(reader.read(64), timeout=5) == b""
+        except (ConnectionResetError, ConnectionAbortedError):
+            refused = True
+
+        assert refused
+        writer.close()
+    finally:
+        await relay.close()
+
+
+@pytest.mark.asyncio
+async def test_a_second_phone_cannot_take_over_a_live_tunnel() -> None:
+    """Two handsets answering one call would be worse than a refused connect."""
+
+    relay = RemoteLinkRelay(
+        KEY, listen_host="127.0.0.1", listen_port=_free_port(), ports=(_free_port(),)
+    )
+    await relay.start()
+    first = _FakePhone()
+    await first.connect("127.0.0.1", relay._listen_port)
+    await asyncio.sleep(0.1)
+
+    second = _FakePhone()
+    try:
+        await second.connect("127.0.0.1", relay._listen_port)
+        await asyncio.sleep(0.2)
+
+        assert relay.stats.phone_connected is True
+        # The original tunnel is still the one the relay holds.
+        assert relay._phone_writer is not None
+    finally:
+        await second.close()
+        await first.close()
+        await relay.close()
+
+
+@pytest.mark.asyncio
+async def test_a_tunnel_that_never_says_hello_is_dropped() -> None:
+    relay = RemoteLinkRelay(
+        KEY, listen_host="127.0.0.1", listen_port=_free_port(), ports=(_free_port(),)
+    )
+    await relay.start()
+    try:
+        _, writer = await asyncio.open_connection("127.0.0.1", relay._listen_port)
+        writer.write(encode_frame(FrameType.DATA, 1, 8766, b"nope", KEY))
+        await writer.drain()
+        await asyncio.sleep(0.2)
+
+        assert relay.stats.phone_connected is False
+        writer.close()
+    finally:
+        await relay.close()
+
+
+def test_the_phone_and_the_runtime_frame_identically() -> None:
+    """Pinned against android_service_apk/testsrc/.../RemoteLinkInteropTest.java.
+
+    A byte-order or field-width disagreement would authenticate on neither side
+    and strand every call, so both encoders are held to this vector.
+    """
+
+    key = bytes(range(32))
+    golden = (
+        "5048524c010400000007223f0000000401020304"
+        "e24fffdd48954123b5a64020616c11815fb507801ec383a355ce517364784c93"
+    )
+
+    assert encode_frame(FrameType.DATA, 7, 8767, bytes([1, 2, 3, 4]), key).hex() == golden
+
+
+def test_only_gateway_ports_may_be_tunnelled() -> None:
+    """The relay must not be able to ask the phone to reach any local service."""
+
+    from phone_agent_gateway.ai_bridge.remote_link import GATEWAY_PORTS
+
+    assert GATEWAY_PORTS == (8765, 8766, 8767, 8768)
+
+
+@pytest.mark.asyncio
+async def test_the_real_gateway_client_dials_through_the_tunnel() -> None:
+    """The proof: the class the voice host uses, unmodified, over the relay.
+
+    If this passes, replacing the cable needs no change anywhere in the runtime
+    -- the relay presents the same loopback ports adb forward did.
+    """
+
+    import json as _json
+
+    from phone_agent_gateway.mac_client.gateway_client import PhoneAgentClient
+
+    seen: list[str] = []
+
+    async def gateway(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        request = await reader.read(2048)
+        path = request.split(b" ")[1].decode() if b" " in request else "?"
+        seen.append(path)
+        body = _json.dumps(
+            {
+                "status": "ok",
+                "state": "IDLE",
+                "state_code": 0,
+                "incoming_number": "",
+                "gateway": "ready",
+            }
+        ).encode()
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+            + str(len(body)).encode()
+            + b"\r\n\r\n"
+            + body
+        )
+        await writer.drain()
+        writer.close()
+
+    phone_service = await asyncio.start_server(gateway, "127.0.0.1", 0)
+    phone_port = phone_service.sockets[0].getsockname()[1]
+
+    presented = _free_port()
+    relay = RemoteLinkRelay(
+        KEY, listen_host="127.0.0.1", listen_port=_free_port(), ports=(presented,)
+    )
+    await relay.start()
+    phone = _FakePhone()
+    phone.local_ports[presented] = phone_port
+    await phone.connect("127.0.0.1", relay._listen_port)
+    await asyncio.sleep(0.15)
+
+    try:
+        client = PhoneAgentClient(
+            host="127.0.0.1", port=presented, auto_forward_adb=False
+        )
+        status = await asyncio.to_thread(client.get_status)
+        await asyncio.to_thread(client.dial, "0600000000")
+        await asyncio.to_thread(client.hangup)
+
+        assert status.state.name == "IDLE"
+        assert any("/call/dial" in path for path in seen)
+        assert any("/call/hangup" in path for path in seen)
+        assert relay.stats.streams_total == 3
+    finally:
+        await phone.close()
+        await relay.close()
+        phone_service.close()

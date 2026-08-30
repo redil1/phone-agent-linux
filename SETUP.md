@@ -106,3 +106,50 @@ Restores the previous app, runtime and LaunchAgent from the snapshot taken
 before the last install. Identity data, Studio settings, audit logs and
 recordings live in user-scoped directories and are never overwritten by an
 upgrade.
+
+## Running the phone without a cable
+
+The runtime reaches the handset through four TCP ports that `adb forward`
+tunnels over USB. Nothing about a call needs the cable: dial, hangup, answer and
+status are HTTP on 8765, and media is three sockets on 8766-8768. Replacing the
+transport therefore lets the runtime live on another machine entirely.
+
+A handset on mobile data sits behind carrier NAT, so the phone dials **out** and
+the runtime multiplexes the four ports back down that one socket. The relay
+re-presents them on its own loopback, which is the same shape `adb forward`
+produced, so **the voice host needs no change** — it still talks to
+127.0.0.1:8765-8768.
+
+On the runtime machine:
+
+```bash
+PHONE_AGENT_REMOTE_LINK=true PHONE_AGENT_REMOTE_LINK_PORT=8770 uv run phone-agent-web
+```
+
+On the handset, write `remote-link.json` into the gateway's private files
+directory and restart the service:
+
+```bash
+adb shell "su -c 'cat > /data/user/0/com.phoneagent.gateway/files/remote-link.json <<JSON
+{\"enabled\": true, \"host\": \"YOUR_RUNTIME_HOST\", \"port\": 8770}
+JSON'"
+adb shell am force-stop com.phoneagent.gateway
+adb shell am start-foreground-service -n com.phoneagent.gateway/.GatewayService
+```
+
+Both ends authenticate every frame with the existing PHAG link key, so no new
+secret is provisioned. Studio reports the tunnel under `remote_link` in
+`/api/status`, including round-trip time.
+
+The handset keeps binding its gateway ports to loopback only. The tunnel client
+runs inside the phone process and connects to them locally, so nothing on the
+phone is exposed to the network, and the relay may only ask for the four gateway
+ports — never another local service.
+
+**The open question is latency, not architecture.** The media path uses 20 ms
+frames with a 12-frame credit window, tuned for a sub-millisecond cable. Test on
+a LAN first; a wide-area link will need `UPLINK_WINDOW_FRAMES` and the startup
+reservoir widened to cover the round-trip time.
+
+Frames are authenticated but **not encrypted**. Over anything other than a
+trusted LAN, run the tunnel inside a VPN.

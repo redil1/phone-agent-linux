@@ -17,6 +17,7 @@ public class GatewayService extends Service {
     private static final String CHANNEL_ID = "phoneagent_gateway_channel";
     private static final int NOTIFICATION_ID = 1001;
     private static volatile GatewayService instance;
+    private volatile RemoteLinkService remoteLink;
 
     @Override
     public void onCreate() {
@@ -32,6 +33,37 @@ public class GatewayService extends Service {
         HttpServerEngine.start(this);
         ProtocolControlServer.start(this);
         DigitalAudioBridge.start(this);
+        startRemoteLinkIfConfigured();
+    }
+
+    /**
+     * Dial out to a runtime that is not on the other end of a USB cable.
+     *
+     * <p>Off unless an operator has paired this handset, so a phone that has
+     * only ever been used over adb behaves exactly as before.
+     */
+    private void startRemoteLinkIfConfigured() {
+        try {
+            java.io.File config = new java.io.File(getFilesDir(), "remote-link.json");
+            if (!config.isFile()) return;
+            String text = new String(
+                    java.nio.file.Files.readAllBytes(config.toPath()), "UTF-8");
+            org.json.JSONObject parsed = new org.json.JSONObject(text);
+            if (!parsed.optBoolean("enabled", false)) return;
+            String host = parsed.optString("host", "").trim();
+            int port = parsed.optInt("port", 8770);
+            if (host.isEmpty()) {
+                Log.w(TAG, "remote link is enabled but no host is configured");
+                return;
+            }
+            byte[] key = LinkKeyStore.requireKey(this);
+            remoteLink = new RemoteLinkService(host, port, key);
+            remoteLink.start();
+            Log.i(TAG, "remote link starting towards " + host + ":" + port);
+        } catch (Exception failure) {
+            // The cable path must keep working even if the tunnel cannot start.
+            Log.w(TAG, "remote link could not start: " + failure);
+        }
     }
 
     @Override
@@ -47,6 +79,10 @@ public class GatewayService extends Service {
         HttpServerEngine.stop();
         ProtocolControlServer.stop();
         DigitalAudioBridge.stop();
+        if (remoteLink != null) {
+            remoteLink.stop();
+            remoteLink = null;
+        }
         instance = null;
     }
 
