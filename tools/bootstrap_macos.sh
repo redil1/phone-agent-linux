@@ -82,6 +82,24 @@ step "3/5" "Verifying the frozen WhatsApp boundary"
 uv run python tools/verify_frozen_whatsapp.py
 ok "frozen pipeline intact"
 
+# The Rust sidecar is a build artifact, so a clone never carries it. Building it
+# here means the WhatsApp voice channel and its tests work out of the box; when
+# cargo is absent those tests skip rather than fail.
+if command -v cargo >/dev/null 2>&1; then
+    if [ -x whatsapp_channel/whatsapp-rust-caller ]; then
+        ok "WhatsApp voice sidecar already built"
+    else
+        printf '  building the WhatsApp voice sidecar (first build takes a few minutes)\n'
+        if (cd whatsapp_channel/rust_caller && ./build.sh) >/dev/null 2>&1; then
+            ok "WhatsApp voice sidecar built"
+        else
+            warn "WhatsApp sidecar build failed; the direct WhatsApp channel stays unavailable."
+        fi
+    fi
+else
+    warn "cargo not found; skipping the WhatsApp voice sidecar (its tests will skip)."
+fi
+
 # ------------------------------------------------------------------ verify
 
 if [ "${SKIP_TESTS}" -eq 0 ]; then

@@ -11,11 +11,23 @@ from phone_agent_gateway.ai_bridge.whatsapp_link import (
     BRIDGE_KIND_AUDIO,
     BRIDGE_KIND_CONTROL,
     BRIDGE_MAGIC,
+    DEFAULT_BINARY,
     PHONE_FRAME_BYTES,
     WHATSAPP_FRAME_BYTES,
     WhatsAppLink,
     WhatsAppLinkError,
     resolve_binary,
+)
+
+# The Rust sidecar is a build artifact, not source, so a fresh clone does not
+# have it. These tests drive that binary; without it they would fail an
+# otherwise healthy checkout instead of reporting an unbuilt optional channel.
+pytestmark = pytest.mark.skipif(
+    not DEFAULT_BINARY.is_file(),
+    reason=(
+        "WhatsApp Rust sidecar is not built. Build it with: "
+        "cd whatsapp_channel/rust_caller && ./build.sh"
+    ),
 )
 
 
