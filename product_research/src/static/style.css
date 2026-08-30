@@ -1,0 +1,53 @@
+/* Custom Cyberpunk-Dark SaaS Styling & Animations */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s ease-out forwards;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0B0F19;
+}
+::-webkit-scrollbar-thumb {
+  background: #1F2937;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #374151;
+}
+
+/* Provider tab active styles */
+.provider-tab.active {
+  background: #4F46E5;
+  color: #FFFFFF;
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.35);
+}
+
+/* Result tab active styles */
+.result-tab.active {
+  background: #1F2937;
+  color: #FFFFFF;
+  border-bottom: 2px solid #6366F1;
+}
+
+/* Code container styling */
+pre[class*="language-"] {
+  background: #060911 !important;
+  margin: 0 !important;
+  border: 1px solid #1E293B !important;
+}
+
+code[class*="language-"] {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-size: 11.5px !important;
+  line-height: 1.6 !important;
+}

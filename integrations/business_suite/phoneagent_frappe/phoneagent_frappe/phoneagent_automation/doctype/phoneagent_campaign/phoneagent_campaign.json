@@ -1,0 +1,35 @@
+{
+ "doctype": "DocType",
+ "name": "PhoneAgent Campaign",
+ "module": "PhoneAgent Automation",
+ "autoname": "format:PA-CAMP-{YYYY}-{#####}",
+ "engine": "InnoDB",
+ "track_changes": 1,
+ "allow_import": 1,
+ "field_order": ["title", "status", "task_id", "channel", "timezone", "window_start", "window_end", "max_daily_calls", "max_attempts", "retry_minutes", "consent_basis", "require_explicit_consent", "activated_by", "activated_at", "calls_started", "calls_completed", "converted_count"],
+ "fields": [
+  {"fieldname": "title", "fieldtype": "Data", "label": "Campaign Name", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Draft\nActive\nPaused\nCompleted", "default": "Draft", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "task_id", "fieldtype": "Data", "label": "PhoneAgent Task ID", "reqd": 1},
+  {"fieldname": "channel", "fieldtype": "Select", "label": "Call Channel", "options": "gsm\nwhatsapp_phone\nwhatsapp", "default": "gsm", "reqd": 1},
+  {"fieldname": "timezone", "fieldtype": "Data", "label": "Timezone", "default": "Africa/Casablanca", "reqd": 1},
+  {"fieldname": "window_start", "fieldtype": "Time", "label": "Calling Window Start", "default": "09:00:00", "reqd": 1},
+  {"fieldname": "window_end", "fieldtype": "Time", "label": "Calling Window End", "default": "18:00:00", "reqd": 1},
+  {"fieldname": "max_daily_calls", "fieldtype": "Int", "label": "Maximum Daily Calls", "default": "50", "reqd": 1},
+  {"fieldname": "max_attempts", "fieldtype": "Int", "label": "Maximum Attempts per Contact", "default": "3", "reqd": 1},
+  {"fieldname": "retry_minutes", "fieldtype": "Int", "label": "Retry Delay (minutes)", "default": "1440", "reqd": 1},
+  {"fieldname": "consent_basis", "fieldtype": "Select", "label": "Lawful Contact Basis", "options": "Existing customer\nExplicit opt-in\nLegitimate interest reviewed\nOther reviewed basis", "reqd": 1},
+  {"fieldname": "require_explicit_consent", "fieldtype": "Check", "label": "Require explicit contact consent", "default": "1"},
+  {"fieldname": "activated_by", "fieldtype": "Link", "label": "Activated By", "options": "User", "read_only": 1},
+  {"fieldname": "activated_at", "fieldtype": "Datetime", "label": "Activated At", "read_only": 1},
+  {"fieldname": "calls_started", "fieldtype": "Int", "label": "Calls Started", "read_only": 1},
+  {"fieldname": "calls_completed", "fieldtype": "Int", "label": "Calls Completed", "read_only": 1},
+  {"fieldname": "converted_count", "fieldtype": "Int", "label": "Conversions", "read_only": 1}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1},
+  {"role": "Sales Manager", "read": 1, "write": 1, "create": 1, "report": 1, "export": 1},
+  {"role": "PhoneAgent Integration", "read": 1, "write": 1, "create": 1}
+ ]
+}
+

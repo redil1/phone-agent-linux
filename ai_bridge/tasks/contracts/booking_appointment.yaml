@@ -1,0 +1,29 @@
+id: "booking_appointment"
+title: "Executive Appointment Scheduling"
+objective: >
+  Schedule a verified calendar appointment with Adam, verifying slot availability,
+  caller contact details, and sending confirmation.
+
+inputs_required:
+  - preferred_date_time
+  - caller_name_and_topic
+  - contact_phone_number
+
+success_criteria:
+  - verify_calendar_free_slot
+  - confirm_exact_time_with_caller
+  - create_tentative_booking
+  - summarize_next_steps_concisely
+
+allowed_tools:
+  - calendar_availability_lookup
+  - create_event_reservation
+  - send_sms_confirmation
+
+approval_required:
+  - weekend_or_after_hours_booking
+  - meeting_over_60_minutes
+
+stop_conditions:
+  - no_matching_slots_available
+  - caller_refuses_contact_details

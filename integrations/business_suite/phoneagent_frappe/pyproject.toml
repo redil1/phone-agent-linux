@@ -1,0 +1,19 @@
+[project]
+name = "phoneagent-frappe"
+authors = [{name = "PhoneAgent"}]
+description = "Production CRM, Helpdesk and ERPNext contract for PhoneAgent"
+requires-python = ">=3.11"
+readme = "README.md"
+dynamic = ["version"]
+dependencies = []
+
+[build-system]
+requires = ["flit_core>=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.bench.frappe-dependencies]
+frappe = ">=16.0.0-dev,<17.0.0"
+erpnext = ">=16.0.0-dev,<17.0.0"
+crm = ">=1.0.0,<2.0.0"
+helpdesk = ">=1.0.0,<2.0.0"
+

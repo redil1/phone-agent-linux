@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "description": "Scenarios taken from real calls. Each one previously failed.",
+  "scenarios": [
+    {
+      "name": "answers_to_the_greeting_are_not_dropped",
+      "task_id": "iptv_subscription_sales",
+      "language": "en-US",
+      "turns": [
+        {"caller": "Yes.", "quality": "actionable", "fills": ["permission_to_continue"]}
+      ],
+      "expect_collected": ["permission_to_continue"]
+    },
+    {
+      "name": "backchannels_are_ignored_not_answered",
+      "task_id": "iptv_subscription_sales",
+      "language": "en-US",
+      "turns": [
+        {"caller": "Mm-hmm.", "quality": "backchannel"},
+        {"caller": "Okay.", "quality": "backchannel"}
+      ]
+    },
+    {
+      "name": "unclear_audio_is_repaired_not_guessed",
+      "task_id": "iptv_subscription_sales",
+      "language": "en-US",
+      "turns": [
+        {"caller": "brrr brrr brrr", "quality": "unintelligible"},
+        {"caller": "What?", "quality": "repeat_request"}
+      ]
+    },
+    {
+      "name": "discovery_fills_slots_and_stops_reasking",
+      "task_id": "iptv_subscription_sales",
+      "language": "fr-FR",
+      "turns": [
+        {"caller": "Oui, allez-y.", "fills": ["permission_to_continue"]},
+        {"caller": "Je regarde surtout le sport et les films.", "fills": ["viewing_preferences"]},
+        {"caller": "Sur ma smart TV.", "fills": ["devices_and_household_usage"]},
+        {"caller": "Plutot au mois.", "fills": ["preferred_subscription_duration"]}
+      ],
+      "expect_collected": [
+        "permission_to_continue",
+        "viewing_preferences",
+        "devices_and_household_usage",
+        "preferred_subscription_duration"
+      ]
+    },
+    {
+      "name": "a_bad_moment_is_respected",
+      "task_id": "iptv_subscription_sales",
+      "language": "en-US",
+      "turns": [
+        {"caller": "I'm driving right now", "quality": "not_now"}
+      ]
+    },
+    {
+      "name": "identity_challenge_is_answered",
+      "task_id": "iptv_subscription_sales",
+      "language": "en-US",
+      "turns": [
+        {"caller": "Who is this?", "quality": "identity_challenge"}
+      ]
+    }
+  ]
+}

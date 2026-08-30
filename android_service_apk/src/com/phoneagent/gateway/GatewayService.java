@@ -1,0 +1,124 @@
+package com.phoneagent.gateway;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.ServiceInfo;
+import android.app.role.RoleManager;
+import android.os.Build;
+import android.os.IBinder;
+import android.util.Log;
+
+public class GatewayService extends Service {
+    private static final String TAG = "PhoneAgentGatewayService";
+    private static final String CHANNEL_ID = "phoneagent_gateway_channel";
+    private static final int NOTIFICATION_ID = 1001;
+    private static volatile GatewayService instance;
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        instance = this;
+        Log.i(TAG, "GatewayService onCreate: Starting servers...");
+
+        createNotificationChannel();
+        Notification notification = buildForegroundNotification();
+        startSafeForeground(notification, false);
+
+        // Start background engines
+        HttpServerEngine.start(this);
+        ProtocolControlServer.start(this);
+        DigitalAudioBridge.start(this);
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        Log.i(TAG, "GatewayService onStartCommand");
+        return START_STICKY;
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        Log.i(TAG, "GatewayService onDestroy");
+        HttpServerEngine.stop();
+        ProtocolControlServer.stop();
+        DigitalAudioBridge.stop();
+        instance = null;
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "PhoneAgent Gateway Service",
+                    NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("Background Cellular Telephony & Digital Audio Gateway");
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                nm.createNotificationChannel(channel);
+            }
+        }
+    }
+
+    private Notification buildForegroundNotification() {
+        Notification.Builder builder;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder = new Notification.Builder(this, CHANNEL_ID);
+        } else {
+            builder = new Notification.Builder(this);
+        }
+        return builder
+                .setContentTitle("PhoneAgent Gateway Active")
+                .setContentText("Cellular Telephony & Digital Audio Server Online")
+                .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+                .setOngoing(true)
+                .build();
+    }
+
+    private void startSafeForeground(Notification notification, boolean includeMicrophone) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            int type;
+            if (isDialerRoleHeld(this)) {
+                type = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL;
+                if (includeMicrophone) {
+                    type |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+                }
+            } else {
+                // Setup/recovery mode: stay alive long enough for the operator to
+                // grant ROLE_DIALER without requesting restricted phone-call FGS.
+                type = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
+            }
+            startForeground(NOTIFICATION_ID, notification, type);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
+    }
+
+    public static boolean isDialerRoleHeld(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false;
+        RoleManager roleManager = (RoleManager) context.getSystemService(Context.ROLE_SERVICE);
+        return roleManager != null
+                && roleManager.isRoleAvailable(RoleManager.ROLE_DIALER)
+                && roleManager.isRoleHeld(RoleManager.ROLE_DIALER);
+    }
+
+    public static void enableMicrophoneForeground() {
+        GatewayService service = instance;
+        if (service == null) return;
+        try {
+            service.startSafeForeground(service.buildForegroundNotification(), true);
+        } catch (Exception e) {
+            Log.e(TAG, "Could not add microphone foreground-service type: " + e.getMessage(), e);
+        }
+    }
+}

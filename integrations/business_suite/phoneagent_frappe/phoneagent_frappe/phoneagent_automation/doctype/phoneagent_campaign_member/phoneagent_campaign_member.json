@@ -1,0 +1,35 @@
+{
+ "doctype": "DocType",
+ "name": "PhoneAgent Campaign Member",
+ "module": "PhoneAgent Automation",
+ "autoname": "format:PA-MEMBER-{YYYY}-{#####}",
+ "engine": "InnoDB",
+ "track_changes": 1,
+ "allow_import": 1,
+ "field_order": ["campaign", "phone_e164", "display_name", "email", "company", "language", "consent_status", "status", "attempts", "next_attempt_at", "claimed_until", "claimed_by", "last_call_id", "last_outcome", "lead", "deal", "customer"],
+ "fields": [
+  {"fieldname": "campaign", "fieldtype": "Link", "label": "Campaign", "options": "PhoneAgent Campaign", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "phone_e164", "fieldtype": "Data", "label": "Phone (E.164)", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "display_name", "fieldtype": "Data", "label": "Name", "in_list_view": 1},
+  {"fieldname": "email", "fieldtype": "Data", "label": "Email", "options": "Email"},
+  {"fieldname": "company", "fieldtype": "Data", "label": "Company"},
+  {"fieldname": "language", "fieldtype": "Select", "label": "Preferred Language", "options": "\nen\nfr"},
+  {"fieldname": "consent_status", "fieldtype": "Select", "label": "Contact Consent", "options": "unknown\nconsented\ndeclined\ndo_not_call", "default": "unknown", "reqd": 1},
+  {"fieldname": "status", "fieldtype": "Select", "label": "Queue Status", "options": "Pending\nIn Progress\nRetry\nCompleted\nSkipped\nFailed", "default": "Pending", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "attempts", "fieldtype": "Int", "label": "Attempts", "default": "0", "read_only": 1},
+  {"fieldname": "next_attempt_at", "fieldtype": "Datetime", "label": "Next Attempt"},
+  {"fieldname": "claimed_until", "fieldtype": "Datetime", "label": "Claim Expires", "read_only": 1},
+  {"fieldname": "claimed_by", "fieldtype": "Data", "label": "Claimed By", "read_only": 1},
+  {"fieldname": "last_call_id", "fieldtype": "Data", "label": "Last Call ID", "read_only": 1},
+  {"fieldname": "last_outcome", "fieldtype": "Data", "label": "Last Outcome", "read_only": 1},
+  {"fieldname": "lead", "fieldtype": "Link", "label": "CRM Lead", "options": "CRM Lead"},
+  {"fieldname": "deal", "fieldtype": "Link", "label": "CRM Deal", "options": "CRM Deal"},
+  {"fieldname": "customer", "fieldtype": "Link", "label": "ERPNext Customer", "options": "Customer"}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1, "import": 1},
+  {"role": "Sales Manager", "read": 1, "write": 1, "create": 1, "report": 1, "export": 1, "import": 1},
+  {"role": "PhoneAgent Integration", "read": 1, "write": 1, "create": 1}
+ ]
+}
+

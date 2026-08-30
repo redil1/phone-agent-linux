@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "profile_id": "redmi-12c-earth-trebledroid-android14",
+  "allowed_devices": ["tdgsi_arm64_ab"],
+  "allowed_models": ["TrebleDroid vanilla"],
+  "allowed_sdk_levels": [34],
+  "allowed_abis": ["arm64-v8a"],
+  "allowed_fingerprints": [
+    "google/treble_arm64_bvS/tdgsi_arm64_ab:14/AP1A.240505.005.B1/240508:userdebug/test-keys"
+  ],
+  "required_package": "com.phoneagent.gateway",
+  "required_audio_format": "pcm_s16le_16000_mono",
+  "required_protocol": "phag_v1_hmac_sha256"
+}

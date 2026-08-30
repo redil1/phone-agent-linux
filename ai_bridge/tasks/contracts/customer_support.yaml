@@ -1,0 +1,28 @@
+id: "customer_support"
+title: "General Customer Support & Inquiry Resolution"
+objective: >
+  Identify the caller's specific need, provide verified accurate information,
+  and resolve the request within 1 to 2 conversational English or French turns.
+
+inputs_required:
+  - caller_inquiry_intent
+  - identification_or_tracking_if_applicable
+
+success_criteria:
+  - understand_core_problem
+  - provide_clear_verified_solution
+  - confirm_caller_satisfaction
+  - avoid_unsupported_assumptions
+
+allowed_tools:
+  - knowledge_base_search
+  - order_lookup
+  - status_inquiry
+
+approval_required:
+  - financial_refund
+  - account_modification
+
+stop_conditions:
+  - caller_requests_human_transfer
+  - unresolvable_security_mismatch

@@ -1,0 +1,112 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phone-agent-gateway"
+version = "0.7.0"
+description = "Rooted Android cellular gateway and low-latency Pipecat voice runtime"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "aiohttp>=3.12,<4",
+    # Used by the bundled product research engine in product_research/, which
+    # runs as a subprocess against this same interpreter.
+    "click>=8,<9",
+    "httpx>=0.25",
+    "pydantic>=2.5,<3",
+    "python-socketio[asyncio_client]>=5.14,<6",
+    "rich>=13",
+    "aiortc>=1.9.0",
+    "av>=11.0.0",
+    "curl-cffi>=0.7.0",
+    "edge-tts>=7.2.8,<8",
+    "google-genai>=2.19,<3",
+    "loguru>=0.7,<1",
+    "mcp>=1.12.4,<2",
+    "numpy>=1.26,<3",
+    "pipecat-ai==1.7.0",
+    "pyyaml>=6,<7",
+    "soxr>=1.0,<2",
+    "supertonic>=1.3.1,<2",
+    "trafilatura>=2.2,<3",
+    "websockets>=16,<17",
+]
+
+[project.scripts]
+phone-agent-voice = "phone_agent_gateway.ai_bridge.phone_voice_agent:main"
+phone-agent-web = "phone_agent_gateway.ai_bridge.web_server:main"
+phone-agent-import = "phone_agent_gateway.ai_bridge.tasks.product_import:main"
+phone-agent-mcp = "phone_agent_gateway.ai_bridge.mcp_server:main"
+phone-agent-qualify = "phone_agent_gateway.qualification.device_qualification:main"
+
+[project.optional-dependencies]
+cloud = [
+    "pipecat-ai[cartesia,deepgram,google,openai,openrouter]==1.7.0",
+    "python-dotenv>=1.0,<2",
+]
+local = [
+    "pipecat-ai[kokoro,mlx-whisper,whisper]==1.7.0",
+    "parakeet-mlx>=0.5.2,<1",
+    "mlx-audio>=0.5,<1",
+    # Kokoro's grapheme-to-phoneme front end. mlx-audio treats it as optional and
+    # raises at first synthesis without it, so the Metal path is unusable unless
+    # it is installed alongside.
+    "misaki[en]>=0.9.4,<1",
+    # misaki's English G2P loads this spaCy model and, when it is absent, tries
+    # to download it with pip at first synthesis. The installed runtime venv has
+    # no pip, so that attempt killed the voice host in a restart loop. Pin the
+    # wheel so the model is present before the first call instead.
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+]
+dev = [
+    "pytest>=8.3,<10",
+    "pytest-asyncio>=0.24,<2",
+    "ruff>=0.12,<1",
+]
+
+[tool.setuptools]
+packages = [
+    "phone_agent_gateway",
+    "phone_agent_gateway.ai_bridge",
+    "phone_agent_gateway.ai_bridge.guardrails",
+    "phone_agent_gateway.ai_bridge.identity",
+    "phone_agent_gateway.ai_bridge.identity.builtin_skills",
+    "phone_agent_gateway.ai_bridge.memory",
+    "phone_agent_gateway.ai_bridge.personality",
+    "phone_agent_gateway.ai_bridge.tasks",
+    "phone_agent_gateway.ai_bridge.tasks.contracts",
+    "phone_agent_gateway.ai_bridge.tasks.evalsets",
+    "phone_agent_gateway.ai_bridge.web_static",
+    "phone_agent_gateway.mac_client",
+    "phone_agent_gateway.qualification",
+    "phone_agent_gateway.qualification.devices",
+]
+
+[tool.setuptools.package-dir]
+phone_agent_gateway = "."
+
+[tool.setuptools.package-data]
+"phone_agent_gateway.ai_bridge.personality" = ["*.yaml", "*.jsonl"]
+"phone_agent_gateway.ai_bridge.tasks.contracts" = ["*.yaml"]
+"phone_agent_gateway.ai_bridge.tasks.evalsets" = ["*.json"]
+"phone_agent_gateway.ai_bridge.web_static" = ["*.html"]
+"phone_agent_gateway.ai_bridge.identity" = ["builtin_skills/*/SKILL.md"]
+"phone_agent_gateway.qualification" = ["devices/*.json"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not device_integration'"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "device_integration: requires the connected phone and may change live call state",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
+
+[tool.uv]
+# google-api-core 2.35.0 was yanked for a path_template.expand regression.
+constraint-dependencies = ["google-api-core!=2.35.0"]

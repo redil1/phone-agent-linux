@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "dial_enabled": true,
+  "require_operator_approval": true,
+  "max_calls_per_hour": 20,
+  "destination_cooldown_secs": 30,
+  "max_call_duration_secs": 900,
+  "allowlist": [],
+  "denylist": [],
+  "premium_prefixes": []
+}

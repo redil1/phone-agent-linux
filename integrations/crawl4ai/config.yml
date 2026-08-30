@@ -1,0 +1,64 @@
+app:
+  host: "127.0.0.1"
+  port: 11235
+  workers: 1
+  timeout_keep_alive: 30
+
+limits:
+  max_body_bytes: 4194304
+  max_pages: 5
+  max_depth: 1
+  wall_clock_s: 12
+  queue:
+    maxsize: 8
+    workers: 1
+    per_principal: 2
+
+rate_limiting:
+  # The 0.9.2 routes install their limiter even when `enabled` is false. Redis
+  # avoids the in-memory backend's one-Timer-thread-per-request behaviour.
+  enabled: true
+  default_limit: "120/minute"
+  trusted_proxies: []
+  storage_uri: "redis://localhost:6379/0"
+
+security:
+  enabled: true
+  jwt_enabled: false
+  api_token: ""
+  https_redirect: false
+  trusted_hosts: ["*"]
+  cors_allow_origins: []
+
+crawler:
+  base_config:
+    simulate_user: true
+  memory_threshold_percent: 85.0
+  rate_limiter:
+    enabled: true
+    base_delay: [0.25, 0.75]
+  timeouts:
+    stream_init: 10.0
+    batch_process: 12.0
+  pool:
+    max_pages: 2
+    idle_ttl_sec: 60
+  browser:
+    kwargs:
+      headless: true
+      text_mode: true
+    extra_args:
+      - "--no-sandbox"
+      - "--disable-dev-shm-usage"
+      - "--disable-gpu"
+      - "--disable-software-rasterizer"
+
+webhooks:
+  enabled: false
+
+observability:
+  prometheus:
+    enabled: true
+    endpoint: "/metrics"
+  health_check:
+    endpoint: "/health"

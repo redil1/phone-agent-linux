@@ -1,0 +1,27 @@
+{
+ "doctype": "DocType",
+ "name": "PhoneAgent Contact Consent",
+ "module": "PhoneAgent Automation",
+ "autoname": "format:PA-CONSENT-{YYYY}-{#####}",
+ "engine": "InnoDB",
+ "track_changes": 1,
+ "field_order": ["phone_e164", "purpose", "status", "source", "evidence", "captured_at", "expires_at", "do_not_call", "lead", "customer"],
+ "fields": [
+  {"fieldname": "phone_e164", "fieldtype": "Data", "label": "Phone (E.164)", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "purpose", "fieldtype": "Select", "label": "Purpose", "options": "sales\nsupport\nservice_update\nrecording", "reqd": 1},
+  {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "unknown\nconsented\ndeclined\nwithdrawn", "default": "unknown", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "source", "fieldtype": "Data", "label": "Evidence Source", "reqd": 1},
+  {"fieldname": "evidence", "fieldtype": "Long Text", "label": "Evidence"},
+  {"fieldname": "captured_at", "fieldtype": "Datetime", "label": "Captured At", "reqd": 1},
+  {"fieldname": "expires_at", "fieldtype": "Datetime", "label": "Expires At"},
+  {"fieldname": "do_not_call", "fieldtype": "Check", "label": "Do Not Call", "default": "0", "in_list_view": 1},
+  {"fieldname": "lead", "fieldtype": "Link", "label": "CRM Lead", "options": "CRM Lead"},
+  {"fieldname": "customer", "fieldtype": "Link", "label": "ERPNext Customer", "options": "Customer"}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1},
+  {"role": "Sales Manager", "read": 1, "write": 1, "create": 1, "report": 1},
+  {"role": "PhoneAgent Integration", "read": 1, "write": 1, "create": 1}
+ ]
+}
+

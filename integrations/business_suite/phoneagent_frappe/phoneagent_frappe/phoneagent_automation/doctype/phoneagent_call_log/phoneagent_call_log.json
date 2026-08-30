@@ -1,0 +1,36 @@
+{
+ "doctype": "DocType",
+ "name": "PhoneAgent Call Log",
+ "module": "PhoneAgent Automation",
+ "autoname": "field:call_id",
+ "engine": "InnoDB",
+ "track_changes": 1,
+ "field_order": ["call_id", "phone_e164", "direction", "channel", "task_id", "started_at", "ended_at", "duration_seconds", "disposition", "summary", "next_action", "follow_up_at", "campaign", "campaign_member", "lead", "deal", "customer", "structured_outcome"],
+ "fields": [
+  {"fieldname": "call_id", "fieldtype": "Data", "label": "Call ID", "reqd": 1, "unique": 1, "in_list_view": 1},
+  {"fieldname": "phone_e164", "fieldtype": "Data", "label": "Phone (E.164)", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "direction", "fieldtype": "Select", "label": "Direction", "options": "inbound\noutbound", "reqd": 1},
+  {"fieldname": "channel", "fieldtype": "Select", "label": "Channel", "options": "gsm\nwhatsapp_phone\nwhatsapp", "reqd": 1},
+  {"fieldname": "task_id", "fieldtype": "Data", "label": "Task ID"},
+  {"fieldname": "started_at", "fieldtype": "Datetime", "label": "Started At"},
+  {"fieldname": "ended_at", "fieldtype": "Datetime", "label": "Ended At"},
+  {"fieldname": "duration_seconds", "fieldtype": "Float", "label": "Duration Seconds"},
+  {"fieldname": "disposition", "fieldtype": "Data", "label": "Disposition", "in_list_view": 1},
+  {"fieldname": "summary", "fieldtype": "Long Text", "label": "AI Summary"},
+  {"fieldname": "next_action", "fieldtype": "Data", "label": "Next Action"},
+  {"fieldname": "follow_up_at", "fieldtype": "Datetime", "label": "Follow Up At"},
+  {"fieldname": "campaign", "fieldtype": "Link", "label": "Campaign", "options": "PhoneAgent Campaign"},
+  {"fieldname": "campaign_member", "fieldtype": "Link", "label": "Campaign Member", "options": "PhoneAgent Campaign Member"},
+  {"fieldname": "lead", "fieldtype": "Link", "label": "CRM Lead", "options": "CRM Lead"},
+  {"fieldname": "deal", "fieldtype": "Link", "label": "CRM Deal", "options": "CRM Deal"},
+  {"fieldname": "customer", "fieldtype": "Link", "label": "ERPNext Customer", "options": "Customer"},
+  {"fieldname": "structured_outcome", "fieldtype": "Code", "label": "Structured Outcome", "options": "JSON", "read_only": 1}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1},
+  {"role": "Sales Manager", "read": 1, "write": 1, "create": 1, "report": 1, "export": 1},
+  {"role": "Support Team", "read": 1, "write": 1, "create": 1, "report": 1},
+  {"role": "PhoneAgent Integration", "read": 1, "write": 1, "create": 1}
+ ]
+}
+

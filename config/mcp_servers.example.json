@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "servers": [
+    {
+      "label": "inventory",
+      "command": ["/absolute/path/to/inventory-mcp-server"],
+      "allowed_tools": ["lookup_product"],
+      "timeout_ms": 2000,
+      "max_output_bytes": 8192,
+      "environment": []
+    }
+  ]
+}

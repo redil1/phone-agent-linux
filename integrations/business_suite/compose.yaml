@@ -1,0 +1,315 @@
+x-frappe-service: &frappe-service
+  image: phoneagent-frappe-suite:1.0.0
+  restart: unless-stopped
+  networks: [business]
+  volumes:
+    - frappe-sites:/home/frappe/frappe-bench/sites
+    - frappe-logs:/home/frappe/frappe-bench/logs
+  security_opt: [no-new-privileges:true]
+  pids_limit: 1024
+
+services:
+  db:
+    image: mariadb@sha256:2439dcd7d14010ecd1ff7a4e1c5abe8e208c34fe35290744deeeaac3569043c3
+    restart: unless-stopped
+    networks: [business]
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --innodb-buffer-pool-size=512M
+    environment:
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/frappe_db_root_password
+    secrets: [frappe_db_root_password]
+    volumes:
+      - frappe-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 15s
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    mem_limit: 1536m
+    cpus: 2.0
+
+  redis-cache:
+    image: redis@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    restart: unless-stopped
+    networks: [business]
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: 320m
+
+  redis-queue:
+    image: redis@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    restart: unless-stopped
+    networks: [business]
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - frappe-redis-queue:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: 384m
+
+  configurator:
+    <<: *frappe-service
+    restart: "no"
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host db;
+        bench set-config -gp db_port 3306;
+        bench set-config -g redis_cache redis://redis-cache:6379;
+        bench set-config -g redis_queue redis://redis-queue:6379;
+        bench set-config -g redis_socketio redis://redis-queue:6379;
+        bench set-config -gp socketio_port 9000;
+    depends_on:
+      db: {condition: service_healthy}
+      redis-cache: {condition: service_healthy}
+      redis-queue: {condition: service_healthy}
+
+  create-site:
+    <<: *frappe-service
+    restart: "no"
+    entrypoint: ["bash", "/opt/phoneagent/init-site.sh"]
+    environment:
+      FRAPPE_SITE_NAME: ${FRAPPE_SITE_NAME:-phoneagent.localhost}
+      DB_HOST: db
+      DB_PORT: "3306"
+      REDIS_CACHE: redis-cache
+      REDIS_QUEUE: redis-queue
+    secrets:
+      - frappe_db_root_password
+      - frappe_admin_password
+      - frappe_api_key
+      - frappe_api_secret
+    depends_on:
+      configurator: {condition: service_completed_successfully}
+      db: {condition: service_healthy}
+      redis-cache: {condition: service_healthy}
+      redis-queue: {condition: service_healthy}
+
+  backend:
+    <<: *frappe-service
+    build:
+      context: ../..
+      dockerfile: integrations/business_suite/frappe.Containerfile
+      args:
+        CRM_REF: v1.82.0
+        HELPDESK_REF: v1.30.0
+        TELEPHONY_REF: develop
+    depends_on:
+      create-site: {condition: service_completed_successfully}
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -H 'Host: ${FRAPPE_SITE_NAME:-phoneagent.localhost}' http://127.0.0.1:8000/api/method/ping >/dev/null"]
+      start_period: 20s
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    mem_limit: 1536m
+    cpus: 2.0
+
+  websocket:
+    <<: *frappe-service
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+    environment:
+      FRAPPE_REDIS_CACHE: redis://redis-cache:6379
+      FRAPPE_REDIS_QUEUE: redis://redis-queue:6379
+    depends_on:
+      create-site: {condition: service_completed_successfully}
+    mem_limit: 512m
+
+  queue-short:
+    <<: *frappe-service
+    command: ["bench", "worker", "--queue", "short,default"]
+    environment:
+      FRAPPE_REDIS_CACHE: redis://redis-cache:6379
+      FRAPPE_REDIS_QUEUE: redis://redis-queue:6379
+    depends_on:
+      create-site: {condition: service_completed_successfully}
+    mem_limit: 1024m
+
+  queue-long:
+    <<: *frappe-service
+    command: ["bench", "worker", "--queue", "long,default,short"]
+    environment:
+      FRAPPE_REDIS_CACHE: redis://redis-cache:6379
+      FRAPPE_REDIS_QUEUE: redis://redis-queue:6379
+    depends_on:
+      create-site: {condition: service_completed_successfully}
+    mem_limit: 1536m
+
+  scheduler:
+    <<: *frappe-service
+    command: ["bench", "schedule"]
+    depends_on:
+      create-site: {condition: service_completed_successfully}
+    mem_limit: 768m
+
+  frontend:
+    <<: *frappe-service
+    command: ["nginx-entrypoint.sh"]
+    environment:
+      BACKEND: backend:8000
+      FRAPPE_SITE_NAME_HEADER: ${FRAPPE_SITE_NAME:-phoneagent.localhost}
+      SOCKETIO: websocket:9000
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: "120"
+      CLIENT_MAX_BODY_SIZE: 25m
+    ports:
+      - "127.0.0.1:${FRAPPE_PORT:-8080}:8080"
+    depends_on:
+      backend: {condition: service_healthy}
+      websocket: {condition: service_started}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/method/ping >/dev/null"]
+      start_period: 20s
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    mem_limit: 512m
+
+  openwa:
+    image: ghcr.io/rmyndharis/openwa:0.23.3@sha256:c00b5b589446ce7dd6177f1b871789284bcfbe3612189ba109465025eb0ad4ec
+    restart: unless-stopped
+    stop_grace_period: 45s
+    networks: [business]
+    ports:
+      - "127.0.0.1:${OPENWA_PORT:-2785}:2785"
+    environment:
+      NODE_ENV: production
+      NODE_ID: phoneagent-openwa
+      AUTO_START_SESSIONS: "true"
+      PORT: "2785"
+      LOG_LEVEL: info
+      SERVE_DASHBOARD: "true"
+      ENABLE_SWAGGER: "false"
+      ENGINE_TYPE: baileys
+      SESSION_DATA_PATH: /app/data/sessions
+      API_MASTER_KEY: ${OPENWA_MASTER_KEY:?OPENWA_MASTER_KEY is required}
+      API_KEY_PEPPER: ${OPENWA_API_KEY_PEPPER:?OPENWA_API_KEY_PEPPER is required}
+      MCP_ENABLED: "true"
+      MCP_READONLY: "false"
+      MCP_RATE_LIMIT_MAX: "60"
+      MCP_RATE_LIMIT_WINDOW_MS: "60000"
+      MCP_IP_RATE_LIMIT_MAX: "120"
+      MCP_IP_RATE_LIMIT_WINDOW_MS: "60000"
+      SEND_PACING_ENABLED: "true"
+      SEND_PACING_WARMUP_SCHEDULE: 20,40,80,160,320,640,1000
+      SEND_PACING_COLD_DAILY_CAP: 5,10,20,40,60,80,100
+      STORAGE_TYPE: local
+      STORAGE_LOCAL_PATH: /app/data/media
+      CORS_ORIGINS: http://127.0.0.1:2785,http://localhost:2785
+    volumes:
+      - openwa-data:/app/data
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    pids_limit: 512
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:2785/api/health/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 45s
+
+  crawl4ai:
+    image: unclecode/crawl4ai:0.9.2@sha256:bd36741e7bdd35ddc1a05d9183e1d6d8cefb61dd640d944a25d026b76e917690
+    restart: unless-stopped
+    stop_grace_period: 30s
+    networks: [business]
+    ports:
+      - "127.0.0.1:${CRAWL4AI_PORT:-11235}:11235"
+    environment:
+      CRAWL4AI_PORT: "11235"
+      REDIS_TASK_TTL: "900"
+      CRAWL4AI_HOOKS_ENABLED: "false"
+      CRAWL4AI_ALLOW_INSECURE_TLS: "false"
+    volumes:
+      - ${CRAWL4AI_CONFIG_FILE:?CRAWL4AI_CONFIG_FILE is required}:/app/config.yml:ro
+    secrets:
+      - source: crawl4ai_api_token
+        target: api_token
+        mode: 0400
+    user: appuser
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/lib/redis:uid=999,gid=999,mode=0700
+      - /var/lib/crawl4ai/outputs:uid=999,gid=999,mode=0700
+      - /home/appuser/.crawl4ai:uid=999,gid=999,mode=0700
+      - /home/appuser/.cache/url_seeder:uid=999,gid=999,mode=0700
+    shm_size: 1gb
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 512
+    mem_limit: 3g
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:11235/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+
+  backup:
+    <<: *frappe-service
+    profiles: [tools]
+    restart: "no"
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        bench --site "$$FRAPPE_SITE_NAME" backup --with-files --compress;
+        find sites/"$$FRAPPE_SITE_NAME"/private/backups -type f -mtime +"$$BACKUP_RETENTION_DAYS" -delete
+    environment:
+      FRAPPE_SITE_NAME: ${FRAPPE_SITE_NAME:-phoneagent.localhost}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    depends_on:
+      backend: {condition: service_healthy}
+
+networks:
+  business:
+    name: phoneagent-business-network
+
+volumes:
+  frappe-db: {name: phoneagent-frappe-db}
+  frappe-redis-queue: {name: phoneagent-frappe-redis-queue}
+  frappe-sites: {name: phoneagent-frappe-sites}
+  frappe-logs: {name: phoneagent-frappe-logs}
+  openwa-data:
+    external: true
+    name: phoneagent-openwa-data
+
+secrets:
+  frappe_db_root_password:
+    file: ${FRAPPE_DB_ROOT_PASSWORD_FILE:?FRAPPE_DB_ROOT_PASSWORD_FILE is required}
+  frappe_admin_password:
+    file: ${FRAPPE_ADMIN_PASSWORD_FILE:?FRAPPE_ADMIN_PASSWORD_FILE is required}
+  frappe_api_key:
+    file: ${FRAPPE_API_KEY_FILE:?FRAPPE_API_KEY_FILE is required}
+  frappe_api_secret:
+    file: ${FRAPPE_API_SECRET_FILE:?FRAPPE_API_SECRET_FILE is required}
+  crawl4ai_api_token:
+    file: ${CRAWL4AI_TOKEN_FILE:?CRAWL4AI_TOKEN_FILE is required}

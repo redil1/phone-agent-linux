@@ -1,0 +1,23 @@
+[package]
+name = "phoneagent-whatsapp-rust-caller"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Generation-aware WhatsApp-Rust PCM sidecar for PhoneAgent"
+
+[dependencies]
+anyhow = "1"
+async-channel = "2"
+bytes = "1"
+env_logger = "0.11"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6966ddc25d4f896cfefa8fb7aa2025ca824ce37f", default-features = true, features = ["voip", "tracing"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

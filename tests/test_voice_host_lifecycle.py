@@ -1,0 +1,680 @@
+"""Regression tests for exclusive phone ownership and one-call lifecycle."""
+
+from __future__ import annotations
+
+import asyncio
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, ClassVar
+
+import phone_agent_gateway.ai_bridge.openai_realtime_websocket_pipeline as websocket_module
+import phone_agent_gateway.ai_bridge.phone_voice_agent as voice_agent_module
+import pytest
+from phone_agent_gateway.ai_bridge.call_context import CallContextPolicy
+from phone_agent_gateway.ai_bridge.phone_voice_agent import PhoneVoiceAgent
+from phone_agent_gateway.ai_bridge.production_pipeline import ProductionCallPipeline
+from phone_agent_gateway.ai_bridge.runtime_config import RuntimeConfig
+from phone_agent_gateway.ai_bridge.session import SessionPhase
+from phone_agent_gateway.ai_bridge.voice_host_lock import VoiceHostBusyError, VoiceHostLock
+from phone_agent_gateway.mac_client.framed_link import LinkError
+from phone_agent_gateway.mac_client.gateway_client import CallState, CallStatus
+from pipecat.frames.frames import TTSSpeakFrame
+
+
+def test_voice_host_lock_rejects_a_second_owner(tmp_path: Path) -> None:
+    path = tmp_path / "voice.lock"
+    first = VoiceHostLock(path)
+    second = VoiceHostLock(path)
+    first.acquire()
+    try:
+        with pytest.raises(VoiceHostBusyError, match="already running"):
+            second.acquire()
+    finally:
+        first.release()
+
+    second.acquire()
+    second.release()
+
+
+def test_direct_whatsapp_does_not_require_the_android_link_key() -> None:
+    config = SimpleNamespace(link_authentication_key=None, call_channel="whatsapp")
+    PhoneVoiceAgent(config)  # type: ignore[arg-type]
+
+
+def test_gsm_still_requires_the_android_link_key() -> None:
+    config = SimpleNamespace(link_authentication_key=None, call_channel="gsm")
+    with pytest.raises(ValueError, match="PHONE_AGENT_LINK_KEY"):
+        PhoneVoiceAgent(config)  # type: ignore[arg-type]
+
+
+def test_voice_host_derives_direction_from_who_started_the_call() -> None:
+    config = SimpleNamespace(link_authentication_key=b"x" * 32, call_channel="gsm")
+
+    outbound = PhoneVoiceAgent(config, dial_number="+212600000000")  # type: ignore[arg-type]
+    inbound = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+
+    assert outbound.call_direction == "outbound"
+    assert inbound.call_direction == "inbound"
+
+
+@pytest.mark.asyncio
+async def test_realtime_preload_finishes_before_gateway_is_declared_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        call_channel="gsm",
+        voice_lock_path=tmp_path / "voice.lock",
+    )
+    agent = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+    order: list[str] = []
+
+    async def step(name: str) -> None:
+        order.append(name)
+
+    async def gateway_ready(*, retry: bool = False) -> None:
+        assert retry is True
+        order.append("gateway_ready")
+        agent._stopping.set()
+
+    monkeypatch.setattr(agent, "_prewarm_primary_llm", lambda: step("llm"))
+    monkeypatch.setattr(agent, "_prepare_provider_services", lambda: step("providers"))
+    monkeypatch.setattr(agent, "_preload_realtime_pipeline", lambda: step("preload"))
+    monkeypatch.setattr(agent, "_replace_runtime", gateway_ready)
+    monkeypatch.setattr(agent, "_close_runtime", lambda **_kwargs: step("closed"))
+
+    await agent.run()
+
+    assert order == ["llm", "providers", "preload", "gateway_ready", "closed"]
+
+
+@pytest.mark.asyncio
+async def test_gsm_realtime_module_is_preloaded_once_before_listening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        call_channel="gsm",
+        pipeline_mode="s2s_chatgpt_realtime",
+        providers=SimpleNamespace(chatgpt_realtime_transport="websocket"),
+    )
+    agent = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+    imported: list[str] = []
+    monkeypatch.setattr(
+        voice_agent_module.importlib,
+        "import_module",
+        lambda name: imported.append(name),
+    )
+
+    await agent._preload_realtime_pipeline()
+
+    assert imported == [
+        "phone_agent_gateway.ai_bridge.openai_realtime_websocket_pipeline"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_outbound_agent_stops_after_call_returns_idle() -> None:
+    config = SimpleNamespace(link_authentication_key=b"x" * 32, auto_answer=False)
+    agent = PhoneVoiceAgent(config, dial_number="0600000000")  # type: ignore[arg-type]
+    agent._runtime = SimpleNamespace(pipeline=object())  # type: ignore[assignment]
+
+    await agent._handle_status(CallStatus("ok", CallState.ACTIVE, 4, "0600000000"))
+    assert agent._stopping.is_set() is False
+
+    await agent._handle_status(CallStatus("ok", CallState.IDLE, 0, ""))
+    assert agent._stopping.is_set() is True
+
+
+@pytest.mark.asyncio
+async def test_voice_host_shutdown_hangs_up_active_channel_before_close() -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def get_status(self) -> CallStatus:
+            return CallStatus("ok", CallState.ACTIVE, 4, "+212600000000")
+
+        def hangup(self) -> None:
+            self.calls.append("hangup")
+
+        def close(self) -> None:
+            self.calls.append("close")
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.phase = SessionPhase.ACTIVE
+            self.metrics = {
+                "input_frames": 0,
+                "dropped_input_frames": 0,
+                "sequence_gaps": 0,
+                "stale_input_frames": 0,
+                "output_frames": 0,
+                "dropped_output_frames": 0,
+            }
+
+        def snapshot(self) -> SimpleNamespace:
+            return SimpleNamespace(phase=self.phase, metrics=self.metrics)
+
+        def set_phase(self, phase: SessionPhase) -> None:
+            self.phase = phase
+
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        auto_answer=False,
+        event_stream_enabled=False,
+    )
+    agent = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+    client = FakeClient()
+    session = FakeSession()
+    agent._runtime = SimpleNamespace(  # type: ignore[assignment]
+        client=client,
+        pipeline_start_task=None,
+        pipeline=None,
+        recorder=None,
+        transport=None,
+        session=session,
+        phone_audio_route={},
+    )
+
+    await agent._close_runtime(hangup=True)
+
+    assert client.calls == ["hangup", "close"]
+    assert session.phase is SessionPhase.CLOSED
+    assert agent._runtime is None
+
+
+@pytest.mark.asyncio
+async def test_realtime_preconnect_begins_while_outbound_call_is_dialing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        auto_answer=False,
+        pipeline_mode="s2s_chatgpt_realtime",
+    )
+    agent = PhoneVoiceAgent(config, dial_number="0600000000")  # type: ignore[arg-type]
+    runtime = SimpleNamespace(pipeline=None, pipeline_start_task=None)
+    agent._runtime = runtime  # type: ignore[assignment]
+    started: list[str] = []
+    monkeypatch.setattr(
+        agent,
+        "_begin_realtime_preconnect",
+        lambda selected_runtime, caller_id: started.append(caller_id),
+    )
+
+    await agent._handle_status(CallStatus("ok", CallState.DIALING, 1, "0600000000"))
+
+    assert started == ["0600000000"]
+    assert agent._stopping.is_set() is False
+
+
+@pytest.mark.asyncio
+async def test_outbound_realtime_connection_runs_concurrently_with_blocking_dial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ready = threading.Event()
+    order: list[str] = []
+
+    class FakeClient:
+        def dial(self, number: str) -> dict[str, str]:
+            order.append(f"dial:{number}")
+            assert ready.wait(0.5), "Realtime task did not run while dial was blocked"
+            order.append("dial_returned")
+            return {"status": "ok"}
+
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        auto_answer=False,
+        pipeline_mode="s2s_chatgpt_realtime",
+    )
+    agent = PhoneVoiceAgent(config, dial_number="0600000000")  # type: ignore[arg-type]
+    runtime = SimpleNamespace(
+        client=FakeClient(), pipeline=None, pipeline_start_task=None
+    )
+
+    def begin(selected_runtime, caller_id: str) -> None:
+        order.append(f"preconnect:{caller_id}")
+
+        async def connect() -> None:
+            await asyncio.sleep(0.01)
+            order.append("realtime_ready")
+            ready.set()
+
+        selected_runtime.pipeline_start_task = asyncio.create_task(connect())
+
+    monkeypatch.setattr(agent, "_begin_realtime_preconnect", begin)
+
+    result = await agent._place_outbound_call(runtime, "0600000000")
+    await runtime.pipeline_start_task
+
+    assert result == {"status": "ok"}
+    assert order == [
+        "preconnect:0600000000",
+        "dial:0600000000",
+        "realtime_ready",
+        "dial_returned",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_keeps_its_existing_post_accept_preconnect_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def dial(self, number: str) -> dict[str, str]:
+            return {"status": "ok", "number": number}
+
+    config = SimpleNamespace(
+        link_authentication_key=None,
+        call_channel="whatsapp",
+        auto_answer=False,
+        pipeline_mode="s2s_chatgpt_realtime",
+    )
+    agent = PhoneVoiceAgent(config, dial_number="0600000000")  # type: ignore[arg-type]
+    runtime = SimpleNamespace(
+        client=FakeClient(), pipeline=None, pipeline_start_task=None
+    )
+    started: list[str] = []
+    monkeypatch.setattr(
+        agent,
+        "_begin_realtime_preconnect",
+        lambda _runtime, caller_id: started.append(caller_id),
+    )
+
+    result = await agent._place_outbound_call(runtime, "0600000000")
+
+    assert result == {"status": "ok", "number": "0600000000"}
+    assert started == []
+
+
+@pytest.mark.asyncio
+async def test_preconnected_realtime_pipeline_attaches_media_when_call_becomes_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        auto_answer=False,
+        pipeline_mode="s2s_chatgpt_realtime",
+    )
+    agent = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+    runtime = SimpleNamespace(pipeline=object(), media_attached=False)
+    agent._runtime = runtime  # type: ignore[assignment]
+    attached: list[CallState] = []
+
+    async def start_call(selected_runtime, status):
+        assert selected_runtime is runtime
+        attached.append(status.state)
+
+    monkeypatch.setattr(agent, "_start_call", start_call)
+
+    await agent._handle_status(CallStatus("ok", CallState.ACTIVE, 4, "0600000000"))
+
+    assert attached == [CallState.ACTIVE]
+
+
+@pytest.mark.asyncio
+async def test_ai_call_completion_callback_executes_one_channel_hangup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakePipeline:
+        def __init__(self, _transport, _config, **kwargs) -> None:
+            captured.update(kwargs)
+
+        async def start(self) -> None:
+            return None
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.hangups = 0
+
+        def hangup(self) -> None:
+            self.hangups += 1
+
+    monkeypatch.setattr(websocket_module, "OpenAIRealtimeWebSocketPipeline", FakePipeline)
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        call_channel="gsm",
+        pipeline_mode="s2s_chatgpt_realtime",
+        providers=SimpleNamespace(chatgpt_realtime_transport="websocket"),
+    )
+    agent = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+    client = FakeClient()
+    runtime = SimpleNamespace(
+        client=client,
+        transport=object(),
+        pipeline=None,
+        pipeline_start_task=None,
+    )
+    agent._runtime = runtime  # type: ignore[assignment]
+
+    agent._begin_realtime_preconnect(runtime, "+212600000000")
+    await runtime.pipeline_start_task
+    await captured["call_completion_sink"]("AI ended call")
+
+    assert client.hangups == 1
+
+
+@pytest.mark.asyncio
+async def test_inbound_auto_answer_calls_gateway_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def answer(self) -> None:
+            self.calls.append("answer")
+
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        auto_answer=True,
+        pipeline_mode="s2s_chatgpt_realtime",
+        event_stream_enabled=False,
+    )
+    agent = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+    client = FakeClient()
+    agent._runtime = SimpleNamespace(  # type: ignore[assignment]
+        client=client, pipeline=None, pipeline_start_task=None
+    )
+    monkeypatch.setattr(agent, "_begin_realtime_preconnect", lambda *args: None)
+
+    await agent._handle_status(CallStatus("ok", CallState.RINGING, 2, "+212600000000"))
+
+    assert agent.call_direction == "inbound"
+    assert client.calls == ["answer"]
+
+    await agent._handle_status(CallStatus("ok", CallState.RINGING, 2, "+212600000000"))
+    assert client.calls == ["answer"]
+
+
+@pytest.mark.asyncio
+async def test_inbound_answer_state_race_does_not_break_phone_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def answer(self) -> None:
+            raise LinkError("No ringing call")
+
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        auto_answer=True,
+        pipeline_mode="s2s_chatgpt_realtime",
+        event_stream_enabled=False,
+    )
+    agent = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+    agent._runtime = SimpleNamespace(  # type: ignore[assignment]
+        client=FakeClient(), pipeline=None, pipeline_start_task=None
+    )
+    monkeypatch.setattr(agent, "_begin_realtime_preconnect", lambda *args: None)
+
+    await agent._handle_status(CallStatus("ok", CallState.RINGING, 2, "+212600000000"))
+
+    assert agent._auto_answer_attempted is True
+
+
+@pytest.mark.asyncio
+async def test_inbound_auto_answer_uses_bounded_ringing_preconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[str] = []
+
+    class FakeClient:
+        def answer(self) -> None:
+            order.append("answer")
+
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        auto_answer=True,
+        pipeline_mode="s2s_chatgpt_realtime",
+        event_stream_enabled=False,
+    )
+    agent = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+    runtime = SimpleNamespace(
+        client=FakeClient(), pipeline=None, pipeline_start_task=None
+    )
+    agent._runtime = runtime  # type: ignore[assignment]
+
+    def begin(selected_runtime, _caller_id: str) -> None:
+        async def connect() -> None:
+            order.append("preconnect")
+            await asyncio.sleep(0.01)
+            order.append("ready")
+
+        selected_runtime.pipeline_start_task = asyncio.create_task(connect())
+
+    monkeypatch.setattr(agent, "_begin_realtime_preconnect", begin)
+
+    await agent._handle_status(CallStatus("ok", CallState.RINGING, 2, "+212600000000"))
+
+    assert order == ["preconnect", "ready", "answer"]
+
+
+@pytest.mark.asyncio
+async def test_inbound_auto_answer_never_waits_indefinitely_for_realtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    answered: list[bool] = []
+
+    class FakeClient:
+        def answer(self) -> None:
+            answered.append(True)
+
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        auto_answer=True,
+        pipeline_mode="s2s_chatgpt_realtime",
+        event_stream_enabled=False,
+    )
+    agent = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+    runtime = SimpleNamespace(
+        client=FakeClient(), pipeline=None, pipeline_start_task=None
+    )
+    agent._runtime = runtime  # type: ignore[assignment]
+
+    def begin(selected_runtime, _caller_id: str) -> None:
+        selected_runtime.pipeline_start_task = asyncio.create_task(asyncio.sleep(10))
+
+    monkeypatch.setattr(agent, "_begin_realtime_preconnect", begin)
+    monkeypatch.setattr(
+        voice_agent_module,
+        "INBOUND_REALTIME_PRECONNECT_GRACE_SECONDS",
+        0.01,
+    )
+
+    await agent._handle_status(CallStatus("ok", CallState.RINGING, 2, "+212600000000"))
+
+    assert answered == [True]
+    assert runtime.pipeline_start_task.cancelled() is False
+    runtime.pipeline_start_task.cancel()
+    await asyncio.gather(runtime.pipeline_start_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_greeting_is_deterministic_and_queued_once() -> None:
+    queued: list[Any] = []
+    finalized: list[tuple[str, str]] = []
+
+    class FakePolicy:
+        persona_compiler = SimpleNamespace(persona_data={"identity": {"name": "Adam"}})
+        call_context = CallContextPolicy("outbound")
+
+        async def finalize_response(self, text: str, *, response_kind: str = "turn"):
+            finalized.append((text, response_kind))
+            return text, object()
+
+    class FakeWorker:
+        async def queue_frame(self, frame: Any) -> None:
+            queued.append(frame)
+
+    pipeline = ProductionCallPipeline.__new__(ProductionCallPipeline)
+    pipeline.policy = FakePolicy()
+    pipeline.worker = FakeWorker()
+    pipeline.config = SimpleNamespace(providers=SimpleNamespace(stt_language="en-US"))
+    pipeline._greeted = False
+    pipeline._greet_lock = asyncio.Lock()
+
+    await asyncio.gather(pipeline.greet(), pipeline.greet(), pipeline.greet())
+
+    assert len(queued) == 1
+    assert isinstance(queued[0], TTSSpeakFrame)
+    assert queued[0].append_to_context is True
+    assert finalized == [
+        ("Hello, this is Adam. Is now a good time for one question?", "greeting")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sales_task_uses_oxzoon_outbound_opening_once() -> None:
+    queued: list[Any] = []
+    finalized: list[tuple[str, str]] = []
+
+    class FakePolicy:
+        persona_compiler = SimpleNamespace(persona_data={"identity": {"name": "Adam"}})
+        call_context = CallContextPolicy("outbound")
+        task_contract: ClassVar[dict[str, Any]] = {
+            "opening_greeting": {
+                "en": (
+                    "Hello, this is Adam, Sales Manager at OXzoon. I'm calling about our "
+                    "IPTV subscriptions. Is this a good time for a quick conversation?"
+                )
+            }
+        }
+
+        async def finalize_response(self, text: str, *, response_kind: str = "turn"):
+            finalized.append((text, response_kind))
+            return text, object()
+
+    class FakeWorker:
+        async def queue_frame(self, frame: Any) -> None:
+            queued.append(frame)
+
+    pipeline = ProductionCallPipeline.__new__(ProductionCallPipeline)
+    pipeline.policy = FakePolicy()
+    pipeline.worker = FakeWorker()
+    pipeline.config = SimpleNamespace(providers=SimpleNamespace(stt_language="en-US"))
+    pipeline._greeted = False
+    pipeline._greet_lock = asyncio.Lock()
+
+    await asyncio.gather(pipeline.greet(), pipeline.greet())
+
+    assert len(queued) == 1
+    assert finalized == [
+        (
+            "Hello, this is Adam, Sales Manager at OXzoon. I'm calling about our IPTV "
+            "subscriptions. Is this a good time for a quick conversation?",
+            "greeting",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_voice_host_never_replays_opening_across_pipeline_recovery() -> None:
+    config = SimpleNamespace(link_authentication_key=b"x" * 32, auto_answer=False)
+    agent = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+    greeted: list[str] = []
+
+    class FakePipeline:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def greet(self) -> None:
+            greeted.append(self.name)
+
+    await agent._greet_pipeline_once(FakePipeline("original"))  # type: ignore[arg-type]
+    await agent._greet_pipeline_once(FakePipeline("recovered"))  # type: ignore[arg-type]
+
+    assert greeted == ["original"]
+
+
+@pytest.mark.asyncio
+async def test_same_call_link_recovery_preserves_runtime_and_pipeline() -> None:
+    config = SimpleNamespace(link_authentication_key=b"x" * 32, auto_answer=False)
+    agent = PhoneVoiceAgent(config)  # type: ignore[arg-type]
+    reconnects = 0
+
+    class FakeClient:
+        def reconnect(self) -> None:
+            nonlocal reconnects
+            reconnects += 1
+
+    runtime = SimpleNamespace(
+        client=FakeClient(),
+        session=SimpleNamespace(call_id="call-1", link_epoch="epoch-2"),
+        pipeline=object(),
+    )
+    agent._runtime = runtime  # type: ignore[assignment]
+
+    await agent._recover_runtime_link(runtime)  # type: ignore[arg-type]
+
+    assert agent._runtime is runtime
+    assert runtime.pipeline is not None
+    assert reconnects == 1
+
+
+def _commanded_host(monkeypatch: pytest.MonkeyPatch, **kwargs: object) -> PhoneVoiceAgent:
+    monkeypatch.setenv("PHONE_AGENT_COMMAND_STDIN", "true")
+    config = RuntimeConfig.from_env(require_provider_credentials=False)
+    return PhoneVoiceAgent(config, **kwargs)  # type: ignore[arg-type]
+
+
+def test_a_commanded_host_outlives_its_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Exiting after one call is what forced a full model reload per dial.
+    assert _commanded_host(monkeypatch)._one_call_mode is False
+    assert _commanded_host(monkeypatch, dial_number="+212600000000")._one_call_mode is False
+
+
+def test_the_one_shot_cli_form_still_stops_after_its_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PHONE_AGENT_COMMAND_STDIN", raising=False)
+    config = RuntimeConfig.from_env(require_provider_credentials=False)
+
+    assert PhoneVoiceAgent(config, dial_number="+212600000000")._one_call_mode is True
+    assert PhoneVoiceAgent(config)._one_call_mode is False
+
+
+@pytest.mark.asyncio
+async def test_a_dial_command_clears_the_previous_call_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resident host must not leak one caller's state into the next call."""
+
+    agent = _commanded_host(monkeypatch)
+    dialled: list[str] = []
+
+    async def place(_runtime: object, number: str) -> dict[str, str]:
+        dialled.append(number)
+        return {"status": "ok"}
+
+    agent._runtime = SimpleNamespace(client=SimpleNamespace())  # type: ignore[assignment]
+    agent._place_outbound_call = place  # type: ignore[assignment]
+    agent.call_direction = "inbound"
+    agent._greeting_attempted = True
+    agent._outbound_seen_live_state = True
+    agent._active_caller_id = "+212000000000"
+
+    await agent._handle_command({"command": "dial", "number": "+212600000000"})
+
+    assert dialled == ["+212600000000"]
+    assert agent.call_direction == "outbound"
+    assert agent._outbound_number == "+212600000000"
+    assert agent._greeting_attempted is False
+    assert agent._outbound_seen_live_state is False
+    assert agent._active_caller_id == ""
+
+
+@pytest.mark.asyncio
+async def test_unusable_commands_never_take_the_host_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _commanded_host(monkeypatch)
+
+    await agent._handle_command({"command": "dial", "number": ""})
+    await agent._handle_command({"command": "nonsense"})
+    assert agent._stopping.is_set() is False
+
+    await agent._handle_command({"command": "shutdown"})
+    assert agent._stopping.is_set() is True
