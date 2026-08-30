@@ -182,7 +182,7 @@ class RemoteLinkRelay:
         listen_host: str = "0.0.0.0",
         listen_port: int = 8770,
         present_host: str = "127.0.0.1",
-        ports: tuple[int, ...] = GATEWAY_PORTS,
+        ports: tuple[int, ...] | None = None,
         ping_interval: float = 5.0,
         phone_timeout: float = 20.0,
     ) -> None:
@@ -192,7 +192,9 @@ class RemoteLinkRelay:
         self._listen_host = listen_host
         self._listen_port = listen_port
         self._present_host = present_host
-        self._ports = ports
+        # Resolved here rather than as a default argument so the module
+        # constant stays overridable at runtime.
+        self._ports = ports if ports is not None else GATEWAY_PORTS
         self._ping_interval = ping_interval
         self._phone_timeout = phone_timeout
 
@@ -215,9 +217,19 @@ class RemoteLinkRelay:
             self._handle_phone, self._listen_host, self._listen_port
         )
         for port in self._ports:
-            server = await asyncio.start_server(
-                self._make_local_handler(port), self._present_host, port
-            )
+            try:
+                server = await asyncio.start_server(
+                    self._make_local_handler(port), self._present_host, port
+                )
+            except OSError as exc:
+                await self.close()
+                # An adb forward holds exactly these ports, so this is the most
+                # likely failure by far and the message has to say so.
+                raise RemoteLinkError(
+                    f"gateway port {port} is already in use ({exc.strerror}). "
+                    "A USB forward is probably still active; run "
+                    "'adb forward --remove-all' or unplug the phone first."
+                ) from exc
             self._servers.append(server)
         logger.info(
             "remote link relay listening on %s:%d, presenting %s on %s",
@@ -439,6 +451,35 @@ class RemoteLinkRelay:
             await stream.writer.wait_closed()
 
 
+def local_addresses() -> list[str]:
+    """Addresses on this machine a handset could reach, best guess first.
+
+    Studio shows these so an operator can read one off the screen instead of
+    hunting for an IP on the command line.
+    """
+
+    import socket
+
+    found: list[str] = []
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        with contextlib.closing(probe):
+            # No packet is sent; this just asks the routing table which local
+            # address would be used to reach the internet.
+            probe.connect(("8.8.8.8", 80))
+            found.append(probe.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            address = info[4][0]
+            if address not in found and not address.startswith("127."):
+                found.append(address)
+    except OSError:
+        pass
+    return found
+
+
 def load_remote_link_key() -> bytes:
     """The tunnel reuses the phone's existing shared secret.
 
@@ -472,7 +513,50 @@ class RemoteLinkSettings:
     enabled: bool = False
     listen_host: str = "0.0.0.0"
     listen_port: int = 8770
-    ports: tuple[int, ...] = field(default=GATEWAY_PORTS)
+    ports: tuple[int, ...] = field(default_factory=lambda: GATEWAY_PORTS)
+
+    @staticmethod
+    def store_path() -> Path:
+        return Path.home() / ".config" / "phone-agent" / "remote-link.json"
+
+    @classmethod
+    def load(cls) -> RemoteLinkSettings:
+        """Operator choice first, environment only as the initial default.
+
+        Turning the tunnel on used to need an environment variable, which meant
+        restarting the service from a terminal. Persisting the choice is what
+        lets Studio own it.
+        """
+
+        import json
+
+        settings = cls.from_env()
+        try:
+            stored = json.loads(cls.store_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return settings
+        if isinstance(stored, dict):
+            settings.enabled = bool(stored.get("enabled", settings.enabled))
+            settings.listen_port = int(stored.get("listen_port", settings.listen_port))
+            settings.listen_host = str(stored.get("listen_host", settings.listen_host))
+        return settings
+
+    def save(self) -> None:
+        import json
+
+        path = self.store_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "enabled": self.enabled,
+                    "listen_host": self.listen_host,
+                    "listen_port": self.listen_port,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
     @classmethod
     def from_env(cls) -> RemoteLinkSettings:

@@ -13,6 +13,7 @@ from phone_agent_gateway.ai_bridge.remote_link import (
     FrameType,
     RemoteLinkError,
     RemoteLinkRelay,
+    RemoteLinkSettings,
     encode_frame,
 )
 
@@ -423,3 +424,84 @@ async def test_the_real_gateway_client_dials_through_the_tunnel() -> None:
         await phone.close()
         await relay.close()
         phone_service.close()
+
+
+def test_studio_can_turn_the_link_on_and_off_without_a_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Setup has to be possible from the UI; an env var means a terminal."""
+
+    import json as _json
+
+    from phone_agent_gateway.ai_bridge.runtime_config import ProviderConfig
+    from phone_agent_gateway.ai_bridge.web_server import PhoneAgentWebServer
+
+    # Never write the operator's real settings from a test.
+    store = tmp_path / "remote-link.json"
+    monkeypatch.setattr(RemoteLinkSettings, "store_path", staticmethod(lambda: store))
+    monkeypatch.delenv("PHONE_AGENT_REMOTE_LINK", raising=False)
+    # The real gateway ports are usually held by an adb forward on a developer
+    # machine, which is a genuine conflict rather than a test artefact.
+    monkeypatch.setattr(
+        "phone_agent_gateway.ai_bridge.remote_link.GATEWAY_PORTS",
+        (_free_port(), _free_port(), _free_port(), _free_port()),
+    )
+
+    async def _test() -> None:
+        server = PhoneAgentWebServer(config=ProviderConfig())
+        port = _free_port()
+
+        before = server.remote_link_status()
+        assert before["enabled"] is False
+        assert before["running"] is False
+        # The address an operator reads off the screen and types into the phone.
+        assert isinstance(before["addresses"], list)
+
+        after = await server.set_remote_link(enabled=True, port=port)
+        assert after["enabled"] is True
+        assert after["running"] is True
+        assert after["listen_port"] == port
+
+        # A phone can now actually reach it.
+        _, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+
+        off = await server.set_remote_link(enabled=False)
+        assert off["running"] is False
+
+        # The choice survives a restart, which is what replaces the env var.
+        stored = _json.loads(store.read_text())
+        assert stored["enabled"] is False
+
+    asyncio.run(_test())
+
+
+def test_a_bad_port_is_refused_rather_than_silently_ignored() -> None:
+    from phone_agent_gateway.ai_bridge.runtime_config import ProviderConfig
+    from phone_agent_gateway.ai_bridge.web_server import PhoneAgentWebServer
+
+    async def _test() -> None:
+        server = PhoneAgentWebServer(config=ProviderConfig())
+        with pytest.raises(ValueError, match="between 1 and 65535"):
+            await server.set_remote_link(enabled=True, port=99999)
+
+    asyncio.run(_test())
+
+
+@pytest.mark.asyncio
+async def test_a_port_held_by_an_adb_forward_says_so() -> None:
+    """"Address in use" alone sent an operator hunting; name the real cause."""
+
+    taken = _free_port()
+    blocker = await asyncio.start_server(lambda r, w: None, "127.0.0.1", taken)
+    relay = RemoteLinkRelay(
+        KEY, listen_host="127.0.0.1", listen_port=_free_port(), ports=(taken,)
+    )
+    try:
+        with pytest.raises(RemoteLinkError, match="adb forward"):
+            await relay.start()
+    finally:
+        blocker.close()
+        await relay.close()

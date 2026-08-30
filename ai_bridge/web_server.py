@@ -53,7 +53,12 @@ from .openwa_integration import (
 )
 from .personality.persona_compiler import PersonaCompiler
 from .production_security import AuditLedger, CallPolicy, public_destination
-from .remote_link import RemoteLinkRelay, RemoteLinkSettings, load_remote_link_key
+from .remote_link import (
+    RemoteLinkRelay,
+    RemoteLinkSettings,
+    load_remote_link_key,
+    local_addresses,
+)
 from .runtime_config import ProviderConfig
 from .secure_storage import append_private_line, atomic_write_private, harden_private_file
 from .tasks.task_engine import TaskEngine
@@ -299,8 +304,9 @@ class PhoneAgentWebServer:
         # When a handset tunnels in, the relay presents its gateway ports on
         # this machine's loopback, so the voice host keeps talking to
         # 127.0.0.1:8765-8768 and never learns the cable is gone.
-        self._remote_link_settings = RemoteLinkSettings.from_env()
+        self._remote_link_settings = RemoteLinkSettings.load()
         self._remote_link: RemoteLinkRelay | None = None
+        self._remote_link_error = ""
         # A warm host does not exit when its call ends, so the end of a call is
         # learned from its published state transitions instead.
         self._warm_call_active = False
@@ -334,6 +340,7 @@ class PhoneAgentWebServer:
         self.app.router.add_get("/api/config", self.handle_get_config)
         self.app.router.add_get("/api/tts/edge-voices", self.handle_get_edge_voices)
         self.app.router.add_post("/api/config", self.handle_post_config)
+        self.app.router.add_post("/api/remote-link", self.handle_post_remote_link)
         self.app.router.add_post("/api/call/dial", self.handle_post_dial)
         self.app.router.add_post("/api/call/hangup", self.handle_post_hangup)
         self.app.router.add_get("/api/approvals", self.handle_get_approvals)
@@ -1643,6 +1650,33 @@ class PhoneAgentWebServer:
                 "config": self._public_config(),
             }
         )
+
+    async def handle_post_remote_link(self, request: web.Request) -> web.Response:
+        """Let Studio own the cable-free link instead of an environment variable."""
+
+        # Cross-origin and DNS-rebinding are already refused by
+        # local_security_middleware, so this only validates the payload.
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response(
+                {"status": "error", "message": "invalid JSON"}, status=400
+            )
+        enabled = data.get("enabled")
+        if not isinstance(enabled, bool):
+            return web.json_response(
+                {"status": "error", "message": "enabled must be true or false"}, status=400
+            )
+        port = data.get("port")
+        if port is not None and not isinstance(port, int):
+            return web.json_response(
+                {"status": "error", "message": "port must be a number"}, status=400
+            )
+        try:
+            status = await self.set_remote_link(enabled=enabled, port=port)
+        except (ValueError, RuntimeError) as exc:
+            return web.json_response({"status": "error", "message": str(exc)}, status=400)
+        return web.json_response({"status": "ok", "remote_link": status})
 
     async def handle_post_dial(self, request: web.Request) -> web.Response:
         try:
@@ -3407,10 +3441,12 @@ class PhoneAgentWebServer:
                 listen_port=self._remote_link_settings.listen_port,
             )
             await relay.start()
-        except Exception:
+        except Exception as exc:
             # A relay that cannot bind must not stop a cabled phone from working.
             logger.exception("remote link relay could not start")
+            self._remote_link_error = str(exc)
             return
+        self._remote_link_error = ""
         self._remote_link = relay
         logger.info(
             "remote link relay accepting a handset on %s:%d",
@@ -3419,14 +3455,41 @@ class PhoneAgentWebServer:
         )
 
     def remote_link_status(self) -> dict[str, Any]:
-        if self._remote_link is None:
-            return {"enabled": self._remote_link_settings.enabled, "running": False}
-        return {
-            "enabled": True,
-            "running": True,
+        base: dict[str, Any] = {
+            "enabled": self._remote_link_settings.enabled,
+            "running": self._remote_link is not None,
             "listen_port": self._remote_link_settings.listen_port,
-            **self._remote_link.stats.snapshot(),
+            # Shown in Studio so the address can be read off the screen and
+            # typed into the handset, instead of hunted for in a terminal.
+            "addresses": local_addresses(),
+            "error": self._remote_link_error,
         }
+        if self._remote_link is not None:
+            base.update(self._remote_link.stats.snapshot())
+        return base
+
+    async def set_remote_link(self, *, enabled: bool, port: int | None = None) -> dict[str, Any]:
+        """Turn the tunnel on or off from Studio, with no restart."""
+
+        if port is not None:
+            if not 1 <= port <= 65535:
+                raise ValueError("port must be between 1 and 65535")
+            self._remote_link_settings.listen_port = port
+        self._remote_link_settings.enabled = enabled
+        await asyncio.to_thread(self._remote_link_settings.save)
+
+        if self._remote_link is not None:
+            await self._remote_link.close()
+            self._remote_link = None
+        if enabled:
+            await self._start_remote_link()
+            if self._remote_link is None:
+                raise RuntimeError(
+                    self._remote_link_error
+                    or f"could not listen on port {self._remote_link_settings.listen_port}"
+                )
+        await self.broadcast({"type": "remote_link_updated", **self.remote_link_status()})
+        return self.remote_link_status()
 
     async def _on_startup(self, app: web.Application) -> None:
         await self._start_remote_link()

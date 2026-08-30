@@ -1596,6 +1596,31 @@
 
       <!-- TAB: Pipeline & S2S Architecture -->
       <div class="tab-content" id="tab-pipeline">
+        <div class="form-group" style="border:1px solid var(--border,#333);border-radius:8px;padding:14px;margin-bottom:18px;">
+          <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+            Remote Phone — run without the USB cable
+            <span id="remote-link-dot" style="font-size:11px;">○</span>
+          </label>
+          <div style="font-size:11px;color:var(--text-muted);line-height:1.5;margin:6px 0 12px;">
+            The phone connects out to this computer, so it works on wifi or mobile data
+            and needs no cable. Turn this on, then on the phone open
+            <b>PhoneAgent Gateway → Connect to a runtime without a cable</b> and type the
+            address shown below.
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:6px;">
+              <input type="checkbox" id="remote-link-enabled" onchange="saveRemoteLink()">
+              Accept a phone over the network
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;">
+              Port
+              <input id="remote-link-port" class="form-control" type="number" value="8770"
+                     style="width:90px;" onchange="saveRemoteLink()">
+            </label>
+          </div>
+          <div id="remote-link-address" style="font-size:12px;margin-top:10px;"></div>
+          <div id="remote-link-status" style="font-size:12px;color:var(--text-muted);margin-top:6px;"></div>
+        </div>
         <div class="form-group">
           <label class="form-label">Voice Pipeline Architecture</label>
           <select id="pipeline-mode" class="form-select" onchange="handlePipelineModeChange()">
@@ -1923,6 +1948,7 @@
       ws.onopen = () => {
         document.getElementById('server-status-dot').className = 'status-dot active';
         document.getElementById('server-status-text').innerText = 'Connected';
+        refreshRemoteLink();
       };
 
       ws.onmessage = (event) => {
@@ -1942,6 +1968,10 @@
     }
 
     function handleWebSocketMessage(msg) {
+      if (msg.type === 'remote_link_updated') {
+        renderRemoteLink(msg);
+        return;
+      }
       if (msg.type === 'call_state') {
         updateCallStateUI(msg.state);
       } else if (msg.type === 'status_sync') {
@@ -3372,6 +3402,71 @@
       // the next call's contract without being seen.
       applyTaskToForm(parsed);
       taskStatus(`Loaded "${file.name}". Review the fields, then press Save Task Contract.`, false);
+    }
+
+    // ---- Remote phone link ------------------------------------------------
+    async function refreshRemoteLink() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        renderRemoteLink(data.remote_link);
+      } catch (err) { /* the socket reconnect will retry */ }
+    }
+    setInterval(refreshRemoteLink, 3000);
+
+    async function saveRemoteLink() {
+      const enabled = document.getElementById('remote-link-enabled').checked;
+      const port = parseInt(document.getElementById('remote-link-port').value, 10) || 8770;
+      try {
+        const res = await fetch('/api/remote-link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled, port }),
+        });
+        const data = await res.json();
+        if (data.status !== 'ok') {
+          document.getElementById('remote-link-status').textContent = data.message || 'Failed.';
+          return;
+        }
+        renderRemoteLink(data.remote_link);
+      } catch (err) {
+        document.getElementById('remote-link-status').textContent = String(err);
+      }
+    }
+
+    function renderRemoteLink(link) {
+      if (!link) return;
+      const box = document.getElementById('remote-link-enabled');
+      const portBox = document.getElementById('remote-link-port');
+      const dot = document.getElementById('remote-link-dot');
+      const address = document.getElementById('remote-link-address');
+      const status = document.getElementById('remote-link-status');
+      if (!box) return;
+      if (document.activeElement !== box) box.checked = !!link.enabled;
+      if (document.activeElement !== portBox && link.listen_port) portBox.value = link.listen_port;
+
+      if (link.phone_connected) {
+        dot.textContent = '●'; dot.style.color = '#1B7F3B';
+      } else if (link.enabled) {
+        dot.textContent = '○'; dot.style.color = '#B26A00';
+      } else {
+        dot.textContent = '○'; dot.style.color = 'var(--text-muted)';
+      }
+
+      const hosts = link.addresses || [];
+      address.innerHTML = link.enabled && hosts.length
+        ? 'Type this on the phone: <b>' + hosts[0] + '</b> port <b>' + link.listen_port + '</b>'
+        : '';
+
+      if (!link.enabled) {
+        status.textContent = 'Off — the phone is reached over USB.';
+      } else if (link.phone_connected) {
+        status.textContent = 'Phone connected' +
+          (link.last_rtt_ms ? ' · ' + link.last_rtt_ms + ' ms round trip' : '') +
+          ' · ' + (link.streams_open || 0) + ' open streams';
+      } else {
+        status.textContent = 'Waiting for the phone to connect…';
+      }
     }
 
     // ---- Live Tools & MCP control plane ---------------------------------

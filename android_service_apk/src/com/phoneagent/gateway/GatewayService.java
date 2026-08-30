@@ -42,6 +42,29 @@ public class GatewayService extends Service {
      * <p>Off unless an operator has paired this handset, so a phone that has
      * only ever been used over adb behaves exactly as before.
      */
+    /** Restart the tunnel after the settings screen changed it. */
+    public static void applyRemoteLinkSettings(android.content.Context context) {
+        GatewayService service = instance;
+        if (service == null) {
+            // Not running yet; starting it will read the new settings.
+            context.startForegroundService(new Intent(context, GatewayService.class));
+            return;
+        }
+        if (service.remoteLink != null) {
+            service.remoteLink.stop();
+            service.remoteLink = null;
+        }
+        service.startRemoteLinkIfConfigured();
+    }
+
+    /** null when the service is not running, otherwise the tunnel state. */
+    public static Boolean remoteLinkConnected() {
+        GatewayService service = instance;
+        if (service == null) return null;
+        RemoteLinkService link = service.remoteLink;
+        return link != null && link.isConnected();
+    }
+
     private void startRemoteLinkIfConfigured() {
         try {
             java.io.File config = new java.io.File(getFilesDir(), "remote-link.json");

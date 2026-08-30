@@ -109,47 +109,43 @@ upgrade.
 
 ## Running the phone without a cable
 
-The runtime reaches the handset through four TCP ports that `adb forward`
-tunnels over USB. Nothing about a call needs the cable: dial, hangup, answer and
-status are HTTP on 8765, and media is three sockets on 8766-8768. Replacing the
-transport therefore lets the runtime live on another machine entirely.
+Set this up from the two screens, not a terminal.
 
-A handset on mobile data sits behind carrier NAT, so the phone dials **out** and
-the runtime multiplexes the four ports back down that one socket. The relay
-re-presents them on its own loopback, which is the same shape `adb forward`
-produced, so **the voice host needs no change** — it still talks to
-127.0.0.1:8765-8768.
+**On the computer** — Studio → **Pipeline** tab → *Remote Phone*:
+tick **Accept a phone over the network**. The card shows the address and port to
+type on the handset, and turns green when the phone connects.
 
-On the runtime machine:
+**On the phone** — open **PhoneAgent Gateway** → *Connect to a runtime without a
+cable*: type that address, switch it on, tap **Save and connect**.
+
+Then remove the USB forwards so the relay can own the gateway ports:
 
 ```bash
-PHONE_AGENT_REMOTE_LINK=true PHONE_AGENT_REMOTE_LINK_PORT=8770 uv run phone-agent-web
+adb forward --remove-all
 ```
 
-On the handset, write `remote-link.json` into the gateway's private files
-directory and restart the service:
+That is the only command, and only because a USB forward and the relay cannot
+hold ports 8765-8768 at the same time. Studio names that conflict if you forget.
 
-```bash
-adb shell "su -c 'cat > /data/user/0/com.phoneagent.gateway/files/remote-link.json <<JSON
-{\"enabled\": true, \"host\": \"YOUR_RUNTIME_HOST\", \"port\": 8770}
-JSON'"
-adb shell am force-stop com.phoneagent.gateway
-adb shell am start-foreground-service -n com.phoneagent.gateway/.GatewayService
-```
+### Why it works
 
-Both ends authenticate every frame with the existing PHAG link key, so no new
-secret is provisioned. Studio reports the tunnel under `remote_link` in
-`/api/status`, including round-trip time.
+Nothing about a call needs the cable: dial, hangup and status are HTTP on 8765,
+media is three sockets on 8766-8768. The phone dials **out** — which is also how
+it works behind carrier NAT, where nothing can reach in — and one connection
+carries all four ports. The relay re-presents them on the computer's loopback,
+the same shape `adb forward` produced, so the voice host is unchanged.
 
-The handset keeps binding its gateway ports to loopback only. The tunnel client
-runs inside the phone process and connects to them locally, so nothing on the
-phone is exposed to the network, and the relay may only ask for the four gateway
-ports — never another local service.
+Both ends authenticate every frame with the existing PHAG link key, so no second
+secret is provisioned. The handset still binds its gateway ports to loopback
+only; the tunnel client runs in the same process and connects locally, and the
+relay may open none of the phone's other ports.
 
-**The open question is latency, not architecture.** The media path uses 20 ms
-frames with a 12-frame credit window, tuned for a sub-millisecond cable. Test on
-a LAN first; a wide-area link will need `UPLINK_WINDOW_FRAMES` and the startup
-reservoir widened to cover the round-trip time.
+### Limits
 
-Frames are authenticated but **not encrypted**. Over anything other than a
-trusted LAN, run the tunnel inside a VPN.
+**Latency is the open question, not the architecture.** The media path uses
+20 ms frames with a 12-frame credit window, tuned for a sub-millisecond cable.
+Try it on wifi first; a wide-area link will need `UPLINK_WINDOW_FRAMES` and the
+startup reservoir widened to cover the round trip.
+
+Frames are authenticated but **not encrypted**, as on the USB path. Over
+anything but a trusted LAN, run the tunnel inside a VPN.

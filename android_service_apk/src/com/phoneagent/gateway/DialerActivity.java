@@ -76,6 +76,11 @@ public class DialerActivity extends Activity {
         roleButton.setOnClickListener(v -> requestDialerRole());
         root.addView(roleButton, matchWrap());
 
+        Button remoteButton = new Button(this);
+        remoteButton.setText("Connect to a runtime without a cable");
+        remoteButton.setOnClickListener(v -> startActivity(RemoteLinkActivity.intentFor(this)));
+        root.addView(remoteButton, matchWrap());
+
         Button startButton = new Button(this);
         startButton.setText("Start gateway service");
         startButton.setOnClickListener(v -> startGatewayService());

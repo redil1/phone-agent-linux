@@ -37,6 +37,12 @@
 
         <!-- Minimal manual/recovery UI and ROLE_DIALER qualification surface. -->
         <activity
+            android:name=".RemoteLinkActivity"
+            android:label="PhoneAgent Remote Link"
+            android:theme="@android:style/Theme.Material.Light"
+            android:exported="false" />
+
+        <activity
             android:name=".DialerActivity"
             android:label="PhoneAgent Gateway"
             android:theme="@android:style/Theme.Material.Light"
