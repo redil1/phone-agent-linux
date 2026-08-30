@@ -2736,57 +2736,10 @@ class PhoneAgentWebServer:
                 raise ValueError("recording_consent must be boolean")
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             return web.json_response({"status": "error", "message": str(exc)}, status=400)
-        if self._dial_in_progress():
-            return web.json_response(
-                {"status": "error", "message": "A call is already in progress."}, status=409
-            )
-        preview = self.call_policy.decide_dial(
+        return await self._begin_dial(
             destination,
-            approved=True,
-            country_code=self.config.whatsapp_country_code,
-            reserve=False,
-        )
-        if not preview.allowed or preview.normalized is None or preview.public_destination is None:
-            return web.json_response({"status": "error", "message": preview.reason}, status=403)
-        self._prune_approvals()
-        request_id = secrets.token_urlsafe(24)
-        approval = PendingApproval(
-            request_id=request_id,
-            destination=preview.normalized,
-            public_destination=preview.public_destination,
+            operator_approved=True,
             recording_consent=recording_consent,
-            created_at=time.monotonic(),
-        )
-        self._approvals[request_id] = approval
-        await asyncio.to_thread(
-            self.audit_ledger.append,
-            "approval_requested",
-            {
-                "request_id": request_id,
-                "destination": approval.public_destination,
-                "channel": self.config.call_channel,
-                "recording_consent": recording_consent,
-            },
-        )
-        await self.broadcast(
-            {
-                "type": "approval_required",
-                "request_id": request_id,
-                # The local operator must see the exact action being approved.
-                # MCP responses, status, logs, and audit remain redacted.
-                "destination": approval.destination,
-                "channel": self.config.call_channel,
-                "recording_consent": recording_consent,
-            }
-        )
-        return web.json_response(
-            {
-                "status": "pending_operator_approval",
-                "request_id": request_id,
-                "destination": approval.public_destination,
-                "expires_in_seconds": APPROVAL_TTL_SECONDS,
-            },
-            status=202,
         )
 
     async def handle_get_approvals(self, request: web.Request) -> web.Response:

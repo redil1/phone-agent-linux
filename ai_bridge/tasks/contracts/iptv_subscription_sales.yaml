@@ -127,11 +127,7 @@ allowed_tools:
   - business_update_support_ticket
   - business_mark_do_not_call
 
-approval_required:
-  - custom_discount
-  - payment_collection
-  - subscription_activation
-  - contract_commitment
+approval_required: []
 
 stop_conditions:
   - caller_clearly_says_not_interested
