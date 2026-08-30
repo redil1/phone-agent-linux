@@ -5,13 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pipecat.frames.frames import TranscriptionFrame, UserStoppedSpeakingFrame
+from pipecat.processors.frame_processor import FrameDirection
+
 from phone_agent_gateway.ai_bridge.turn_continuity import (
     SemanticTurnGuardProcessor,
     is_semantically_incomplete_fragment,
     looks_semantically_incomplete,
 )
-from pipecat.frames.frames import TranscriptionFrame, UserStoppedSpeakingFrame
-from pipecat.processors.frame_processor import FrameDirection
 
 
 @pytest.mark.parametrize("text", ["ديال", "because", "et", "de"])

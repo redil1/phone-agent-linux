@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.call_context import (
     CallContextPolicy,
     InterestState,

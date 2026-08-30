@@ -5,10 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from phone_agent_gateway.ai_bridge.conversational_reflex import (
-    ConversationalReflexProcessor,
-    select_reflex,
-)
 from pipecat.frames.frames import (
     LLMContextFrame,
     TTSAudioRawFrame,
@@ -17,6 +13,11 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection
+
+from phone_agent_gateway.ai_bridge.conversational_reflex import (
+    ConversationalReflexProcessor,
+    select_reflex,
+)
 
 
 class _CachedReflexTTS:

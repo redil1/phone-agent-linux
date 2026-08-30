@@ -5,13 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from phone_agent_gateway.ai_bridge.agent_policy import (
-    AgentPolicyRuntime,
-    PlaybackEventProcessor,
-    ResponsePolicyProcessor,
-)
-from phone_agent_gateway.ai_bridge.memory.memory_manager import LayeredMemoryManager
-from phone_agent_gateway.ai_bridge.session import CallSessionState
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
@@ -19,6 +12,14 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.aggregators.llm_response_universal import LLMContext
 from pipecat.processors.frame_processor import FrameDirection
+
+from phone_agent_gateway.ai_bridge.agent_policy import (
+    AgentPolicyRuntime,
+    PlaybackEventProcessor,
+    ResponsePolicyProcessor,
+)
+from phone_agent_gateway.ai_bridge.memory.memory_manager import LayeredMemoryManager
+from phone_agent_gateway.ai_bridge.session import CallSessionState
 
 
 @pytest.mark.asyncio

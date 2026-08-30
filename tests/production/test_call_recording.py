@@ -7,6 +7,7 @@ import wave
 from pathlib import Path
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.call_recording import (
     CallRecordingSession,
     RecordingConfig,

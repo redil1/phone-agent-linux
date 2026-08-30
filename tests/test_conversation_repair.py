@@ -12,6 +12,9 @@ from itertools import pairwise
 from typing import Any
 
 import pytest
+from pipecat.frames.frames import TranscriptionFrame, TTSSpeakFrame
+from pipecat.processors.frame_processor import FrameDirection
+
 from phone_agent_gateway.ai_bridge.agent_policy import AgentPolicyRuntime
 from phone_agent_gateway.ai_bridge.conversation_repair import (
     RepairPolicy,
@@ -28,8 +31,6 @@ from phone_agent_gateway.ai_bridge.human_speech import (
 )
 from phone_agent_gateway.ai_bridge.memory.memory_manager import LayeredMemoryManager
 from phone_agent_gateway.ai_bridge.repair_processor import ConversationRepairProcessor
-from pipecat.frames.frames import TranscriptionFrame, TTSSpeakFrame
-from pipecat.processors.frame_processor import FrameDirection
 
 # ----------------------------------------------------------------- classify
 
@@ -325,6 +326,7 @@ def _shipped_compiler(tmp_path: Any) -> Any:
     """A compiler using the shipped defaults, not the operator's live persona."""
 
     import yaml
+
     from phone_agent_gateway.ai_bridge.personality.persona_compiler import PersonaCompiler
 
     persona_file = tmp_path / "persona.yaml"
@@ -365,6 +367,7 @@ def test_a_flat_override_does_not_erase_the_other_language(tmp_path: Any) -> Non
     the other language's prompt."""
 
     import yaml
+
     from phone_agent_gateway.ai_bridge.personality.persona_compiler import PersonaCompiler
 
     persona_file = tmp_path / "persona.yaml"
@@ -393,12 +396,13 @@ def test_a_flat_override_does_not_erase_the_other_language(tmp_path: Any) -> Non
 def test_a_reply_superseded_by_a_newer_turn_is_never_spoken(tmp_path: Any) -> None:
     import asyncio as _asyncio
 
-    from phone_agent_gateway.ai_bridge.agent_policy import ResponsePolicyProcessor
     from pipecat.frames.frames import (
         LLMFullResponseEndFrame,
         LLMFullResponseStartFrame,
         LLMTextFrame,
     )
+
+    from phone_agent_gateway.ai_bridge.agent_policy import ResponsePolicyProcessor
 
     events: list[dict[str, Any]] = []
     runtime = AgentPolicyRuntime(
@@ -440,12 +444,13 @@ def test_a_reply_superseded_by_a_newer_turn_is_never_spoken(tmp_path: Any) -> No
 def test_a_reply_to_the_current_turn_is_still_spoken(tmp_path: Any) -> None:
     import asyncio as _asyncio
 
-    from phone_agent_gateway.ai_bridge.agent_policy import ResponsePolicyProcessor
     from pipecat.frames.frames import (
         LLMFullResponseEndFrame,
         LLMFullResponseStartFrame,
         LLMTextFrame,
     )
+
+    from phone_agent_gateway.ai_bridge.agent_policy import ResponsePolicyProcessor
 
     runtime = AgentPolicyRuntime(
         caller_id="anonymous",

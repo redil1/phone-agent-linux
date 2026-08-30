@@ -8,9 +8,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
+import pytest
+from pipecat.frames.frames import TTSSpeakFrame
+
 import phone_agent_gateway.ai_bridge.openai_realtime_websocket_pipeline as websocket_module
 import phone_agent_gateway.ai_bridge.phone_voice_agent as voice_agent_module
-import pytest
 from phone_agent_gateway.ai_bridge.call_context import CallContextPolicy
 from phone_agent_gateway.ai_bridge.phone_voice_agent import PhoneVoiceAgent
 from phone_agent_gateway.ai_bridge.production_pipeline import ProductionCallPipeline
@@ -19,7 +21,6 @@ from phone_agent_gateway.ai_bridge.session import SessionPhase
 from phone_agent_gateway.ai_bridge.voice_host_lock import VoiceHostBusyError, VoiceHostLock
 from phone_agent_gateway.mac_client.framed_link import LinkError
 from phone_agent_gateway.mac_client.gateway_client import CallState, CallStatus
-from pipecat.frames.frames import TTSSpeakFrame
 
 
 def test_voice_host_lock_rejects_a_second_owner(tmp_path: Path) -> None:

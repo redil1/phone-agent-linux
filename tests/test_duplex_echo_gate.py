@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+
 from phone_agent_gateway.ai_bridge.duplex_echo_gate import (
     FRAME_BYTES,
     FRAME_SAMPLES,

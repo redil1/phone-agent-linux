@@ -6,6 +6,14 @@ import json
 from typing import Any
 
 import pytest
+from pipecat.frames.frames import (
+    Frame,
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
+    LLMTextFrame,
+)
+from pipecat.processors.frame_processor import FrameDirection
+
 from phone_agent_gateway.ai_bridge.cascade_tools import (
     MAX_TOOL_ITERATIONS,
     TOOL_CLOSE,
@@ -16,13 +24,6 @@ from phone_agent_gateway.ai_bridge.cascade_tools import (
     llm_supports_native_tools,
 )
 from phone_agent_gateway.ai_bridge.tasks.tool_catalog import RealtimeTool
-from pipecat.frames.frames import (
-    Frame,
-    LLMFullResponseEndFrame,
-    LLMFullResponseStartFrame,
-    LLMTextFrame,
-)
-from pipecat.processors.frame_processor import FrameDirection
 
 
 class _Context:

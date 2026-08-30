@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.tasks import product_pipeline
 from phone_agent_gateway.ai_bridge.tasks.product_pipeline import (
     ProductPipelineError,

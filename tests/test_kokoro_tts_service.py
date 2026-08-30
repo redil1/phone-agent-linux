@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 import pytest
+from pipecat.frames.frames import TTSAudioRawFrame
+
 from phone_agent_gateway.ai_bridge.kokoro_tts_service import (
     PhoneAgentKokoroTTSService,
     _KokoroEngine,
@@ -14,7 +16,6 @@ from phone_agent_gateway.ai_bridge.kokoro_tts_service import (
     _resolve_repo,
     _waveform_to_pcm16,
 )
-from pipecat.frames.frames import TTSAudioRawFrame
 
 
 def test_waveform_is_resampled_to_phone_pcm() -> None:

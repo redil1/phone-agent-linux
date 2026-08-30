@@ -7,6 +7,7 @@ import json
 from typing import ClassVar
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.tasks.tool_catalog import (
     build_tool_catalog,
     execute_tool,

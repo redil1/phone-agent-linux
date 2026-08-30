@@ -9,11 +9,12 @@ from typing import Any
 
 import numpy as np
 import pytest
+from pipecat.frames.frames import ErrorFrame, TTSAudioRawFrame
+
 from phone_agent_gateway.ai_bridge.google_genai_tts_service import (
     GoogleGenAITTSService,
     StreamingPCMResampler,
 )
-from pipecat.frames.frames import ErrorFrame, TTSAudioRawFrame
 
 
 class _FakeStream:

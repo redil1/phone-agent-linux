@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+
 from phone_agent_gateway.ai_bridge.memory.memory_manager import LayeredMemoryManager
 from phone_agent_gateway.ai_bridge.personality.persona_compiler import PersonaCompiler
 from phone_agent_gateway.ai_bridge.production_security import AuditLedger

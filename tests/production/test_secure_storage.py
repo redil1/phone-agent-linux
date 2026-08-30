@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.secure_storage import (
     SecureStorageError,
     append_private_line,

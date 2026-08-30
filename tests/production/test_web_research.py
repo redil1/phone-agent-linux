@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+
 from phone_agent_gateway.ai_bridge.runtime_config import ProviderConfig
 from phone_agent_gateway.ai_bridge.web_research import (
     WEB_RESEARCH_TOOL_NAME,

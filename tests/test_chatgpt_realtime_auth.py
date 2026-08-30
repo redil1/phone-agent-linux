@@ -8,6 +8,7 @@ import time
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.chatgpt_realtime_auth import (
     ChatGPTAuthManager,
     decode_jwt_payload,

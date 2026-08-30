@@ -7,8 +7,10 @@ import time
 from dataclasses import replace
 from uuid import uuid4
 
-import phone_agent_gateway.ai_bridge.pipecat_transport as transport_module
 import pytest
+from pipecat.frames.frames import OutputAudioRawFrame
+
+import phone_agent_gateway.ai_bridge.pipecat_transport as transport_module
 from phone_agent_gateway.ai_bridge.media_protocol import FrameDirection, FrameKind, MediaFrame
 from phone_agent_gateway.ai_bridge.pipecat_transport import (
     AudioWriteResult,
@@ -17,7 +19,6 @@ from phone_agent_gateway.ai_bridge.pipecat_transport import (
     PhoneAudioEndFrame,
 )
 from phone_agent_gateway.ai_bridge.session import SessionPhase
-from pipecat.frames.frames import OutputAudioRawFrame
 
 
 def active_transport() -> PhoneAgentTransport:

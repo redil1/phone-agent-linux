@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.codex_app_server import (
     CodexAppServerLLMService,
     resolve_codex_binary,

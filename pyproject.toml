@@ -107,6 +107,13 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
 
+[tool.ruff.lint.isort]
+# package-dir maps this package to the repository root, so ruff would otherwise
+# infer first-party imports from the checkout's folder name. Cloning into any
+# directory not called phone_agent_gateway then reordered imports and failed
+# lint on an untouched tree.
+known-first-party = ["phone_agent_gateway"]
+
 [tool.uv]
 # google-api-core 2.35.0 was yanked for a path_template.expand regression.
 constraint-dependencies = ["google-api-core!=2.35.0"]

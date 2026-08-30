@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.whatsapp_link import (
     BRIDGE_HEADER,
     BRIDGE_KIND_AUDIO,

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.tasks.call_state import (
     CallOutcome,
     SlotSpec,

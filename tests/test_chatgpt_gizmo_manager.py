@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.chatgpt_gizmo_manager import ChatGPTGizmoManager
 
 

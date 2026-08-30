@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.tasks.product_import import (
     _subject_terms,
     build_contract,

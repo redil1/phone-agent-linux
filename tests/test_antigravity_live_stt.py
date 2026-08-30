@@ -9,12 +9,6 @@ import time
 from typing import Any
 
 import pytest
-from phone_agent_gateway.ai_bridge.antigravity_live_stt import (
-    AntigravityLiveSTTService,
-    _StreamConn,
-)
-from phone_agent_gateway.ai_bridge.production_pipeline import create_provider_services
-from phone_agent_gateway.ai_bridge.runtime_config import ProviderConfig
 from pipecat.frames.frames import (
     InputAudioRawFrame,
     InterimTranscriptionFrame,
@@ -23,6 +17,13 @@ from pipecat.frames.frames import (
     UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection
+
+from phone_agent_gateway.ai_bridge.antigravity_live_stt import (
+    AntigravityLiveSTTService,
+    _StreamConn,
+)
+from phone_agent_gateway.ai_bridge.production_pipeline import create_provider_services
+from phone_agent_gateway.ai_bridge.runtime_config import ProviderConfig
 
 
 def test_runtime_config_accepts_antigravity_live() -> None:

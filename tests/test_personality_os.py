@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.guardrails.permission_gate import PermissionGate
 from phone_agent_gateway.ai_bridge.guardrails.personality_judge import (
     PersonalityFidelityJudge,
@@ -178,6 +179,7 @@ def test_persona_override_replaces_shipped_behaviour(tmp_path: Any) -> None:
     """Editing behaviour in the Studio must change the compiled prompt."""
 
     import yaml
+
     from phone_agent_gateway.ai_bridge.personality.persona_compiler import PersonaCompiler
 
     persona_file = tmp_path / "persona.yaml"
@@ -207,6 +209,7 @@ def _compiler(tmp_path: Any) -> Any:
     """A compiler writing to a throwaway persona file."""
 
     import yaml
+
     from phone_agent_gateway.ai_bridge.personality.persona_compiler import PersonaCompiler
 
     persona_file = tmp_path / "persona.yaml"

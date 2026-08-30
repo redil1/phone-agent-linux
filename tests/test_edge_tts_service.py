@@ -9,6 +9,8 @@ from collections.abc import AsyncGenerator
 
 import numpy as np
 import pytest
+from pipecat.frames.frames import ErrorFrame, TTSAudioRawFrame
+
 from phone_agent_gateway.ai_bridge.edge_tts_service import (
     EdgeTTSService,
     FFmpegMP3StreamDecoder,
@@ -16,7 +18,6 @@ from phone_agent_gateway.ai_bridge.edge_tts_service import (
     _PrefetchedPCMStream,
     split_edge_phrases,
 )
-from pipecat.frames.frames import ErrorFrame, TTSAudioRawFrame
 
 
 def _test_mp3(duration_ms: int = 300) -> bytes:

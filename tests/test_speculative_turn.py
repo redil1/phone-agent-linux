@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from phone_agent_gateway.ai_bridge.speculative_turn import SpeculativeTurnCoordinator
 from pipecat.processors.aggregators.llm_context import LLMContext
+
+from phone_agent_gateway.ai_bridge.speculative_turn import SpeculativeTurnCoordinator
 
 
 class _FakeLLM:

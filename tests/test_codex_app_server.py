@@ -1,7 +1,8 @@
 """Content conversion tests for the Codex app-server Pipecat service."""
 
-from phone_agent_gateway.ai_bridge.codex_app_server import CodexAppServerLLMService
 from pipecat.processors.aggregators.llm_context import LLMContext
+
+from phone_agent_gateway.ai_bridge.codex_app_server import CodexAppServerLLMService
 
 
 def test_latest_user_text_supports_string_content() -> None:

@@ -9,6 +9,13 @@ from typing import Any
 
 import pytest
 from aiohttp import web
+from pipecat.frames.frames import Frame, LLMContextFrame, LLMFullResponseEndFrame, LLMTextFrame
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.workers.runner import WorkerRunner
+
 from phone_agent_gateway.ai_bridge.ollama_native import (
     OllamaNativeClient,
     OllamaNativeLLMService,
@@ -16,12 +23,6 @@ from phone_agent_gateway.ai_bridge.ollama_native import (
     OllamaStreamEvent,
     normalize_ollama_base_url,
 )
-from pipecat.frames.frames import Frame, LLMContextFrame, LLMFullResponseEndFrame, LLMTextFrame
-from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.worker import PipelineParams, PipelineWorker
-from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.workers.runner import WorkerRunner
 
 
 async def start_server(

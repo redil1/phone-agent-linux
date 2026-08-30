@@ -6,6 +6,7 @@ from dataclasses import replace
 from uuid import UUID, uuid4
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.media_protocol import (
     AuthenticationError,
     FrameDirection,

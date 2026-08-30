@@ -1,7 +1,8 @@
 """Safety and context conversion tests for the Gemini CLI adapter."""
 
-from phone_agent_gateway.ai_bridge.gemini_cli import GeminiCliLLMService, _safe_error_summary
 from pipecat.processors.aggregators.llm_context import LLMContext
+
+from phone_agent_gateway.ai_bridge.gemini_cli import GeminiCliLLMService, _safe_error_summary
 
 
 def test_render_context_preserves_conversation_and_instruction() -> None:

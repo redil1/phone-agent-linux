@@ -9,6 +9,7 @@ every test runs against an empty tools directory unless it says otherwise.
 from __future__ import annotations
 
 import pytest
+
 from phone_agent_gateway.ai_bridge import openwa_integration, tool_control, web_research
 from phone_agent_gateway.ai_bridge.tasks import tool_registry
 

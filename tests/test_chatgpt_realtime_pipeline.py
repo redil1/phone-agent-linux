@@ -7,8 +7,9 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-import phone_agent_gateway.ai_bridge.chatgpt_realtime_pipeline as webrtc_module
 import pytest
+
+import phone_agent_gateway.ai_bridge.chatgpt_realtime_pipeline as webrtc_module
 from phone_agent_gateway.ai_bridge.chatgpt_realtime_pipeline import (
     CALLER_TURN_SETTLE_SECS,
     ChatGPTRealtimePipeline,

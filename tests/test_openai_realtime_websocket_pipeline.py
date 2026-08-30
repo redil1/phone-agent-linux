@@ -11,8 +11,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
-import phone_agent_gateway.ai_bridge.openai_realtime_websocket_pipeline as websocket_module
 import pytest
+from pipecat.frames.frames import OutputAudioRawFrame
+
+import phone_agent_gateway.ai_bridge.openai_realtime_websocket_pipeline as websocket_module
 from phone_agent_gateway.ai_bridge.openai_realtime_websocket_pipeline import (
     CONVERSATION_REPLAY_TURNS,
     OUTPUT_QUEUE_WARN_FRAMES,
@@ -49,7 +51,6 @@ from phone_agent_gateway.ai_bridge.web_research import (
     WebResearchConfig,
     WebResearchConfigStore,
 )
-from pipecat.frames.frames import OutputAudioRawFrame
 
 
 def runtime_config() -> RuntimeConfig:

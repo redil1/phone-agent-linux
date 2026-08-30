@@ -14,13 +14,14 @@ import struct
 from typing import Any
 
 import pytest
-from phone_agent_gateway.ai_bridge import parakeet_local_stt
-from phone_agent_gateway.ai_bridge.parakeet_local_stt import ParakeetLocalSTTService
 from pipecat.frames.frames import (
     InterimTranscriptionFrame,
     StartFrame,
     TranscriptionFrame,
 )
+
+from phone_agent_gateway.ai_bridge import parakeet_local_stt
+from phone_agent_gateway.ai_bridge.parakeet_local_stt import ParakeetLocalSTTService
 
 SAMPLE_RATE = 16_000
 

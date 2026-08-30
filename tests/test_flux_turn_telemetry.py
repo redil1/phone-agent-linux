@@ -6,6 +6,7 @@ import json
 from collections.abc import Awaitable, Callable
 
 import pytest
+
 from phone_agent_gateway.ai_bridge.telemetry import (
     CallTelemetry,
     FluxTurnState,

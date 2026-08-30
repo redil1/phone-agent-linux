@@ -9,6 +9,7 @@ import av
 import numpy as np
 import pytest
 import soxr
+
 from phone_agent_gateway.ai_bridge.chatgpt_realtime_pipeline import (
     PHONE_CHUNK_BYTES,
     PHONE_SAMPLE_RATE,

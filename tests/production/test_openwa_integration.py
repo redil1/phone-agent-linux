@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+
 from phone_agent_gateway.ai_bridge.openwa_integration import (
     OpenWAConfig,
     OpenWAConfigStore,

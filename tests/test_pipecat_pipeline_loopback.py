@@ -6,13 +6,6 @@ import asyncio
 import time
 
 import pytest
-from phone_agent_gateway.ai_bridge.media_protocol import FrameDirection as WireDirection
-from phone_agent_gateway.ai_bridge.media_protocol import FrameKind, MediaFrame
-from phone_agent_gateway.ai_bridge.pipecat_transport import (
-    PhoneAgentTransport,
-    PhoneAgentTransportParams,
-)
-from phone_agent_gateway.ai_bridge.session import SessionPhase
 from pipecat.frames.frames import (
     Frame,
     InputAudioRawFrame,
@@ -26,6 +19,14 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.workers.runner import WorkerRunner
+
+from phone_agent_gateway.ai_bridge.media_protocol import FrameDirection as WireDirection
+from phone_agent_gateway.ai_bridge.media_protocol import FrameKind, MediaFrame
+from phone_agent_gateway.ai_bridge.pipecat_transport import (
+    PhoneAgentTransport,
+    PhoneAgentTransportParams,
+)
+from phone_agent_gateway.ai_bridge.session import SessionPhase
 
 
 class ProbeSink(FrameProcessor):
