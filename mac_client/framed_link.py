@@ -59,6 +59,16 @@ class _Channel:
 AudioFrameCallback = Callable[[MediaFrame], None]
 
 
+def _port_is_open(host: str, port: int, timeout: float = 0.5) -> bool:
+    """Whether something is already accepting connections on this port."""
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 class FramedGatewayLink:
     """Own three independently backpressured authenticated TCP channels.
 
@@ -146,6 +156,16 @@ class FramedGatewayLink:
             try:
                 subprocess.run(command, check=True, capture_output=True)
             except (OSError, subprocess.CalledProcessError) as exc:
+                # Something else may already be presenting this port: the remote
+                # link relay owns exactly these while a handset is tunnelled in,
+                # and adb then refuses the bind. Failing here retried forever
+                # against a gateway that was reachable the whole time.
+                if _port_is_open(self.host, local_port):
+                    logger.info(
+                        "port %d is already served without adb; using it as-is",
+                        local_port,
+                    )
+                    continue
                 raise LinkDisconnected(
                     f"could not forward local {local_port} to Android {remote_port}: {exc}"
                 ) from exc

@@ -544,3 +544,26 @@ def test_the_child_is_told_not_to_fight_the_relay_for_the_ports() -> None:
 
     server._remote_link = SimpleNamespace(stats=SimpleNamespace(phone_connected=True))
     assert server._child_environment()["PHONE_AGENT_USE_ADB_FORWARD"] == "false"
+
+
+def test_an_already_served_port_is_used_instead_of_failing() -> None:
+    """The relay owns these ports, so adb refuses the bind and used to give up.
+
+    That looped "gateway unavailable" forever against a gateway that was
+    reachable the whole time.
+    """
+
+    import socket as _socket
+
+    from phone_agent_gateway.mac_client.framed_link import _port_is_open
+
+    listener = _socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        assert _port_is_open("127.0.0.1", port) is True
+    finally:
+        listener.close()
+
+    assert _port_is_open("127.0.0.1", port) is False

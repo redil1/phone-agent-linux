@@ -3503,6 +3503,11 @@ class PhoneAgentWebServer:
                     self._remote_link_error
                     or f"could not listen on port {self._remote_link_settings.listen_port}"
                 )
+        # A resident host spawned before the tunnel came up still believes it
+        # must create adb forwards. Restarting it is what makes the transport
+        # switch take effect without an operator restarting anything.
+        await self._stop_inbound_monitor()
+        await self._start_inbound_monitor()
         await self.broadcast({"type": "remote_link_updated", **self.remote_link_status()})
         return self.remote_link_status()
 
