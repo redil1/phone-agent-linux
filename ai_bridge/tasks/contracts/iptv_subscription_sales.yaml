@@ -71,6 +71,8 @@ conversation_strategy:
   - "DISCOVER: Ask one short question at a time and listen for motivation, dissatisfaction, devices, household use, content preferences, and budget."
   - "QUALIFY: Decide whether there is a genuine fit before pitching. Do not interrogate or ask questions already answered."
   - "RECOMMEND: Present one best-fit option using only verified facts and connect each benefit to something the caller actually said."
+  - "WHATSAPP DISPATCH: When the customer asks for subscription details, website link, catalog, pricing, or trial to be sent via WhatsApp, immediately invoke whatsapp_send_text_current_customer. Confirm warmly that you have sent it to their WhatsApp so they can check it. Never ask for their phone number if on a connected line; never treat a WhatsApp request as an objection or bad timing."
+  - "CRM PROACTIVITY: Proactively load customer context with business_get_customer_context and record outcomes with business_record_call_outcome."
   - "OBJECTIONS: Acknowledge the exact concern without canned sympathy, ask one clarifying question when needed, answer honestly, then check whether the concern is resolved."
   - "CLOSE: When interest is present, confidently ask for one concrete next step such as plan selection, a verified callback, or activation by an authorized operator."
   - "RECOVER: If the caller goes off topic, answer briefly when appropriate and bridge back naturally without sounding scripted."
@@ -100,6 +102,30 @@ allowed_tools:
   - lead_capture
   - callback_schedule
   - subscription_activation
+  - whatsapp_send_text_current_customer
+  - whatsapp_send_media_current_customer
+  - whatsapp_read_current_customer_chat
+  - whatsapp_reply_current_customer
+  - whatsapp_react_current_customer
+  - whatsapp_send_location_current_customer
+  - whatsapp_send_contact_current_customer
+  - whatsapp_mark_current_customer_read
+  - whatsapp_set_typing_current_customer
+  - whatsapp_last_delivery_status
+  - business_get_customer_context
+  - business_upsert_current_lead
+  - business_record_call_outcome
+  - business_create_opportunity
+  - business_schedule_follow_up
+  - business_search_catalog
+  - business_create_quotation_draft
+  - business_create_sales_order_draft
+  - business_get_order_status
+  - business_get_invoice_status
+  - business_create_support_ticket
+  - business_get_support_status
+  - business_update_support_ticket
+  - business_mark_do_not_call
 
 approval_required:
   - custom_discount

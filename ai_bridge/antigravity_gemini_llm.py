@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import ssl
+import subprocess
 from typing import Any
 
 import aiohttp
@@ -98,7 +100,7 @@ class AntigravityGeminiLLMService(LLMService):
         temperature: float = 0.4,
         turn_timeout_secs: float = 15.0,
         speculative_commit_wait_ms: int = 160,
-        fallback_model: str = "qwen3.5:4b-mlx",
+        fallback_model: str = "qwen2.5:3b",
         fallback_base_url: str = "http://127.0.0.1:11434",
         **kwargs: Any,
     ) -> None:
@@ -209,26 +211,96 @@ class AntigravityGeminiLLMService(LLMService):
     async def _discover_bridge(self) -> bool:
         if self._base_url and self._csrf_token:
             return True
+
+        candidates: list[tuple[int, str]] = []
+
+        # 1. Environment variables
+        env_port = os.getenv("ANTIGRAVITY_PORT", "").strip()
+        env_token = os.getenv("ANTIGRAVITY_CSRF_TOKEN", "").strip()
+        if env_port.isdigit() and env_token:
+            candidates.append((int(env_port), env_token))
+
+        # 2. Dynamic Process Inspection (Linux & macOS)
+        try:
+            ps_out = subprocess.check_output(
+                ["ps", "-eo", "pid,args"], stderr=subprocess.DEVNULL
+            ).decode("utf-8", errors="ignore")
+            for line in ps_out.splitlines():
+                if "language_server" in line:
+                    pid_m = re.match(r"\s*(\d+)", line)
+                    csrf_m = re.search(r"--csrf_token\s+([a-f0-9-]+)", line)
+                    if pid_m and csrf_m:
+                        pid = pid_m.group(1)
+                        token = csrf_m.group(1)
+                        try:
+                            lsof_out = subprocess.check_output(
+                                ["lsof", "-Pan", "-p", pid, "-i", "TCP"],
+                                stderr=subprocess.DEVNULL,
+                            ).decode("utf-8", errors="ignore")
+                            for lline in lsof_out.splitlines():
+                                if "LISTEN" in lline:
+                                    pm = re.search(r"127\.0\.0\.1:(\d+)", lline)
+                                    if pm:
+                                        candidates.append((int(pm.group(1)), token))
+                        except Exception:
+                            pass
+        except Exception as exc:
+            logger.debug("Process discovery exception: %s", exc)
+
+        # 3. Test discovered candidates with a lightweight verification probe
+        connector = aiohttp.TCPConnector(ssl=self._ssl_ctx)
+        timeout = aiohttp.ClientTimeout(total=2.0)
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as temp_session:
+            for port, token in candidates:
+                url = f"https://127.0.0.1:{port}/{SERVICE}/GetModelResponse"
+                headers = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "x-codeium-csrf-token": token,
+                    "Origin": f"https://127.0.0.1:{port}",
+                }
+                body = {
+                    "prompt": "ping",
+                    "model": self._enum_model,
+                }
+                try:
+                    async with temp_session.post(url, json=body, headers=headers) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data.get("response"):
+                                self._base_url = f"https://127.0.0.1:{port}"
+                                self._csrf_token = token
+                                logger.info(
+                                    "Discovered and verified Antigravity Language Server on %s (model=%s)",
+                                    self._base_url,
+                                    self._model_name,
+                                )
+                                return True
+                except Exception as exc:
+                    logger.debug("Candidate port %d probe failed: %s", port, exc)
+
+        # 4. Fallback legacy port scan for compatibility
         for port in range(53850, 53872):
             try:
                 url = f"https://127.0.0.1:{port}/"
-                timeout = aiohttp.ClientTimeout(total=1.0)
-                connector = aiohttp.TCPConnector(ssl=self._ssl_ctx)
+                timeout_scan = aiohttp.ClientTimeout(total=0.5)
+                connector_scan = aiohttp.TCPConnector(ssl=self._ssl_ctx)
                 async with aiohttp.ClientSession(
-                    connector=connector, timeout=timeout
-                ) as temp_session:
-                    async with temp_session.get(url) as resp:
+                    connector=connector_scan, timeout=timeout_scan
+                ) as scan_session:
+                    async with scan_session.get(url) as resp:
                         html = await resp.text()
                         m = re.search(r'csrfToken":"([^"]+)"', html)
                         if m and "antigravity" in html:
                             self._base_url = f"https://127.0.0.1:{port}"
                             self._csrf_token = m.group(1)
                             logger.info(
-                                "Discovered Antigravity Language Server on %s", self._base_url
+                                "Discovered Antigravity Language Server via scan on %s", self._base_url
                             )
                             return True
             except Exception:
                 continue
+
         return False
 
     async def start(self, frame: StartFrame) -> None:

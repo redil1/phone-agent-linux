@@ -93,17 +93,35 @@ def load_model(model_id: str = DEFAULT_MODEL) -> Any:
         cached = _MODEL_CACHE.get(model_id)
         if cached is not None:
             return cached
-        from parakeet_mlx import from_pretrained
+        try:
+            from parakeet_mlx import from_pretrained
 
-        started = time.perf_counter()
-        model = from_pretrained(model_id)
-        _MODEL_CACHE[model_id] = model
-        logger.info(
-            "loaded local Parakeet model=%s elapsed_ms=%.1f",
-            model_id,
-            (time.perf_counter() - started) * 1000,
-        )
-        return model
+            started = time.perf_counter()
+            model = from_pretrained(model_id)
+            _MODEL_CACHE[model_id] = model
+            logger.info(
+                "loaded local Parakeet model=%s elapsed_ms=%.1f",
+                model_id,
+                (time.perf_counter() - started) * 1000,
+            )
+            return model
+        except (ImportError, ModuleNotFoundError):
+            # Fallback on Linux / CUDA environments using faster-whisper
+            from faster_whisper import WhisperModel
+            import torch
+
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            comp_type = "float16" if torch.cuda.is_available() else "default"
+            whisper_model = "large-v3-turbo"
+            started = time.perf_counter()
+            model = WhisperModel(whisper_model, device=device, compute_type=comp_type)
+            _MODEL_CACHE[model_id] = model
+            logger.info(
+                "loaded local faster-whisper CUDA fallback model=%s elapsed_ms=%.1f",
+                whisper_model,
+                (time.perf_counter() - started) * 1000,
+            )
+            return model
 
 
 def transcribe_pcm(pcm: bytes, model_id: str = DEFAULT_MODEL) -> str:
@@ -115,18 +133,51 @@ def transcribe_pcm(pcm: bytes, model_id: str = DEFAULT_MODEL) -> str:
 
     if len(pcm) < SAMPLE_WIDTH * 2:
         return ""
-    import mlx.core as mx
 
     model = load_model(model_id)
     samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / _INT16_FULL_SCALE
-    # The whole turn is already buffered, so windowing the attention would only
-    # lose accuracy. keep_original_attention preserves the model's global
-    # attention for the single pass.
-    with model.transcribe_stream(
-        context_size=(256, 256), keep_original_attention=True
-    ) as stream:
-        stream.add_audio(mx.array(samples))
-        return stream.result.text.strip()
+
+    if hasattr(model, "transcribe_stream"):
+        import mlx.core as mx
+
+        # The whole turn is already buffered, so windowing the attention would only
+        # lose accuracy. keep_original_attention preserves the model's global
+        # attention for the single pass.
+        with model.transcribe_stream(
+            context_size=(256, 256), keep_original_attention=True
+        ) as stream:
+            stream.add_audio(mx.array(samples))
+            return stream.result.text.strip()
+    elif hasattr(model, "transcribe"):
+        # Faster-Whisper on Linux / CUDA: Use Silero VAD and hallucination suppression
+        segments, _ = model.transcribe(
+            samples,
+            beam_size=1,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=250, speech_pad_ms=100),
+            condition_on_previous_text=False,
+            no_speech_threshold=0.6,
+        )
+        text = " ".join(
+            s.text.strip() for s in segments if getattr(s, "no_speech_prob", 0.0) < 0.7
+        ).strip()
+        # Reject common Whisper phantom silence hallucinations on background noise
+        if text.lower().rstrip(".!?,") in {
+            "thank you",
+            "thank you.",
+            "thank you very much",
+            "thanks for watching",
+            "gracias",
+            "muchas gracias",
+            "subtitles by",
+            "merci",
+            "merci beaucoup",
+            "you",
+            "bye",
+        }:
+            return ""
+        return text
+    return ""
 
 
 async def transcribe_pcm_async(pcm: bytes, model_id: str = DEFAULT_MODEL) -> str:

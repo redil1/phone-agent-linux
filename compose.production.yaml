@@ -1,0 +1,160 @@
+services:
+  # ============================================================================
+  # 1. PhoneAgent Core AI & Telephony Gateway (NVIDIA CUDA 12.4 Accelerated)
+  # ============================================================================
+  phoneagent:
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+      args:
+        UID: ${HOST_UID:-1001}
+        GID: ${HOST_GID:-1001}
+    container_name: phoneagent-core
+    restart: unless-stopped
+    network_mode: host
+    command: ["--host", "0.0.0.0", "--port", "8090"]
+    environment:
+      - PHONE_AGENT_WEB_HOST=0.0.0.0
+      - PHONE_AGENT_WEB_PORT=8090
+      - PHONE_AGENT_ALLOW_EXTERNAL=true
+      - PHONE_AGENT_REMOTE_LINK_PORT=8770
+      - PHONE_AGENT_TTS_PROVIDER=kokoro
+      - PHONE_AGENT_STT_PROVIDER=whisper_cuda
+      - PHONE_AGENT_LLM_PROVIDER=antigravity_gemini
+      - OPENWA_BASE_URL=http://127.0.0.1:2785
+      - FRAPPE_BASE_URL=http://127.0.0.1:8080
+      - CRAWL4AI_BASE_URL=http://127.0.0.1:11235
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - /home/Ubuntu/.config/phone-agent:/home/phoneagent/.config/phone-agent
+      - /home/Ubuntu/.local/share/phone-agent:/home/phoneagent/.local/share/phone-agent
+      - /home/Ubuntu/phone-agent-logs:/home/phoneagent/phone-agent-logs
+      - /home/Ubuntu/.cache:/home/phoneagent/.cache
+      - /tmp:/tmp
+      - /opt/antigravity-ide:/opt/antigravity-ide:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8090/api/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ============================================================================
+  # 2. OpenWA WhatsApp Automation Gateway (Baileys Engine)
+  # ============================================================================
+  openwa:
+    image: ghcr.io/rmyndharis/openwa:0.23.3@sha256:c00b5b589446ce7dd6177f1b871789284bcfbe3612189ba109465025eb0ad4ec
+    container_name: phoneagent-openwa
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:2785:2785"
+    environment:
+      NODE_ENV: production
+      NODE_ID: phoneagent-openwa
+      AUTO_START_SESSIONS: "true"
+      PORT: "2785"
+      LOG_LEVEL: info
+      SERVE_DASHBOARD: "true"
+      ENGINE_TYPE: baileys
+      SESSION_DATA_PATH: /app/data/sessions
+      API_MASTER_KEY: ${OPENWA_MASTER_KEY:-phoneagent-openwa-secure-master-key-2026}
+      API_KEY_PEPPER: ${OPENWA_API_KEY_PEPPER:-phoneagent-openwa-pepper-seed-2026}
+      MCP_ENABLED: "true"
+      MCP_READONLY: "false"
+      STORAGE_TYPE: local
+      STORAGE_LOCAL_PATH: /app/data/media
+      CORS_ORIGINS: http://127.0.0.1:2785,http://localhost:2785,http://127.0.0.1:8090
+    volumes:
+      - phoneagent-openwa-data:/app/data
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:2785/api/health/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ============================================================================
+  # 3. Crawl4AI Real-Time Web Intelligence & Research Sidecar
+  # ============================================================================
+  crawl4ai:
+    image: unclecode/crawl4ai:0.9.2@sha256:bd36741e7bdd35ddc1a05d9183e1d6d8cefb61dd640d944a25d026b76e917690
+    container_name: phoneagent-crawl4ai
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      CRAWL4AI_PORT: "11235"
+      REDIS_TASK_TTL: "900"
+      CRAWL4AI_HOOKS_ENABLED: "false"
+    mem_limit: 2048m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:11235/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ============================================================================
+  # 4. Business Suite - MariaDB Database
+  # ============================================================================
+  crm-db:
+    image: mariadb:10.6
+    container_name: phoneagent-crm-db
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --innodb-buffer-pool-size=512M
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-phoneagent_secure_db_pass_2026}
+    volumes:
+      - phoneagent-crm-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-phoneagent_secure_db_pass_2026}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ============================================================================
+  # 5. Business Suite - Redis Cache & Queue
+  # ============================================================================
+  crm-redis-cache:
+    image: redis:7-alpine
+    container_name: phoneagent-crm-redis-cache
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  crm-redis-queue:
+    image: redis:7-alpine
+    container_name: phoneagent-crm-redis-queue
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - phoneagent-crm-redis-queue:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  phoneagent-openwa-data:
+  phoneagent-crm-db:
+  phoneagent-crm-redis-queue:

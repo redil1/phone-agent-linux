@@ -45,8 +45,10 @@ def test_policy_preview_does_not_consume_rate_or_cooldown() -> None:
 def test_policy_file_is_exact_and_fail_closed(tmp_path: Path) -> None:
     path = tmp_path / "policy.json"
     path.write_text(json.dumps({"version": 1, "dial_enabled": False}))
+    path.chmod(0o600)
     assert load_policy(path).dial_enabled is False
     path.write_text(json.dumps({"version": 1, "unknown": True}))
+    path.chmod(0o600)
     with pytest.raises(PolicyError):
         load_policy(path)
     path.chmod(0o666)

@@ -35,6 +35,10 @@ def _isolated_user_tools(tmp_path_factory, monkeypatch):
     monkeypatch.delenv("PHONE_AGENT_TOOL_APPROVAL_DIR", raising=False)
     monkeypatch.delenv("PHONE_AGENT_OPENWA_CONFIG", raising=False)
     monkeypatch.delenv("PHONE_AGENT_WEB_RESEARCH_CONFIG", raising=False)
+    # Constructing the Studio starts a warm voice host in production so the first
+    # dial does not pay the ~20 s speech-model load. That spawns a real
+    # subprocess, so the suite runs with it off.
+    monkeypatch.setenv("PHONE_AGENT_WARM_VOICE_HOST", "0")
     tool_registry.clear_registry()
     yield
     tool_registry.clear_registry()

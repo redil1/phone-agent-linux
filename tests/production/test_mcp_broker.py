@@ -34,6 +34,7 @@ def test_configuration_is_exact_bounded_and_argv_only(tmp_path: Path) -> None:
             }
         )
     )
+    config.chmod(0o600)
     loaded = load_mcp_config(config)
     assert loaded[0].label == "inventory"
     assert loaded[0].command[0] == str(Path(sys.executable).resolve())
@@ -41,6 +42,7 @@ def test_configuration_is_exact_bounded_and_argv_only(tmp_path: Path) -> None:
     payload = json.loads(config.read_text())
     payload["servers"][0]["shell"] = True
     config.write_text(json.dumps(payload))
+    config.chmod(0o600)
     with pytest.raises(McpBrokerError, match="unknown fields"):
         load_mcp_config(config)
     config.chmod(0o666)

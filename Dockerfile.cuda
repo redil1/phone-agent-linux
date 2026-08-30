@@ -1,0 +1,81 @@
+# PhoneAgent AI Gateway - Production NVIDIA CUDA Container
+# PyTorch 2.6 + CUDA 12.4 + Kokoro-82M TTS + Whisper Lightning STT + Pipecat
+
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+
+LABEL maintainer="PhoneAgent AI"
+LABEL description="Production CUDA-Accelerated Cellular Telephony AI Gateway"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PHONE_AGENT_WEB_HOST="127.0.0.1" \
+    PHONE_AGENT_WEB_PORT="8090" \
+    PHONE_AGENT_REMOTE_LINK_PORT="8770" \
+    PHONE_AGENT_TTS_PROVIDER="kokoro" \
+    PHONE_AGENT_STT_PROVIDER="sensevoice" \
+    PHONE_AGENT_LLM_PROVIDER="antigravity_gemini" \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# Install system dependencies, audio libraries, and Python 3.11
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    curl \
+    git \
+    ffmpeg \
+    sox \
+    libsox-fmt-all \
+    libsox-dev \
+    libsndfile1 \
+    netcat-openbsd \
+    procps \
+    lsof \
+    ca-certificates \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3.11-dev \
+    python3.11-distutils \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG UID=1001
+ARG GID=1001
+
+# Set up non-root app user and directories
+RUN (groupadd -g ${GID} phoneagent 2>/dev/null || true) && \
+    (useradd -m -u ${UID} -g ${GID} -s /bin/bash phoneagent 2>/dev/null || useradd -m -s /bin/bash phoneagent) && \
+    mkdir -p /home/phoneagent/.config/phone-agent \
+             /home/phoneagent/.local/share/phone-agent \
+             /home/phoneagent/phone-agent-logs \
+             /app && \
+    chown -R ${UID}:${GID} /home/phoneagent /app && \
+    chmod 700 /home/phoneagent/.config/phone-agent
+
+WORKDIR /app
+
+# Install PyTorch with CUDA 12.4 wheels
+RUN python3.11 -m pip install --upgrade pip setuptools wheel && \
+    python3.11 -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124 && \
+    python3.11 -m pip install faster-whisper kokoro misaki[en] soxr supertonic segno funasr modelscope
+
+# Install Spacy English model for Kokoro G2P
+RUN python3.11 -m pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+
+# Copy project source and install
+COPY --chown=phoneagent:phoneagent . /app
+RUN python3.11 -m pip install -e ".[cloud,dev]"
+
+USER phoneagent
+
+EXPOSE 8090 8770 8765 8766 8767 8768
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+    CMD curl -f http://127.0.0.1:8090/api/status || exit 1
+
+ENTRYPOINT ["python3.11", "-m", "phone_agent_gateway.ai_bridge.web_server"]
+CMD ["--host", "0.0.0.0", "--port", "8090"]

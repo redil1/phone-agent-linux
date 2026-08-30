@@ -617,6 +617,7 @@ async def test_same_call_link_recovery_preserves_runtime_and_pipeline() -> None:
 
 def _commanded_host(monkeypatch: pytest.MonkeyPatch, **kwargs: object) -> PhoneVoiceAgent:
     monkeypatch.setenv("PHONE_AGENT_COMMAND_STDIN", "true")
+    monkeypatch.setenv("PHONE_AGENT_LINK_KEY_BASE64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
     config = RuntimeConfig.from_env(require_provider_credentials=False)
     return PhoneVoiceAgent(config, **kwargs)  # type: ignore[arg-type]
 
@@ -631,6 +632,7 @@ def test_the_one_shot_cli_form_still_stops_after_its_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("PHONE_AGENT_COMMAND_STDIN", raising=False)
+    monkeypatch.setenv("PHONE_AGENT_LINK_KEY_BASE64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
     config = RuntimeConfig.from_env(require_provider_credentials=False)
 
     assert PhoneVoiceAgent(config, dial_number="+212600000000")._one_call_mode is True

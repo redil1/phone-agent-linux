@@ -155,9 +155,9 @@ class FrappeConfigStore:
         previous = self.load()
         candidate = dict(payload)
         candidate.pop("fingerprint", None)
-        if candidate.get("api_key") == MASKED_SECRET:
+        if candidate.get("api_key") in {MASKED_SECRET, "", None} and previous.api_key:
             candidate["api_key"] = previous.api_key
-        if candidate.get("api_secret") == MASKED_SECRET:
+        if candidate.get("api_secret") in {MASKED_SECRET, "", None} and previous.api_secret:
             candidate["api_secret"] = previous.api_secret
         config = FrappeConfig.model_validate(candidate)
         config.revision = previous.revision + 1
@@ -171,9 +171,9 @@ class FrappeConfigStore:
         previous = self.load()
         candidate = dict(payload)
         candidate.pop("fingerprint", None)
-        if candidate.get("api_key") == MASKED_SECRET:
+        if candidate.get("api_key") in {MASKED_SECRET, "", None} and previous.api_key:
             candidate["api_key"] = previous.api_key
-        if candidate.get("api_secret") == MASKED_SECRET:
+        if candidate.get("api_secret") in {MASKED_SECRET, "", None} and previous.api_secret:
             candidate["api_secret"] = previous.api_secret
         return FrappeConfig.model_validate(candidate)
 
@@ -288,7 +288,7 @@ class FrappeToolRuntime:
         self.catalog: dict[str, RealtimeTool] = {}
 
     async def start(self) -> dict[str, RealtimeTool]:
-        if not self.config.enabled or not self.phone_digits:
+        if not self.config.enabled:
             return {}
         self.session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=self.config.request_timeout_ms / 1_000)
@@ -362,9 +362,12 @@ class FrappeToolRuntime:
         method = method_map.get(name)
         if method is None:
             raise FrappeIntegrationError(f"unknown Frappe tool {name}")
+        phone_to_use = self.phone_digits or _phone_digits(
+            str(arguments.get("phone_number") or arguments.get("phone") or "")
+        )
         payload = {
             **arguments,
-            "phone": self.phone_digits,
+            "phone": phone_to_use,
             "call_id": self.call_id,
             "task_id": self.task_id,
             "call_direction": self.call_direction,

@@ -20,7 +20,20 @@ from typing import Any, Protocol
 
 import edge_tts
 from pipecat.frames.frames import ErrorFrame, Frame, TTSAudioRawFrame
-from pipecat.services.settings import NOT_GIVEN, TTSSettings, _NotGiven, assert_given
+from pipecat.services.settings import NOT_GIVEN, TTSSettings, _NotGiven
+from typing import Any
+
+try:
+    from pipecat.services.settings import assert_given  # type: ignore[attr-defined]
+except ImportError:
+    def assert_given(value: Any) -> Any:
+        try:
+            from pipecat.services.settings import NOT_GIVEN, is_given
+            if not is_given(value) or value is NOT_GIVEN:
+                return ""
+        except Exception:
+            pass
+        return value if value is not None else ""
 from pipecat.services.tts_service import TextAggregationMode, TTSService
 from pipecat.utils.text.base_text_aggregator import (
     Aggregation,

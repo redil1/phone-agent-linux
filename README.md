@@ -151,6 +151,9 @@ The installed LaunchAgent uses a self-contained runtime under
 the development checkout on Desktop. Installation is health-checked and automatically restores
 the previous snapshot if the new service cannot start.
 
+Building, installing and pairing the Android gateway APK is documented in
+[`docs/ANDROID_APP.md`](docs/ANDROID_APP.md).
+
 Security policy, consent-aware recordings, MCP trust boundaries, release signing/SBOM generation,
 backups, rollback, and device qualification are documented in
 `docs/SECURITY_AND_OPERATIONS.md`.

@@ -83,9 +83,10 @@ public class RemoteLinkActivity extends Activity {
 
         TextView help = new TextView(this);
         help.setText(
-                "Open PhoneAgent Studio on the computer, go to Remote Phone, and type"
-                        + " the address it shows below. The phone connects out, so it works"
-                        + " on wifi or mobile data without any cable.");
+                "Open PhoneAgent Studio on the computer or server, go to Remote Phone, and"
+                        + " type the address it shows below. The phone connects out, so the"
+                        + " runtime can be on the same wifi or anywhere on the internet, over"
+                        + " wifi or mobile data, with no cable.");
         help.setTextSize(14);
         help.setTextColor(Color.DKGRAY);
         help.setPadding(0, 0, 0, 24);
@@ -118,6 +119,11 @@ public class RemoteLinkActivity extends Activity {
         enabledSwitch.setText("Use the remote runtime instead of the cable");
         enabledSwitch.setPadding(0, 24, 0, 24);
         root.addView(enabledSwitch, matchWrap());
+
+        Button scan = new Button(this);
+        scan.setText("Scan pairing code from Studio");
+        scan.setOnClickListener(v -> startActivity(PairingScanActivity.intentFor(this)));
+        root.addView(scan, matchWrap());
 
         Button save = new Button(this);
         save.setText("Save and connect");
@@ -200,8 +206,11 @@ public class RemoteLinkActivity extends Activity {
             statusView.setText("● Connected to the runtime.\nThe cable is no longer needed.");
             statusView.setTextColor(Color.parseColor("#1B7F3B"));
         } else if (enabledSwitch != null && enabledSwitch.isChecked()) {
-            statusView.setText("○ Not connected yet. Retrying…\nCheck the address and that the"
-                    + " computer is on the same network.");
+            statusView.setText(
+                    "○ Not connected yet. Retrying…\n"
+                            + "The runtime can be anywhere on the internet, so check that the"
+                            + " address is right and that its firewall allows the port"
+                            + " (a timeout usually means the port is blocked).");
             statusView.setTextColor(Color.parseColor("#B26A00"));
         } else {
             statusView.setText("Remote link is off. The runtime reaches this phone over USB.");

@@ -302,7 +302,7 @@ class OllamaNativeLLMService(LLMService):
     def __init__(
         self,
         *,
-        model: str = "qwen3.5:4b-mlx",
+        model: str = "qwen2.5:3b",
         base_url: str = "http://127.0.0.1:11434",
         system_instruction: str | None = None,
         temperature: float = 0.7,

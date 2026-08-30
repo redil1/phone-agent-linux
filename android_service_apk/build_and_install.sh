@@ -12,15 +12,18 @@ elif [ -n "${1:-}" ]; then
 fi
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SDK="/Users/aziz/Library/Android/sdk"
-BT="$SDK/build-tools/34.0.0"
-PLAT="$SDK/platforms/android-34"
+SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+if [ ! -d "$SDK" ] && [ -d "/Users/aziz/Library/Android/sdk" ]; then
+    SDK="/Users/aziz/Library/Android/sdk"
+fi
+BT_DIR="$(ls -d "$SDK/build-tools/"* 2>/dev/null | sort -V | tail -n1 || echo "$SDK/build-tools/34.0.0")"
+PLAT_DIR="$(ls -d "$SDK/platforms/android-"* 2>/dev/null | sort -V | tail -n1 || echo "$SDK/platforms/android-34")"
 
-AAPT2="$BT/aapt2"
-D8="$BT/d8"
-ZIPALIGN="$BT/zipalign"
-APKSIGNER="$BT/apksigner"
-ANDROID_JAR="$PLAT/android.jar"
+AAPT2="$BT_DIR/aapt2"
+D8="$BT_DIR/d8"
+ZIPALIGN="$BT_DIR/zipalign"
+APKSIGNER="$BT_DIR/apksigner"
+ANDROID_JAR="$PLAT_DIR/android.jar"
 
 BUILD_DIR="$DIR/build"
 rm -rf "$BUILD_DIR"
@@ -44,8 +47,11 @@ echo "[*] Linking resources and generating R.java..."
 
 # 2. Compile Java Source Files with javac
 echo "[*] Compiling Java source files with javac..."
+# The QR decoder is vendored rather than fetched at build time so the APK is
+# reproducible offline. It is pure Java with no Android dependencies.
+LIBS="$(find "$DIR/libs" -name '*.jar' 2>/dev/null | tr '\n' ':')"
 javac -encoding UTF-8 \
-    -cp "$ANDROID_JAR" \
+    -cp "$ANDROID_JAR:$LIBS" \
     -d "$BUILD_DIR/classes" \
     $(find "$DIR/src" "$BUILD_DIR/gen" -name "*.java")
 
@@ -54,6 +60,7 @@ echo "[*] Converting bytecode to classes.dex with D8..."
 "$D8" --output "$BUILD_DIR" \
     --lib "$ANDROID_JAR" \
     --min-api 28 \
+    $(find "$DIR/libs" -name '*.jar' 2>/dev/null) \
     $(find "$BUILD_DIR/classes" -name "*.class")
 
 # 4. Add classes.dex into unaligned APK

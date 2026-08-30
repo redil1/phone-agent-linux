@@ -172,6 +172,25 @@ async def test_stdio_mcp_server_negotiates_and_reads_live_status(
             "phone_agent_list_tasks",
             "phone_agent_dial",
             "phone_agent_hangup",
+            # Full configuration control: an external agent that can only dial
+            # cannot actually run the appliance.
+            "phone_agent_get_configuration",
+            "phone_agent_set_configuration",
+            "phone_agent_get_tool_control",
+            "phone_agent_set_tool_control",
+            "phone_agent_get_persona",
+            "phone_agent_set_persona",
+            "phone_agent_set_task",
+            "phone_agent_delete_task",
+            "phone_agent_get_integration",
+            "phone_agent_set_integration",
+            "phone_agent_test_integration",
+            "phone_agent_set_remote_link",
+            "phone_agent_pairing_code",
+            "phone_agent_list_approvals",
+            "phone_agent_decide_approval",
+            "phone_agent_get_evaluation",
+            "phone_agent_get_caller_memory",
         }
         resources = await request(20, "resources/list", {})
         assert {item["uri"] for item in resources["result"]["resources"]} == {

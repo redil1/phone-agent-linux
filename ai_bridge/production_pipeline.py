@@ -115,17 +115,35 @@ def create_provider_services(config: ProviderConfig, sample_rate: int) -> Provid
             should_interrupt=True,
             settings=DeepgramFluxSTTService.Settings(**flux_settings),
         )
-    elif config.stt_provider == "whisper_mlx":
-        from pipecat.services.whisper.stt import WhisperSTTServiceMLX
+    elif config.stt_provider in {"whisper_mlx", "whisper_cuda", "whisper_local"}:
+        try:
+            import torch
 
-        stt = WhisperSTTServiceMLX(
+            device = "cuda" if torch.cuda.is_available() else "auto"
+            compute_type = "float16" if torch.cuda.is_available() else "default"
+        except Exception:
+            device = "auto"
+            compute_type = "default"
+
+        from pipecat.services.whisper.stt import WhisperSTTService
+
+        # Normalize MLX or HF repo names if provided on Linux
+        model_name = config.stt_model
+        if "whisper-large-v3-turbo" in model_name or "turbo" in model_name:
+            model_name = "large-v3-turbo"
+        elif "distil" in model_name:
+            model_name = "distil-large-v3"
+        elif "/" in model_name and not model_name.startswith("Systran/"):
+            model_name = "large-v3-turbo"
+
+        stt = WhisperSTTService(
             sample_rate=sample_rate,
-            settings=WhisperSTTServiceMLX.Settings(
-                model=config.stt_model,
+            device=device,
+            compute_type=compute_type,
+            settings=WhisperSTTService.Settings(
+                model=model_name,
                 language=_language(config.stt_language),
                 no_speech_prob=0.6,
-                temperature=0.0,
-                engine="mlx",
             ),
         )
     elif config.stt_provider == "antigravity_live":
@@ -149,6 +167,19 @@ def create_provider_services(config: ProviderConfig, sample_rate: int) -> Provid
             speculative_fast_endpoint_ms=config.speculative_fast_endpoint_ms,
             speculative_ambiguous_endpoint_ms=config.speculative_ambiguous_endpoint_ms,
             speculative_incomplete_endpoint_ms=config.speculative_incomplete_endpoint_ms,
+        )
+    elif config.stt_provider in {"sensevoice", "sensevoice_small"}:
+        from .sensevoice_stt_service import SenseVoiceSTTService
+
+        stt = SenseVoiceSTTService(
+            sample_rate=sample_rate,
+            language=config.stt_language,
+            model="iic/SenseVoiceSmall",
+            endpoint_ms=config.parakeet_endpoint_ms,
+            incomplete_endpoint_ms=config.parakeet_incomplete_endpoint_ms,
+            prefetch_silence_ms=config.speculative_prefetch_silence_ms,
+            energy_threshold_dbfs=-44.0,
+            speculative_pipeline_enabled=config.speculative_pipeline_enabled,
         )
     elif config.stt_provider == "parakeet_local":
         from .parakeet_local_stt import ParakeetLocalSTTService
@@ -294,6 +325,23 @@ def create_provider_services(config: ProviderConfig, sample_rate: int) -> Provid
     return ProviderServices(stt=stt, llm=llm, tts=tts)
 
 
+def _is_service_reachable(url: str, timeout: float = 0.4) -> bool:
+    """Check whether a local or remote HTTP endpoint is actively listening."""
+    if not url:
+        return False
+    try:
+        import urllib.request
+        endpoint = url.rstrip("/")
+        req = urllib.request.Request(endpoint, headers={"User-Agent": "PhoneAgentProbe"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return True
+    except urllib.error.HTTPError:
+        # HTTP 401/404/405/400 still confirms the server daemon is alive and listening
+        return True
+    except Exception:
+        return False
+
+
 def create_llm_service(config: ProviderConfig) -> Any:
     """Create one of the supported LLMs without changing pipeline topology."""
 
@@ -303,10 +351,13 @@ def create_llm_service(config: ProviderConfig) -> Any:
 
         return AntigravityGeminiLLMService(
             model=config.llm_model,
-            system_instruction="",
+            system_instruction=(
+                "You are a highly capable AI speaking on a telephone call. "
+                "Be natural, concise, attentive, and honest."
+            ),
             temperature=0.4,
             speculative_commit_wait_ms=config.speculative_commit_wait_ms,
-            fallback_model="qwen3.5:4b-mlx",
+            fallback_model="qwen2.5:3b",
             fallback_base_url=config.ollama_base_url,
         )
     if config.llm_provider == "codex_app":
@@ -374,6 +425,31 @@ def create_llm_service(config: ProviderConfig) -> Any:
             api_key=config.google_api_key,
             settings=GoogleLLMService.Settings(**settings),
         )
+
+    if config.llm_provider == "vllm":
+        if not _is_service_reachable(config.vllm_base_url):
+            logger.warning(
+                "vLLM server at %s is unreachable; auto-falling back to Antigravity Gemini / Ollama",
+                config.vllm_base_url,
+            )
+            from .antigravity_gemini_llm import AntigravityGeminiLLMService
+
+            return AntigravityGeminiLLMService(
+                model="gemini-2.5-flash",
+                system_instruction=(
+                    "You are a highly capable AI speaking on a telephone call. "
+                    "Be natural, concise, attentive, and honest."
+                ),
+                fallback_model="qwen2.5:3b",
+                fallback_base_url=config.ollama_base_url,
+            )
+        from pipecat.services.openai.llm import OpenAILLMService
+
+        return OpenAILLMService(
+            api_key=config.vllm_api_key or "EMPTY",
+            base_url=config.vllm_base_url,
+            settings=OpenAILLMService.Settings(**settings),
+        )
     if config.llm_provider == "lmstudio":
         from pipecat.services.openai.llm import OpenAILLMService
 
@@ -401,7 +477,7 @@ async def prewarm_primary_llm(config: ProviderConfig) -> float | None:
     )
     try:
         result = await client.prewarm(
-            model="qwen3.5:4b-mlx",
+            model=config.llm_model or "qwen2.5:3b",
             keep_alive=config.ollama_keep_alive,
             options={
                 "temperature": config.ollama_temperature,
@@ -422,23 +498,38 @@ async def prewarm_speech_models(config: ProviderConfig) -> dict[str, float]:
     """Load lazy local speech weights before the first caller utterance."""
 
     timings: dict[str, float] = {}
-    if config.stt_provider == "whisper_mlx":
+    if config.stt_provider in {"whisper_mlx", "whisper_cuda", "whisper_local"}:
         import time
-
-        import mlx_whisper
         import numpy as np
 
         started = time.perf_counter()
         silence = np.zeros(3_200, dtype=np.float32)
-        await asyncio.to_thread(
-            mlx_whisper.transcribe,
-            silence,
-            path_or_hf_repo=config.stt_model,
-            temperature=0.0,
-            language=config.stt_language,
-            no_speech_threshold=0.6,
-            verbose=None,
-        )
+        try:
+            from faster_whisper import WhisperModel
+            import torch
+
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            comp_type = "float16" if torch.cuda.is_available() else "default"
+            model_name = config.stt_model
+            if "whisper-large-v3-turbo" in model_name or "turbo" in model_name:
+                model_name = "large-v3-turbo"
+            elif "distil" in model_name:
+                model_name = "distil-large-v3"
+            elif "/" in model_name and not model_name.startswith("Systran/"):
+                model_name = "large-v3-turbo"
+
+            def _prewarm_whisper():
+                wm = WhisperModel(model_name, device=device, compute_type=comp_type)
+                list(wm.transcribe(silence, beam_size=1)[0])
+
+            await asyncio.to_thread(_prewarm_whisper)
+        except Exception as exc:
+            logger.warning("Whisper CUDA prewarm notice: %s", exc)
+        timings["whisper_ms"] = (time.perf_counter() - started) * 1000
+    if config.stt_provider in {"sensevoice", "sensevoice_small"}:
+        from .sensevoice_stt_service import prewarm_sensevoice
+
+        timings["sensevoice_ms"] = await asyncio.to_thread(prewarm_sensevoice, "iic/SenseVoiceSmall")
     if config.stt_provider == "parakeet_local":
         from .parakeet_local_stt import prewarm_parakeet
 
@@ -489,6 +580,159 @@ async def prewarm_speech_models(config: ProviderConfig) -> dict[str, float]:
             if not config.supertonic_fallback_to_edge:
                 raise
             logger.exception("Supertonic prewarm failed; calls will use the Edge fallback")
+    return timings
+
+
+async def prewarm_gpu_resident_models(
+    config: ProviderConfig | None = None,
+    *,
+    preload_ollama_models: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Make the configured speech models GPU-resident before the first call.
+
+    Only what the active configuration actually uses is loaded. The previous
+    version preloaded every backend unconditionally, which put a second
+    faster-whisper (~1.5 GB) on the card while the pipeline was running
+    SenseVoice, and pinned phi4:latest (9.05 GB) plus qwen2.5:3b (1.93 GB) with
+    keep_alive=-1 while the LLM provider was SGLang. On a 48 GB card shared with
+    a 27B target model, a 2B drafter and its mamba cache, that was enough to
+    push the KV pool down to a few thousand tokens.
+    """
+
+    import time
+
+    timings: dict[str, Any] = {}
+    stt = (config.stt_provider if config else "") or ""
+    tts = (config.tts_provider if config else "") or ""
+
+    try:
+        import torch
+
+        cuda = torch.cuda.is_available()
+    except Exception:
+        cuda = False
+
+    if stt in {"sensevoice", "sensevoice_small"}:
+        try:
+            from .sensevoice_stt_service import prewarm_sensevoice
+
+            device = "cuda:0" if cuda else "cpu"
+            started = time.perf_counter()
+            ms = await asyncio.to_thread(prewarm_sensevoice, "iic/SenseVoiceSmall", device)
+            timings["sensevoice_stt"] = {
+                "device": device,
+                "elapsed_ms": ms if ms is not None else (time.perf_counter() - started) * 1000,
+                "status": "resident",
+            }
+            logger.info("SenseVoice-Small STT resident on %s", device)
+        except Exception as exc:
+            timings["sensevoice_stt"] = {"status": "error", "error": str(exc)}
+            logger.warning("SenseVoice STT preload error: %s", exc)
+    else:
+        timings["sensevoice_stt"] = {"status": "skipped", "reason": f"stt_provider={stt}"}
+
+    if tts == "kokoro":
+        try:
+            from .kokoro_tts_service import prewarm_kokoro
+
+            device = "cuda" if cuda else "cpu"
+            started = time.perf_counter()
+            ms = await asyncio.to_thread(
+                prewarm_kokoro,
+                model=config.tts_model if config and config.tts_model else "hexgrad/Kokoro-82M",
+                voice=config.tts_voice_id if config and config.tts_voice_id else "af_heart",
+                language=(config.stt_language if config else "en-US") or "en-US",
+                device=device,
+            )
+            timings["kokoro_tts"] = {
+                "device": device,
+                "elapsed_ms": ms if ms is not None else (time.perf_counter() - started) * 1000,
+                "status": "resident",
+            }
+            logger.info("Kokoro-82M TTS resident on %s", device)
+        except Exception as exc:
+            timings["kokoro_tts"] = {"status": "error", "error": str(exc)}
+            logger.warning("Kokoro TTS preload error: %s", exc)
+    else:
+        timings["kokoro_tts"] = {"status": "skipped", "reason": f"tts_provider={tts}"}
+
+    if stt in {"whisper_cuda", "whisper_mlx", "whisper_local"}:
+        try:
+            import numpy as np
+            from faster_whisper import WhisperModel
+
+            device = "cuda" if cuda else "cpu"
+            comp_type = "float16" if cuda else "default"
+            silence = np.zeros(3_200, dtype=np.float32)
+            started = time.perf_counter()
+
+            def _prewarm() -> None:
+                wm = WhisperModel("large-v3-turbo", device=device, compute_type=comp_type)
+                list(wm.transcribe(silence, beam_size=1)[0])
+
+            await asyncio.to_thread(_prewarm)
+            timings["whisper_stt"] = {
+                "device": device,
+                "elapsed_ms": (time.perf_counter() - started) * 1000,
+                "status": "resident",
+            }
+        except Exception as exc:
+            timings["whisper_stt"] = {"status": "error", "error": str(exc)}
+            logger.warning("Whisper STT preload error: %s", exc)
+    else:
+        timings["whisper_stt"] = {"status": "skipped", "reason": f"stt_provider={stt}"}
+
+    # Ollama is only worth pinning when it is the provider, or the configured
+    # fallback for one. Pinning an unrelated model holds VRAM the LLM server
+    # needs for its KV cache and buys nothing.
+    provider = (config.llm_provider if config else "") or ""
+    if preload_ollama_models is None:
+        if provider == "ollama" and config and config.llm_model:
+            models_to_warm = [config.llm_model]
+        else:
+            models_to_warm = []
+    else:
+        models_to_warm = list(preload_ollama_models)
+
+    if not models_to_warm:
+        timings["ollama_models"] = {
+            "status": "skipped",
+            "reason": f"llm_provider={provider}; nothing to pin",
+        }
+        return timings
+
+    ollama_base = (
+        config.ollama_base_url if config else "http://127.0.0.1:11434"
+    ) or "http://127.0.0.1:11434"
+
+    from .ollama_native import OllamaNativeClient
+
+    client = OllamaNativeClient(base_url=ollama_base, turn_timeout_secs=45.0)
+    timings["ollama_models"] = {}
+    try:
+        for model_name in models_to_warm:
+            try:
+                res = await client.prewarm(
+                    model=model_name,
+                    keep_alive="-1",
+                    messages=[{"role": "user", "content": "Hello"}],
+                )
+                timings["ollama_models"][model_name] = {
+                    "status": "resident",
+                    "elapsed_ms": res.elapsed_ms,
+                    "keep_alive": "-1",
+                }
+                logger.info(
+                    "Ollama model resident in GPU VRAM: %s in %.1fms (keep_alive=-1)",
+                    model_name,
+                    res.elapsed_ms,
+                )
+            except Exception as exc:
+                timings["ollama_models"][model_name] = {"status": "unavailable", "error": str(exc)}
+                logger.info("Ollama preload skipped for %s: %s", model_name, exc)
+    finally:
+        await client.close()
+
     return timings
 
 
@@ -564,9 +808,14 @@ class ProductionCallPipeline:
                     "speculative turn pipeline unsupported by selected providers; using normal path"
                 )
         uses_external_turn_frames = config.providers.stt_provider in {
+            "sensevoice",
+            "sensevoice_small",
             "antigravity_live",
             "deepgram_flux",
             "parakeet_local",
+            "whisper_cuda",
+            "whisper_mlx",
+            "whisper_local",
         }
         self.user_aggregator, self.assistant_aggregator = LLMContextAggregatorPair(
             self.context,

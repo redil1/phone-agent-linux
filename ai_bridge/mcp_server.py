@@ -227,6 +227,225 @@ TOOLS = [
         "inputSchema": EMPTY_OBJECT,
         "annotations": {"readOnlyHint": False, "destructiveHint": True},
     },
+    # ---- full configuration control -------------------------------------
+    # An external agent that can only dial cannot actually run this appliance:
+    # choosing the model, activating a tool, editing the persona or attaching a
+    # handset all had to be done by hand in Studio. These expose the same
+    # operations the UI performs, through the same audited endpoints.
+    {
+        "name": "phone_agent_get_configuration",
+        "description": (
+            "Read the full runtime configuration: pipeline mode, LLM, STT and TTS "
+            "providers, models, voices and latency settings."
+        ),
+        "inputSchema": EMPTY_OBJECT,
+        "annotations": {"readOnlyHint": True, "destructiveHint": False},
+    },
+    {
+        "name": "phone_agent_set_configuration",
+        "description": (
+            "Change runtime configuration. Accepts any subset of the fields returned "
+            "by phone_agent_get_configuration, for example pipeline_mode, llm_provider, "
+            "llm_model, stt_provider, tts_provider, tts_model, tts_voice_id. Applies to "
+            "the next call; a call in progress is not disturbed."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": True,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False},
+    },
+    {
+        "name": "phone_agent_get_tool_control",
+        "description": (
+            "Read the Tools & MCP control plane: declared HTTP tools, local stdio and "
+            "remote MCP connections, which are active, and their task assignments."
+        ),
+        "inputSchema": EMPTY_OBJECT,
+        "annotations": {"readOnlyHint": True, "destructiveHint": False},
+    },
+    {
+        "name": "phone_agent_set_tool_control",
+        "description": (
+            "Replace the Tools & MCP configuration. Activation changes reach a call "
+            "already in progress within about a second."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"config": {"type": "object"}},
+            "required": ["config"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+    },
+    {
+        "name": "phone_agent_get_persona",
+        "description": "Read the agent persona: identity, voice, style and guardrails.",
+        "inputSchema": EMPTY_OBJECT,
+        "annotations": {"readOnlyHint": True, "destructiveHint": False},
+    },
+    {
+        "name": "phone_agent_set_persona",
+        "description": "Replace the agent persona. Applies to the next call.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": True,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+    },
+    {
+        "name": "phone_agent_set_task",
+        "description": (
+            "Create or update a task contract: its goal, slots to collect, allowed "
+            "tools, approval requirements and stop conditions."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": True,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+    },
+    {
+        "name": "phone_agent_delete_task",
+        "description": "Delete a user-authored task contract by id.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"task_id": {"type": "string"}},
+            "required": ["task_id"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+    },
+    {
+        "name": "phone_agent_get_integration",
+        "description": (
+            "Read one business integration's configuration: 'frappe' for CRM and "
+            "ERPNext, 'openwa' for WhatsApp messaging, or 'web-research'. Secrets "
+            "come back masked."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "integration": {
+                    "type": "string",
+                    "enum": ["frappe", "openwa", "web-research"],
+                }
+            },
+            "required": ["integration"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False},
+    },
+    {
+        "name": "phone_agent_set_integration",
+        "description": (
+            "Configure one business integration ('frappe', 'openwa' or "
+            "'web-research'). The config object is that integration's own shape, as "
+            "returned by phone_agent_get_integration."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "integration": {
+                    "type": "string",
+                    "enum": ["frappe", "openwa", "web-research"],
+                },
+                "config": {"type": "object"},
+            },
+            "required": ["integration", "config"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+    },
+    {
+        "name": "phone_agent_test_integration",
+        "description": (
+            "Test connectivity for one integration without changing anything. Use "
+            "this after configuring, before relying on it during a call."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "integration": {
+                    "type": "string",
+                    "enum": ["frappe", "openwa", "web-research", "tools"],
+                }
+            },
+            "required": ["integration"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False},
+    },
+    {
+        "name": "phone_agent_set_remote_link",
+        "description": (
+            "Enable or disable the cable-free link, which lets a handset reach this "
+            "runtime over the network instead of USB."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "enabled": {"type": "boolean"},
+                "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+            },
+            "required": ["enabled"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+    },
+    {
+        "name": "phone_agent_pairing_code",
+        "description": (
+            "Produce pairing material for a handset: an SVG QR carrying the link key, "
+            "address and port, plus a short fingerprint to compare on the phone. "
+            "Rotating invalidates the existing pairing, including over USB, until the "
+            "phone is paired again."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "rotate": {"type": "boolean"},
+                "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+            },
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+    },
+    {
+        "name": "phone_agent_list_approvals",
+        "description": "List pending operator approvals, for dialing and for tool use.",
+        "inputSchema": EMPTY_OBJECT,
+        "annotations": {"readOnlyHint": True, "destructiveHint": False},
+    },
+    {
+        "name": "phone_agent_decide_approval",
+        "description": "Approve or reject one pending approval by id.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string"},
+                "approved": {"type": "boolean"},
+            },
+            "required": ["request_id", "approved"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True},
+    },
+    {
+        "name": "phone_agent_get_evaluation",
+        "description": "Read per-turn persona fidelity and task evaluation results.",
+        "inputSchema": EMPTY_OBJECT,
+        "annotations": {"readOnlyHint": True, "destructiveHint": False},
+    },
+    {
+        "name": "phone_agent_get_caller_memory",
+        "description": "Read stored caller memory.",
+        "inputSchema": EMPTY_OBJECT,
+        "annotations": {"readOnlyHint": True, "destructiveHint": False},
+    },
 ]
 
 RESOURCES = [
@@ -272,8 +491,84 @@ def _call_tool(name: str, arguments: Any) -> dict[str, Any]:
         "phone_agent_list_deployments",
         "phone_agent_list_tasks",
         "phone_agent_hangup",
+        "phone_agent_get_configuration",
+        "phone_agent_get_tool_control",
+        "phone_agent_get_persona",
+        "phone_agent_list_approvals",
+        "phone_agent_get_evaluation",
+        "phone_agent_get_caller_memory",
     } and arguments:
         raise LocalControlError("this tool accepts no arguments")
+
+    # ---- full configuration control -------------------------------------
+    # Each of these is the endpoint Studio itself uses, so an external agent
+    # and an operator cannot drift apart or bypass one another's guards.
+    if name == "phone_agent_get_configuration":
+        return local_control_request("GET", "/api/config")
+    if name == "phone_agent_set_configuration":
+        if not arguments:
+            raise LocalControlError("set_configuration needs at least one field")
+        return local_control_request("POST", "/api/config", payload=arguments)
+    if name == "phone_agent_get_tool_control":
+        return local_control_request("GET", "/api/tools")
+    if name == "phone_agent_set_tool_control":
+        if set(arguments) != {"config"} or not isinstance(arguments["config"], dict):
+            raise LocalControlError("set_tool_control needs a config object")
+        return local_control_request("POST", "/api/tools", payload=arguments)
+    if name == "phone_agent_get_persona":
+        return local_control_request("GET", "/api/persona")
+    if name == "phone_agent_set_persona":
+        if not arguments:
+            raise LocalControlError("set_persona needs a persona body")
+        return local_control_request("POST", "/api/persona", payload=arguments)
+    if name == "phone_agent_set_task":
+        if not arguments:
+            raise LocalControlError("set_task needs a task contract")
+        return local_control_request("POST", "/api/tasks", payload=arguments)
+    if name == "phone_agent_delete_task":
+        if set(arguments) != {"task_id"} or not isinstance(arguments["task_id"], str):
+            raise LocalControlError("delete_task needs a task_id")
+        return local_control_request("POST", "/api/tasks/delete", payload=arguments)
+    if name in {
+        "phone_agent_get_integration",
+        "phone_agent_set_integration",
+        "phone_agent_test_integration",
+    }:
+        integration = arguments.get("integration")
+        if integration not in {"frappe", "openwa", "web-research", "tools"}:
+            raise LocalControlError("unknown integration")
+        if name == "phone_agent_get_integration":
+            if set(arguments) != {"integration"}:
+                raise LocalControlError("get_integration takes only an integration")
+            return local_control_request("GET", f"/api/{integration}")
+        if name == "phone_agent_test_integration":
+            if set(arguments) != {"integration"}:
+                raise LocalControlError("test_integration takes only an integration")
+            return local_control_request("POST", f"/api/{integration}/test", payload={})
+        if set(arguments) != {"integration", "config"} or not isinstance(
+            arguments["config"], dict
+        ):
+            raise LocalControlError("set_integration needs an integration and a config")
+        return local_control_request(
+            "POST", f"/api/{integration}", payload=arguments["config"]
+        )
+    if name == "phone_agent_set_remote_link":
+        if not isinstance(arguments.get("enabled"), bool):
+            raise LocalControlError("set_remote_link needs enabled true or false")
+        return local_control_request("POST", "/api/remote-link", payload=arguments)
+    if name == "phone_agent_pairing_code":
+        return local_control_request("POST", "/api/pairing", payload=arguments)
+    if name == "phone_agent_list_approvals":
+        return local_control_request("GET", "/api/approvals")
+    if name == "phone_agent_decide_approval":
+        if set(arguments) != {"request_id", "approved"}:
+            raise LocalControlError("decide_approval needs request_id and approved")
+        return local_control_request("POST", "/api/approvals/decide", payload=arguments)
+    if name == "phone_agent_get_evaluation":
+        return local_control_request("GET", "/api/eval")
+    if name == "phone_agent_get_caller_memory":
+        return local_control_request("GET", "/api/memory")
+
     if name == "phone_agent_status":
         return local_control_request("GET", "/api/mcp/status")
     if name == "phone_agent_capabilities":

@@ -446,6 +446,14 @@ def test_studio_can_turn_the_link_on_and_off_without_a_restart(
         "phone_agent_gateway.ai_bridge.remote_link.GATEWAY_PORTS",
         (_free_port(), _free_port(), _free_port(), _free_port()),
     )
+    monkeypatch.setattr(
+        "phone_agent_gateway.ai_bridge.web_server.load_remote_link_key",
+        lambda: KEY,
+    )
+    monkeypatch.setattr(
+        "phone_agent_gateway.ai_bridge.remote_link.load_remote_link_key",
+        lambda: KEY,
+    )
 
     async def _test() -> None:
         server = PhoneAgentWebServer(config=ProviderConfig())

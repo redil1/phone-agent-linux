@@ -21,6 +21,8 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_ROUTING" />
     <uses-permission android:name="android.permission.CAPTURE_AUDIO_OUTPUT" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Pairing only: the camera reads the QR Studio shows, nothing else. -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -36,6 +38,12 @@
         android:supportsRtl="true">
 
         <!-- Minimal manual/recovery UI and ROLE_DIALER qualification surface. -->
+        <activity
+            android:name=".PairingScanActivity"
+            android:label="Scan pairing code"
+            android:theme="@android:style/Theme.Material.Light"
+            android:exported="false" />
+
         <activity
             android:name=".RemoteLinkActivity"
             android:label="PhoneAgent Remote Link"

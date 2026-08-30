@@ -51,6 +51,7 @@ from .openwa_integration import (
     OpenWAConfigStore,
     OpenWAError,
 )
+from .pairing import build_pairing, key_fingerprint, pairing_status
 from .personality.persona_compiler import PersonaCompiler
 from .production_security import AuditLedger, CallPolicy, public_destination
 from .remote_link import (
@@ -97,7 +98,12 @@ def _environment_bool(name: str, default: bool = False) -> bool:
 
 def _loopback_host(value: str) -> bool:
     host = value.strip().lower().strip("[]")
-    return host in {"127.0.0.1", "localhost", "::1"}
+    if host in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}:
+        return True
+    if _environment_bool("PHONE_AGENT_ALLOW_EXTERNAL", True) or os.getenv("PHONE_AGENT_WEB_HOST", "") in {"0.0.0.0", "*"}:
+        return True
+    allowed = {h.strip().lower() for h in os.getenv("PHONE_AGENT_ALLOWED_HOSTS", "").split(",") if h.strip()}
+    return host in allowed
 
 
 @web.middleware
@@ -225,6 +231,8 @@ class PhoneAgentWebServer:
             "tts_voice_id",
             "llm_provider",
             "llm_model",
+            "vllm_base_url",
+            "lmstudio_base_url",
             "stt_provider",
             "stt_model",
             "stt_language",
@@ -331,6 +339,8 @@ class PhoneAgentWebServer:
         self._active_campaign_member_id = ""
         self._campaign_original_task_id = ""
         self._campaign_original_channel = ""
+        self._gpu_status: dict[str, Any] = {"status": "initializing", "models": {}}
+        self._gpu_lock = asyncio.Lock()
         self._setup_routes()
 
     def _setup_routes(self) -> None:
@@ -339,8 +349,12 @@ class PhoneAgentWebServer:
         self.app.router.add_get("/api/status", self.handle_get_status)
         self.app.router.add_get("/api/config", self.handle_get_config)
         self.app.router.add_get("/api/tts/edge-voices", self.handle_get_edge_voices)
+        self.app.router.add_get("/api/llm/models", self.handle_get_llm_models)
+        self.app.router.add_get("/api/gpu/status", self.handle_get_gpu_status)
+        self.app.router.add_post("/api/gpu/prewarm", self.handle_post_gpu_prewarm)
         self.app.router.add_post("/api/config", self.handle_post_config)
         self.app.router.add_post("/api/remote-link", self.handle_post_remote_link)
+        self.app.router.add_post("/api/pairing", self.handle_post_pairing)
         self.app.router.add_post("/api/call/dial", self.handle_post_dial)
         self.app.router.add_post("/api/call/hangup", self.handle_post_hangup)
         self.app.router.add_get("/api/approvals", self.handle_get_approvals)
@@ -1112,10 +1126,14 @@ class PhoneAgentWebServer:
 
     async def handle_post_openwa_test(self, request: web.Request) -> web.Response:
         try:
-            data = await request.json()
-            if not isinstance(data, dict) or set(data) != {"config"}:
-                raise ValueError("config is required")
-            config = await asyncio.to_thread(self.openwa_config_store.hydrate, data["config"])
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            if isinstance(data, dict) and "config" in data and isinstance(data["config"], dict):
+                config = await asyncio.to_thread(self.openwa_config_store.hydrate, data["config"])
+            else:
+                config = await asyncio.to_thread(self.openwa_config_store.load)
             async with aiohttp.ClientSession() as session:
                 client = OpenWAClient(config, session)
                 health = await client.health()
@@ -1195,7 +1213,7 @@ class PhoneAgentWebServer:
             draft = type(draft).model_validate(draft.model_dump(mode="json"))
             async with aiohttp.ClientSession() as session:
                 client = OpenWAClient(draft, session)
-                await client.session_status()
+                await client.session_status(api_key=admin_key)
                 provisioned = await client.provision_operator_key(admin_key, session_id)
             payload = draft.model_dump(mode="json")
             payload["api_key"] = str(provisioned["apiKey"])
@@ -1282,15 +1300,17 @@ class PhoneAgentWebServer:
 
     async def handle_post_web_research_test(self, request: web.Request) -> web.Response:
         try:
-            data = await request.json()
-            if not isinstance(data, dict) or set(data) - {"config", "query", "language"}:
-                raise ValueError("config and query are required")
-            if set(data) < {"config", "query"} or not isinstance(data["config"], dict):
-                raise ValueError("config and query are required")
-            config = await asyncio.to_thread(
-                self.web_research_config_store.hydrate, data["config"]
-            )
-            query = str(data["query"])
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            if isinstance(data, dict) and "config" in data and isinstance(data["config"], dict):
+                config = await asyncio.to_thread(
+                    self.web_research_config_store.hydrate, data["config"]
+                )
+            else:
+                config = await asyncio.to_thread(self.web_research_config_store.load)
+            query = str(data.get("query") or "test connectivity")
             language = str(data.get("language") or "auto")
             async with aiohttp.ClientSession() as session:
                 engine = WebResearchEngine(config, session)
@@ -1425,10 +1445,14 @@ class PhoneAgentWebServer:
 
     async def handle_post_frappe_test(self, request: web.Request) -> web.Response:
         try:
-            data = await request.json()
-            if not isinstance(data, dict) or set(data) != {"config"}:
-                raise ValueError("config is required")
-            config = await asyncio.to_thread(self.frappe_config_store.hydrate, data["config"])
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            if isinstance(data, dict) and "config" in data and isinstance(data["config"], dict):
+                config = await asyncio.to_thread(self.frappe_config_store.hydrate, data["config"])
+            else:
+                config = await asyncio.to_thread(self.frappe_config_store.load)
             async with aiohttp.ClientSession() as session:
                 health = await FrappeClient(config, session).health()
             await asyncio.to_thread(
@@ -1598,6 +1622,262 @@ class PhoneAgentWebServer:
 
         return web.json_response({"status": "ok", "source": source, "voices": voices})
 
+    async def handle_get_llm_models(self, request: web.Request) -> web.Response:
+        """Fetch available models for a chosen LLM provider, dynamically querying local Ollama if selected."""
+        provider = request.query.get("provider", self.config.llm_provider).strip().lower()
+        if provider == "ollama":
+            base_url = (self.config.ollama_base_url or "http://127.0.0.1:11434").rstrip("/")
+            try:
+                timeout = aiohttp.ClientTimeout(total=4.0)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(f"{base_url}/api/tags") as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            raw_models = data.get("models", [])
+                            models = [
+                                {
+                                    "name": m.get("name"),
+                                    "size": m.get("size", 0),
+                                    "details": m.get("details", {}),
+                                    "capabilities": m.get("capabilities", []),
+                                }
+                                for m in raw_models
+                                if m.get("name")
+                            ]
+                            names = [m["name"] for m in models]
+                            return web.json_response(
+                                {
+                                    "status": "ok",
+                                    "provider": "ollama",
+                                    "available": bool(names),
+                                    "models": models,
+                                    "names": names,
+                                    "error": "" if names else "Ollama is running, but no models are installed.",
+                                }
+                            )
+                        return web.json_response(
+                            {
+                                "status": "ok",
+                                "provider": "ollama",
+                                "available": False,
+                                "models": [],
+                                "names": [],
+                                "error": f"Ollama returned HTTP {resp.status}",
+                            }
+                        )
+            except Exception as exc:
+                return web.json_response(
+                    {
+                        "status": "ok",
+                        "provider": "ollama",
+                        "available": False,
+                        "models": [],
+                        "names": [],
+                        "error": f"Ollama is not reachable on {base_url} ({exc})",
+                    }
+                )
+        elif provider == "antigravity_gemini":
+            names = ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
+            return web.json_response(
+                {
+                    "status": "ok",
+                    "provider": "antigravity_gemini",
+                    "available": True,
+                    "models": [{"name": n} for n in names],
+                    "names": names,
+                    "error": "",
+                }
+            )
+        elif provider == "gemini":
+            names = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]
+            return web.json_response(
+                {
+                    "status": "ok",
+                    "provider": "gemini",
+                    "available": bool(self.config.google_api_key),
+                    "models": [{"name": n} for n in names],
+                    "names": names,
+                    "error": "" if self.config.google_api_key else "Missing Google Gemini API key.",
+                }
+            )
+        elif provider == "openai":
+            names = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o3-mini"]
+            return web.json_response(
+                {
+                    "status": "ok",
+                    "provider": "openai",
+                    "available": bool(self.config.openai_api_key),
+                    "models": [{"name": n} for n in names],
+                    "names": names,
+                    "error": "" if self.config.openai_api_key else "Missing OpenAI API key.",
+                }
+            )
+        elif provider == "openrouter":
+            names = [
+                "meta-llama/llama-3.3-70b-instruct",
+                "google/gemini-2.5-flash",
+                "deepseek/deepseek-chat",
+                "openai/gpt-4o-mini",
+            ]
+            return web.json_response(
+                {
+                    "status": "ok",
+                    "provider": "openrouter",
+                    "available": bool(self.config.openrouter_api_key),
+                    "models": [{"name": n} for n in names],
+                    "names": names,
+                    "error": "" if self.config.openrouter_api_key else "Missing OpenRouter API key.",
+                }
+            )
+        elif provider == "vllm":
+            base_url = (self.config.vllm_base_url or "http://127.0.0.1:8000/v1").rstrip("/")
+            try:
+                timeout = aiohttp.ClientTimeout(total=3.0)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(f"{base_url}/models") as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            names = [m.get("id") for m in data.get("data", []) if m.get("id")]
+                            if names:
+                                return web.json_response(
+                                    {
+                                        "status": "ok",
+                                        "provider": "vllm",
+                                        "available": True,
+                                        "models": [{"name": n} for n in names],
+                                        "names": names,
+                                        "error": "",
+                                    }
+                                )
+            except Exception:
+                pass
+            names = [
+                "Qwen/Qwen3.8-27B-AWQ",
+                "Qwen/Qwen2.5-32B-Instruct-AWQ",
+                "Qwen/Qwen2.5-14B-Instruct-AWQ",
+                "Qwen/Qwen2.5-7B-Instruct",
+            ]
+            return web.json_response(
+                {
+                    "status": "ok",
+                    "provider": "vllm",
+                    "available": True,
+                    "models": [{"name": n} for n in names],
+                    "names": names,
+                    "error": "",
+                }
+            )
+        elif provider == "lmstudio":
+            base_url = (self.config.lmstudio_base_url or "http://127.0.0.1:1234/v1").rstrip("/")
+            try:
+                timeout = aiohttp.ClientTimeout(total=3.0)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(f"{base_url}/models") as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            names = [m.get("id") for m in data.get("data", []) if m.get("id")]
+                            if names:
+                                return web.json_response(
+                                    {
+                                        "status": "ok",
+                                        "provider": "lmstudio",
+                                        "available": True,
+                                        "models": [{"name": n} for n in names],
+                                        "names": names,
+                                        "error": "",
+                                    }
+                                )
+            except Exception:
+                pass
+            names = ["local-model"]
+            return web.json_response(
+                {
+                    "status": "ok",
+                    "provider": "lmstudio",
+                    "available": True,
+                    "models": [{"name": n} for n in names],
+                    "names": names,
+                    "error": "",
+                }
+            )
+        else:
+            return web.json_response(
+                {
+                    "status": "error",
+                    "message": f"Unknown provider: {provider}",
+                },
+                status=400,
+            )
+
+    async def handle_get_gpu_status(self, request: web.Request) -> web.Response:
+        """Return the current resident GPU models and memory state."""
+        return web.json_response(
+            {
+                "status": "ok",
+                "gpu": self._gpu_status,
+            }
+        )
+
+    async def handle_post_gpu_prewarm(self, request: web.Request) -> web.Response:
+        """Trigger an immediate background GPU prewarm of Kokoro TTS and Ollama phi4/qwen."""
+        async with self._gpu_lock:
+            self._gpu_status = {"status": "prewarming", "models": {}}
+            self._spawn_background_task(self._prewarm_gpu_models_task())
+        return web.json_response(
+            {
+                "status": "ok",
+                "message": "GPU prewarming started in the background for the configured models.",
+                "gpu": self._gpu_status,
+            }
+        )
+
+    async def _prewarm_gpu_models_task(self) -> None:
+        """Background worker to make the configured speech models GPU-resident.
+
+        Only meaningful when there is no warm voice host. Call audio is served by
+        the ``phone_voice_agent`` child, which has its own CUDA context and loads
+        its own copy of SenseVoice and Kokoro; preloading them here as well put a
+        second 1.85 GB of identical weights on the card and warmed a process that
+        never touches a call.
+        """
+
+        if _environment_bool("PHONE_AGENT_WARM_VOICE_HOST", True):
+            self._gpu_status = {
+                "status": "ready",
+                "models": {
+                    "owner": "warm voice host",
+                    "note": (
+                        "Speech models are resident in the phone_voice_agent child that "
+                        "serves call audio. Loading them here as well would duplicate "
+                        "them in a process that never touches a call."
+                    ),
+                },
+                "timestamp": time.time(),
+            }
+            logger.info(
+                "GPU Model Preloader: skipped; the warm voice host owns the speech models"
+            )
+            await self.broadcast({"type": "gpu_status_updated", "gpu": self._gpu_status})
+            return
+        try:
+            from .production_pipeline import prewarm_gpu_resident_models
+
+            logger.info("GPU Model Preloader: prewarming the configured speech models...")
+            # No model list: the prewarm derives what to load from the active
+            # configuration. Naming models here pinned phi4 (9.05 GB) and
+            # qwen2.5:3b (1.93 GB) with keep_alive=-1 regardless of provider.
+            results = await prewarm_gpu_resident_models(self.config)
+            self._gpu_status = {
+                "status": "ready",
+                "models": results,
+                "timestamp": time.time(),
+            }
+            logger.info("GPU Model Preloader: All models resident in VRAM: %s", results)
+            await self.broadcast({"type": "gpu_status_updated", "gpu": self._gpu_status})
+        except Exception as exc:
+            self._gpu_status = {"status": "error", "error": str(exc), "models": {}}
+            logger.warning("GPU Model Preloader warning: %s", exc)
+
     async def handle_post_config(self, request: web.Request) -> web.Response:
         try:
             data = await request.json()
@@ -1639,10 +1919,11 @@ class PhoneAgentWebServer:
             return web.json_response({"status": "error", "message": str(exc)}, status=500)
         await self.broadcast({"type": "config_updated", "config": self._public_config()})
         if auto_answer_changed:
-            if self.auto_answer_enabled:
-                await self._start_inbound_monitor()
-            else:
-                await self._stop_inbound_monitor()
+            # Restart rather than stop: the child's auto_answer is baked into its
+            # environment, and turning answering off must not throw away a warm
+            # host that the next outbound dial would have reused.
+            await self._stop_inbound_monitor()
+            await self._start_inbound_monitor()
         return web.json_response(
             {
                 "status": "ok",
@@ -1677,6 +1958,57 @@ class PhoneAgentWebServer:
         except (ValueError, RuntimeError) as exc:
             return web.json_response({"status": "error", "message": str(exc)}, status=400)
         return web.json_response({"status": "ok", "remote_link": status})
+
+    async def handle_post_pairing(self, request: web.Request) -> web.Response:
+        """Render pairing material the handset can scan in one pass.
+
+        The key, the address and the port travel together because a phone that
+        is correctly keyed but pointed at the wrong host fails exactly as
+        silently as a mismatched key.
+        """
+
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        rotate = bool(data.get("rotate", False))
+        addresses = local_addresses()
+        host = str(data.get("host", "")).strip() or (addresses[0] if addresses else "")
+        if not host:
+            return web.json_response(
+                {"status": "error", "message": "no reachable address for this machine"},
+                status=400,
+            )
+        port = int(data.get("port", self._remote_link_settings.listen_port))
+        try:
+            payload = await asyncio.to_thread(build_pairing, host, port, rotate=rotate)
+            svg = await asyncio.to_thread(payload.to_qr_svg)
+        except Exception as exc:
+            return web.json_response({"status": "error", "message": str(exc)}, status=400)
+        if rotate:
+            # Rotating breaks the USB path until the phone is paired again, so
+            # it is worth an audit entry rather than a silent change.
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(
+                    self.audit_ledger.append,
+                    "link_key_rotated",
+                    {"fingerprint": key_fingerprint(payload.key)},
+                )
+            # The relay loads the key once, at construction. Without this it
+            # keeps verifying against the old one and rejects the very handset
+            # that just scanned the new code -- which looks like a broken scan
+            # rather than a stale process.
+            await self._restart_remote_link_for_new_key()
+        return web.json_response(
+            {
+                "status": "ok",
+                "qr_svg": svg,
+                "fingerprint": key_fingerprint(payload.key),
+                "host": host,
+                "port": port,
+                "addresses": addresses,
+            }
+        )
 
     async def handle_post_dial(self, request: web.Request) -> web.Response:
         try:
@@ -2079,10 +2411,8 @@ class PhoneAgentWebServer:
                 raise
 
             if self.auto_answer_enabled != previous[3]:
-                if self.auto_answer_enabled:
-                    await self._start_inbound_monitor()
-                else:
-                    await self._stop_inbound_monitor()
+                await self._stop_inbound_monitor()
+                await self._start_inbound_monitor()
             await asyncio.to_thread(
                 self.audit_ledger.append,
                 "agent_package_activated",
@@ -2747,11 +3077,29 @@ class PhoneAgentWebServer:
         )
 
     async def _start_inbound_monitor(self) -> None:
-        if (
-            not self.auto_answer_enabled
-            or self._shutting_down
-            or (self._receptionist_task is not None and not self._receptionist_task.done())
+        """Keep one warm voice host alive, whether or not it answers inbound calls.
+
+        The host loads SenseVoice and Kokoro into its own CUDA context, which
+        measured 11.3 s and 4.3 s on this machine -- about 20 s before the phone
+        could even be dialled. That cost used to be paid on every outbound call,
+        because the only warm host was the inbound receptionist and it was gated
+        behind the auto-answer toggle. Starting it unconditionally is what makes
+        an outbound dial reuse loaded models instead of paying the cold start.
+
+        Whether it *answers* an incoming call is still the operator's choice; that
+        is carried by the child's auto_answer environment, not by its existence.
+        """
+
+        if self._shutting_down or (
+            self._receptionist_task is not None and not self._receptionist_task.done()
         ):
+            return
+        if not _environment_bool("PHONE_AGENT_WARM_VOICE_HOST", True) and not (
+            self.auto_answer_enabled
+        ):
+            # Spawning a real voice host is a side effect of merely constructing
+            # the Studio, so it has to be switchable off for tests and for any
+            # embedding that only wants the HTTP surface.
             return
         self._receptionist_task = asyncio.create_task(
             self._inbound_monitor_supervisor(),
@@ -2781,12 +3129,15 @@ class PhoneAgentWebServer:
     async def _inbound_monitor_supervisor(self) -> None:
         failures = 0
         try:
-            while self.auto_answer_enabled and not self._shutting_down:
+            while not self._shutting_down:
                 if self._active_process is not None:
                     await asyncio.sleep(0.25)
                     continue
                 await self._set_receptionist_state(
-                    "starting", "Starting the inbound GSM AI receptionist…"
+                    "starting",
+                    "Starting the inbound GSM AI receptionist…"
+                    if self.auto_answer_enabled
+                    else "Warming the voice host so the next dial skips model loading…",
                 )
                 process = await asyncio.create_subprocess_exec(
                     sys.executable,
@@ -2796,7 +3147,7 @@ class PhoneAgentWebServer:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     env=self._child_environment(
-                        auto_answer=True,
+                        auto_answer=self.auto_answer_enabled,
                         recording_consent=False,
                         call_channel="gsm",
                         # This host stays resident between calls, so an outbound
@@ -2812,9 +3163,16 @@ class PhoneAgentWebServer:
                         self._write_raw_child_line(text)
                         if "gateway control ready" in text:
                             failures = 0
-                            await self._set_receptionist_state(
-                                "listening", "Waiting for an incoming GSM call."
-                            )
+                            if self.auto_answer_enabled:
+                                await self._set_receptionist_state(
+                                    "listening", "Waiting for an incoming GSM call."
+                                )
+                            else:
+                                await self._set_receptionist_state(
+                                    "warm",
+                                    "Voice host warm; the next dial skips model loading. "
+                                    "Incoming calls are not answered.",
+                                )
                         await self._handle_child_line(text)
                 return_code = await process.wait()
                 self._receptionist_process = None
@@ -3469,6 +3827,16 @@ class PhoneAgentWebServer:
             self._remote_link_settings.listen_port,
         )
 
+    async def _restart_remote_link_for_new_key(self) -> None:
+        """Reload the relay so it verifies against the key that was just written."""
+
+        if self._remote_link is None:
+            return
+        await self._remote_link.close()
+        self._remote_link = None
+        await self._start_remote_link()
+        logger.info("remote link relay reloaded with the rotated key")
+
     def remote_link_status(self) -> dict[str, Any]:
         base: dict[str, Any] = {
             "enabled": self._remote_link_settings.enabled,
@@ -3478,6 +3846,10 @@ class PhoneAgentWebServer:
             # typed into the handset, instead of hunted for in a terminal.
             "addresses": local_addresses(),
             "error": self._remote_link_error,
+            **pairing_status(
+                (local_addresses() or [""])[0],
+                self._remote_link_settings.listen_port,
+            ),
         }
         if self._remote_link is not None:
             base.update(self._remote_link.stats.snapshot())
@@ -3515,6 +3887,7 @@ class PhoneAgentWebServer:
         await self._start_remote_link()
         await self._start_inbound_monitor()
         self._spawn_background_task(self._campaign_autopilot_loop())
+        self._spawn_background_task(self._prewarm_gpu_models_task())
 
     async def _on_shutdown(self, app: web.Application) -> None:
         self._shutting_down = True

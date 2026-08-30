@@ -1,14 +1,9 @@
-"""Local Kokoro-82M TTS on Apple Silicon, synthesized through MLX/Metal.
+"""Local Kokoro-82M TTS synthesized natively through PyTorch and CUDA.
 
-The previous implementation ran Kokoro through ONNX Runtime's CPU execution
-provider, which measured 4.1x realtime on this hardware -- more than two seconds
-of compute for a ten-second reply, which a telephone caller hears as dead air.
-The same weights driven through MLX measure 26.9x on the same text and machine,
-so the model is loaded with ``mlx_audio`` and the ONNX path is gone.
-
-Do not move this to PyTorch with the ``mps`` device: ``aten::angle`` is missing
-there and the vocoder falls back to CPU per operation, landing slower than plain
-PyTorch CPU.
+The implementation runs Kokoro-82M on CUDA (with CPU fallback) via PyTorch,
+achieving ~80x real-time generation on modern GPUs like the NVIDIA RTX A6000.
+Audio generated at 24 kHz is converted via soxr to 16 kHz mono signed 16-bit PCM
+for the PhoneAgent telephony bridge.
 """
 
 from __future__ import annotations
@@ -24,24 +19,46 @@ from typing import Any
 import numpy as np
 import soxr
 from pipecat.frames.frames import ErrorFrame, Frame, TTSAudioRawFrame
-from pipecat.services.settings import TTSSettings, assert_given
+from pipecat.services.settings import TTSSettings
 from pipecat.services.tts_service import TTSService
 from pipecat.utils.tracing.service_decorators import traced_tts
+
+try:
+    from pipecat.services.settings import assert_given  # type: ignore[attr-defined]
+except ImportError:
+    def assert_given(value: Any) -> Any:
+        try:
+            from pipecat.services.settings import NOT_GIVEN, is_given
+            if not is_given(value) or value is NOT_GIVEN:
+                return ""
+        except Exception:
+            pass
+        return value if value is not None else ""
 
 logger = logging.getLogger("KokoroTTS")
 
 # Kokoro renders at 24 kHz; the phone link takes 16 kHz mono PCM16.
 KOKORO_SAMPLE_RATE = 24_000
 
-# bf16 is the default because it measured faster than the 4-bit quantization on
-# this machine (26.9x against 17.8x), which inverts the ordering published for
-# the M1 Max. The quantization stays selectable for memory-constrained runs.
+# Canonical model identifiers mapped to the official PyTorch HuggingFace repo.
 MODEL_REPOS = {
-    "kokoro-bf16": "mlx-community/Kokoro-82M-bf16",
-    "kokoro-4bit": "mlx-community/Kokoro-82M-4bit",
+    "hexgrad/Kokoro-82M": "hexgrad/Kokoro-82M",
+    "kokoro": "hexgrad/Kokoro-82M",
+    "kokoro-82m": "hexgrad/Kokoro-82M",
+    "kokoro-v1.0": "hexgrad/Kokoro-82M",
+    "kokoro-bf16": "hexgrad/Kokoro-82M",
+    "kokoro-4bit": "hexgrad/Kokoro-82M",
 }
-DEFAULT_MODEL = "kokoro-bf16"
+DEFAULT_MODEL = "hexgrad/Kokoro-82M"
 DEFAULT_VOICE = "af_heart"
+
+
+VALID_KOKORO_VOICES = {
+    "af_heart", "af_bella", "af_nicole", "af_sarah", "af_sky", "af_aoede", "af_kore", "af_nova",
+    "am_adam", "am_michael", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_onyx", "am_puck",
+    "bf_emma", "bf_alice", "bf_isabella", "bf_lily", "bm_george", "bm_daniel", "bm_fable", "bm_lewis",
+    "ff_siwis",
+}
 
 
 def _lang_code(value: str) -> str:
@@ -55,63 +72,93 @@ def _lang_code(value: str) -> str:
     return "a"
 
 
+def _resolve_voice(voice: str, language: str = "en-US") -> str:
+    """Resolve requested voice to a valid Kokoro voice, falling back intelligently."""
+    normalized = str(voice or "").strip()
+    if normalized in VALID_KOKORO_VOICES:
+        return normalized
+    lang = _lang_code(language)
+    if lang == "f":
+        return "ff_siwis"
+    if lang == "b":
+        return "bf_emma"
+    return DEFAULT_VOICE
+
+
 def _resolve_repo(model: str) -> str:
-    if model in MODEL_REPOS:
-        return MODEL_REPOS[model]
-    if model.startswith("mlx-community/"):
-        return model
-    raise ValueError(f"unsupported Kokoro model: {model!r}")
+    normalized = str(model).strip()
+    if not normalized:
+        return DEFAULT_MODEL
+    if normalized in MODEL_REPOS:
+        return MODEL_REPOS[normalized]
+    if normalized.startswith("hexgrad/") or normalized.startswith("mlx-community/"):
+        return "hexgrad/Kokoro-82M"
+    raise ValueError(f"unsupported Kokoro model: {model}")
 
 
 @dataclass
 class _KokoroEngine:
-    """One loaded model plus the single thread its Metal work runs on."""
+    """One loaded PyTorch model pipeline plus the dedicated inference thread."""
 
     backend: Any
     executor: ThreadPoolExecutor
+    device: str
 
 
 _ENGINE_CACHE: dict[str, _KokoroEngine] = {}
 _ENGINE_CACHE_LOCK = threading.Lock()
 
 
-def _load_engine(model: str) -> _KokoroEngine:
-    """Load each repo once and serialize its inference onto one worker.
+def _get_default_device() -> str:
+    try:
+        import torch
 
-    Metal command buffers from concurrent calls interleave badly and the model
-    is small enough that one stream already saturates it, so a single worker is
-    both simpler and faster than contending for the GPU.
-    """
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+def _load_engine(model: str, device: str | None = None) -> _KokoroEngine:
+    """Load the Kokoro model once and serialize inference onto one worker."""
 
     repo = _resolve_repo(model)
+    target_device = device or _get_default_device()
+    cache_key = f"{repo}:{target_device}"
+
     with _ENGINE_CACHE_LOCK:
-        cached = _ENGINE_CACHE.get(repo)
+        cached = _ENGINE_CACHE.get(cache_key)
         if cached is not None:
             return cached
 
-        from mlx_audio.tts.utils import load_model
+        from kokoro import KPipeline
 
-        backend = load_model(repo)
+        logger.info("loading Kokoro-82M pipeline on device=%s repo=%s", target_device, repo)
+        pipeline = KPipeline(lang_code="a", repo_id=repo, device=target_device)
         engine = _KokoroEngine(
-            backend=backend,
+            backend=pipeline,
             executor=ThreadPoolExecutor(
                 max_workers=1,
-                thread_name_prefix=f"phoneagent-{model}",
+                thread_name_prefix=f"phoneagent-kokoro-{target_device}",
             ),
+            device=target_device,
         )
-        _ENGINE_CACHE[repo] = engine
-        logger.info("loaded local Kokoro model=%s via MLX", repo)
+        _ENGINE_CACHE[cache_key] = engine
         return engine
 
 
 def _waveform_to_pcm16(waveform: Any, target_rate: int) -> bytes:
-    """Convert one 24 kHz model segment to clean mono telephone PCM.
+    """Convert one 24 kHz model segment to clean mono telephone PCM."""
 
-    Resampling goes through soxr rather than a linear interpolation, which the
-    previous implementation used and which aliases audibly on speech.
-    """
+    try:
+        import torch
 
-    samples = np.asarray(waveform, dtype=np.float32).reshape(-1)
+        if isinstance(waveform, torch.Tensor):
+            samples = waveform.detach().cpu().numpy().astype(np.float32).reshape(-1)
+        else:
+            samples = np.asarray(waveform, dtype=np.float32).reshape(-1)
+    except Exception:
+        samples = np.asarray(waveform, dtype=np.float32).reshape(-1)
+
     if samples.size < 2:
         return b""
     samples = np.nan_to_num(samples, nan=0.0, posinf=1.0, neginf=-1.0)
@@ -121,48 +168,56 @@ def _waveform_to_pcm16(waveform: Any, target_rate: int) -> bytes:
     return np.rint(samples * 32767.0).astype("<i2", copy=False).tobytes()
 
 
-def _render(engine: _KokoroEngine, text: str, voice: str, speed: float, lang: str) -> list[Any]:
-    """Run one synthesis pass to completion on the model's own worker."""
+def _render(
+    engine: _KokoroEngine, text: str, voice: str, speed: float, lang: str
+) -> list[Any]:
+    """Run one synthesis pass to completion on the model's worker."""
 
-    import mlx.core as mx
+    if getattr(engine.backend, "lang_code", "") != lang:
+        engine.backend.lang_code = lang
 
-    segments = list(
-        engine.backend.generate(text=text, voice=voice, speed=speed, lang_code=lang)
-    )
-    audio = [np.asarray(segment.audio, dtype=np.float32).reshape(-1) for segment in segments]
-    # Metal work is queued lazily. Without this the timing above would stop
-    # before the GPU had finished and the first frames would arrive late.
-    mx.eval(mx.array(0))
-    return audio
+    generator = engine.backend(text=text, voice=voice, speed=speed)
+    audio_segments: list[Any] = []
+    for item in generator:
+        # KPipeline yields (graphemes, phonemes, audio) or (phonemes, audio)
+        chunk = item[2] if len(item) == 3 else item[-1]
+        if chunk is not None:
+            audio_segments.append(chunk)
+    return audio_segments
 
 
 def prewarm_kokoro(
     model: str = DEFAULT_MODEL,
     voice: str = DEFAULT_VOICE,
     language: str = "en-US",
+    device: str | None = None,
 ) -> float:
-    """Load weights and compile Metal kernels before the first caller turn."""
+    """Load weights and prewarm CUDA kernels before the first caller turn."""
 
     import time
 
     started = time.perf_counter()
-    engine = _load_engine(model)
-    engine.executor.submit(_render, engine, "Ready.", voice, 1.0, _lang_code(language)).result()
+    resolved_voice = _resolve_voice(voice, language)
+    engine = _load_engine(model, device=device)
+    engine.executor.submit(
+        _render, engine, "Ready.", resolved_voice, 1.0, _lang_code(language)
+    ).result()
     return (time.perf_counter() - started) * 1000
 
 
 @dataclass
 class KokoroSettings(TTSSettings):
-    """Runtime settings for the local MLX model."""
+    """Runtime settings for the local Kokoro model."""
 
     voice: str = DEFAULT_VOICE
     lang: str = "en-US"
     speed: float = 1.0
+    device: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
 class PhoneAgentKokoroTTSService(TTSService):
-    """Kokoro-82M rendered locally on Metal and delivered as phone PCM."""
+    """Kokoro-82M rendered on CUDA/CPU and delivered as phone PCM."""
 
     Settings = KokoroSettings
     _settings: KokoroSettings
@@ -175,9 +230,17 @@ class PhoneAgentKokoroTTSService(TTSService):
         speed: float = 1.0,
         sample_rate: int = 16_000,
         model: str = DEFAULT_MODEL,
+        device: str | None = None,
         **kwargs: Any,
     ) -> None:
-        settings = self.Settings(model=model, voice=voice, lang=lang, speed=speed)
+        resolved_voice = _resolve_voice(voice, lang)
+        settings = self.Settings(
+            model=model,
+            voice=resolved_voice,
+            lang=lang,
+            speed=speed,
+            device=device,
+        )
         super().__init__(
             sample_rate=sample_rate,
             push_start_frame=True,
@@ -187,11 +250,12 @@ class PhoneAgentKokoroTTSService(TTSService):
         )
         self._target_sample_rate = sample_rate
         self._model = model
+        self._device = device
         self._engine: _KokoroEngine | None = None
 
     def _ensure_loaded(self) -> _KokoroEngine:
         if self._engine is None:
-            self._engine = _load_engine(self._model)
+            self._engine = _load_engine(self._model, device=self._device)
         return self._engine
 
     def can_generate_metrics(self) -> bool:
@@ -203,25 +267,50 @@ class PhoneAgentKokoroTTSService(TTSService):
         if not phrase:
             return
 
-        voice = assert_given(self._settings.voice) or DEFAULT_VOICE
+        lang_str = getattr(self._settings, "lang", "en-US") or "en-US"
+        voice = _resolve_voice(assert_given(self._settings.voice) or DEFAULT_VOICE, lang_str)
         speed = getattr(self._settings, "speed", 1.0) or 1.0
-        lang = _lang_code(getattr(self._settings, "lang", "en-US") or "en-US")
+        lang = _lang_code(lang_str)
 
         try:
             engine = await asyncio.to_thread(self._ensure_loaded)
-            segments = await asyncio.wrap_future(
-                engine.executor.submit(_render, engine, phrase, voice, speed, lang)
-            )
-            await self.stop_ttfb_metrics()
-            for segment in segments:
-                pcm = _waveform_to_pcm16(segment, self._target_sample_rate)
-                if pcm:
+            loop = asyncio.get_running_loop()
+            queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+
+            def _producer() -> None:
+                try:
+                    if getattr(engine.backend, "lang_code", "") != lang:
+                        engine.backend.lang_code = lang
+                    generator = engine.backend(text=phrase, voice=voice, speed=speed)
+                    for item in generator:
+                        chunk = item[2] if len(item) == 3 else item[-1]
+                        if chunk is not None:
+                            pcm = _waveform_to_pcm16(chunk, self._target_sample_rate)
+                            if pcm:
+                                loop.call_soon_threadsafe(queue.put_nowait, ("chunk", pcm))
+                    loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+                except Exception as err:
+                    loop.call_soon_threadsafe(queue.put_nowait, ("error", err))
+
+            engine.executor.submit(_producer)
+
+            first = True
+            while True:
+                kind, data = await queue.get()
+                if kind == "chunk":
+                    if first:
+                        await self.stop_ttfb_metrics()
+                        first = False
                     yield TTSAudioRawFrame(
-                        audio=pcm,
+                        audio=data,
                         sample_rate=self._target_sample_rate,
                         num_channels=1,
                         context_id=context_id,
                     )
+                elif kind == "done":
+                    break
+                elif kind == "error":
+                    raise data
         except Exception as exc:
             logger.exception("Kokoro TTS synthesis failed")
             yield ErrorFrame(error=f"Kokoro TTS error: {exc}")

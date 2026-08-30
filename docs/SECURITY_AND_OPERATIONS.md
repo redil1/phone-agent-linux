@@ -119,3 +119,44 @@ unofficial open-source client and may break when WhatsApp changes its private pr
 the linked account to enforcement. The freeze guard prevents accidental local regressions; it
 cannot make an unofficial protocol supported by WhatsApp. GSM and WhatsApp live carrier tests
 require a consenting recipient and therefore are never run silently by CI or the installer.
+
+## External agent control over MCP
+
+`phone-agent-mcp` is a local stdio MCP server. It communicates with Studio over
+loopback HTTP using a mode-`0600` bearer token, so it cannot be driven from off
+this machine.
+
+It exposes 33 tools covering the whole appliance, because an agent that can only
+dial cannot actually operate one: choosing the model, activating a tool,
+configuring the CRM, editing the persona and attaching a handset are the job.
+
+| Area | Tools |
+|---|---|
+| Calls | `dial`, `hangup`, `request_dial`, `execute_approved_dial` |
+| State | `status`, `capabilities`, `identity`, `recent_events`, `get_evaluation`, `get_caller_memory` |
+| Providers | `get_configuration`, `set_configuration` |
+| Tools & MCP | `get_tool_control`, `set_tool_control` |
+| Persona & tasks | `get_persona`, `set_persona`, `list_tasks`, `set_task`, `delete_task` |
+| Business systems | `get_integration`, `set_integration`, `test_integration` (Frappe CRM/ERPNext, OpenWA, web research) |
+| Handset | `set_remote_link`, `pairing_code` |
+| Approvals | `list_approvals`, `decide_approval` |
+| Deployment | `stage_package`, `validate_package`, `activate_deployment`, `rollback_deployment`, `list_deployments`, `get_active_package`, `control_schema` |
+
+Every tool calls the same Studio endpoint the UI uses, so an external agent and
+an operator cannot drift apart or bypass one another's guards, and every change
+lands in the same audit ledger.
+
+Two limits are deliberate and survive this breadth:
+
+**Dialling still needs a person.** `phone_agent_request_dial` never places a
+call. It creates a request that an operator approves in Studio, seeing only a
+redacted destination; `phone_agent_execute_approved_dial` may then run it once,
+within five minutes. Configuration is broad on purpose; calling a real human
+being is not.
+
+**Arguments are validated before any request leaves.** A malformed call changes
+nothing, and the integration name is checked against a fixed set rather than
+being interpolated into a URL, so it cannot be used to reach an arbitrary
+endpoint.
+
+Run it with `uv run phone-agent-mcp`.

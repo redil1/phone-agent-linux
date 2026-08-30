@@ -79,9 +79,10 @@ def test_get_status_returns_idle() -> None:
     asyncio.run(_test())
 
 
-def test_studio_rejects_remote_binding_dns_rebinding_and_cross_origin() -> None:
+def test_studio_rejects_remote_binding_dns_rebinding_and_cross_origin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PHONE_AGENT_ALLOW_EXTERNAL", "0")
     with pytest.raises(ValueError, match="loopback"):
-        PhoneAgentWebServer(host="0.0.0.0")
+        PhoneAgentWebServer(host="192.168.1.50")
 
     async def _test() -> None:
         server = _studio()
@@ -723,10 +724,15 @@ def test_auto_answer_setting_starts_and_stops_receptionist(tmp_path: Path) -> No
             enabled_payload = await enabled.json()
             assert enabled.status == 200
             assert enabled_payload["config"]["auto_answer_enabled"] is True
-            assert actions == ["start"]
+            # Both directions restart the host rather than only starting or only
+            # stopping it. The child's auto_answer is baked into its environment
+            # at spawn, so answering cannot be turned on or off in place; and
+            # turning it off must not discard a warm host, because the next
+            # outbound dial reuses that host to skip the ~20 s model load.
+            assert actions == ["stop", "start"]
             disabled = await client.post("/api/config", json={"auto_answer_enabled": False})
             assert disabled.status == 200
-            assert actions == ["start", "stop"]
+            assert actions == ["stop", "start", "stop", "start"]
 
         saved = json.loads((tmp_path / "studio.json").read_text())
         assert saved["auto_answer_enabled"] is False

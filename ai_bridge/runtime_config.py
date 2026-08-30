@@ -128,8 +128,8 @@ def _env_languages(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 
 @dataclass(frozen=True, slots=True)
 class ProviderConfig:
-    stt_provider: str = "parakeet_local"
-    stt_model: str = "mlx-community/parakeet-tdt-0.6b-v3"
+    stt_provider: str = "sensevoice"
+    stt_model: str = "iic/SenseVoiceSmall"
     stt_language: str = "en-US"
     flux_eager_eot_threshold: float = 0.55
     flux_eot_threshold: float = 0.70
@@ -168,7 +168,7 @@ class ProviderConfig:
     ollama_num_ctx: int = 8192
     ollama_turn_timeout_secs: int = 30
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    # Any OpenAI-compatible local server: LM Studio, vLLM, llama.cpp.
+    vllm_base_url: str = "http://127.0.0.1:8000/v1"
     lmstudio_base_url: str = "http://127.0.0.1:1234/v1"
     codex_binary: str = ""
     codex_reasoning_effort: str = "low"
@@ -200,6 +200,7 @@ class ProviderConfig:
     deepgram_api_key: str = field(default="", repr=False)
     openai_api_key: str = field(default="", repr=False)
     openrouter_api_key: str = field(default="", repr=False)
+    vllm_api_key: str = field(default="", repr=False)
     lmstudio_api_key: str = field(default="", repr=False)
     google_api_key: str = field(default="", repr=False)
     cartesia_api_key: str = field(default="", repr=False)
@@ -244,7 +245,9 @@ class ProviderConfig:
         stt_provider = os.getenv("PHONE_AGENT_STT_PROVIDER", "parakeet_local").strip().lower()
         stt_model_defaults = {
             "deepgram_flux": "flux-general-en",
-            "whisper_mlx": "mlx-community/whisper-large-v3-turbo-q4",
+            "whisper_mlx": "large-v3-turbo",
+            "whisper_cuda": "large-v3-turbo",
+            "whisper_local": "large-v3-turbo",
             "antigravity_live": "google-live-bridge",
             "parakeet_local": "mlx-community/parakeet-tdt-0.6b-v3",
         }
@@ -254,7 +257,7 @@ class ProviderConfig:
             "openai": "tts-1",
             "deepgram": "aura-asteria-en",
             "edge_tts": "edge-online-neural",
-            "kokoro": "kokoro-bf16",
+            "kokoro": "hexgrad/Kokoro-82M",
             "google_genai": "gemini-3.1-flash-tts-preview",
             "supertonic": "supertonic-2",
             "vibevoice": "mlx-community/VibeVoice-Realtime-0.5B-8bit",
@@ -276,7 +279,7 @@ class ProviderConfig:
         llm_provider = os.getenv("PHONE_AGENT_LLM_PROVIDER", "antigravity_gemini").strip().lower()
         model_defaults = {
             "antigravity_gemini": "gemini-3.1-flash-lite",
-            "ollama": "qwen3.5:4b-mlx",
+            "ollama": "qwen2.5:3b",
             "openrouter": "openai/gpt-4.1",
             "openai": "gpt-4.1",
             "gemini": "gemini-2.5-flash",
@@ -417,6 +420,10 @@ class ProviderConfig:
             deepgram_api_key=os.getenv("DEEPGRAM_API_KEY", "").strip(),
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
+            vllm_api_key=os.getenv("VLLM_API_KEY", "").strip(),
+            vllm_base_url=os.getenv(
+                "PHONE_AGENT_VLLM_BASE_URL", "http://127.0.0.1:8000/v1"
+            ).strip(),
             lmstudio_api_key=os.getenv("LMSTUDIO_API_KEY", "").strip(),
             lmstudio_base_url=os.getenv(
                 "PHONE_AGENT_LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1"
@@ -582,7 +589,16 @@ class ProviderConfig:
         supported = {
             "stt": (
                 self.stt_provider,
-                {"antigravity_live", "deepgram_flux", "parakeet_local", "whisper_mlx"},
+                {
+                    "sensevoice",
+                    "sensevoice_small",
+                    "antigravity_live",
+                    "deepgram_flux",
+                    "parakeet_local",
+                    "whisper_mlx",
+                    "whisper_cuda",
+                    "whisper_local",
+                },
             ),
             "llm": (
                 self.llm_provider,
@@ -594,6 +610,7 @@ class ProviderConfig:
                     "ollama",
                     "openai",
                     "openrouter",
+                    "vllm",
                     "lmstudio",
                 },
             ),
@@ -650,12 +667,18 @@ class ProviderConfig:
             if not re.fullmatch(r"[MF][1-5]", self.tts_voice_id):
                 raise ConfigurationError("PHONE_AGENT_TTS_VOICE must be M1-M5 or F1-F5")
         if self.tts_provider == "kokoro":
-            # Kokoro now runs on MLX, so the model names the quantization of an
-            # mlx-community repo rather than an ONNX file. bf16 measured fastest
-            # on this hardware; 4bit trades ~1.5x of that for less memory.
-            if self.tts_model not in {"kokoro-bf16", "kokoro-4bit"}:
+            # Kokoro runs on PyTorch with CUDA (or CPU fallback), with model repo
+            # defaulting to hexgrad/Kokoro-82M while retaining backward-compatible aliases.
+            valid_kokoro_models = {
+                "hexgrad/Kokoro-82M",
+                "kokoro-82m",
+                "kokoro-bf16",
+                "kokoro-4bit",
+                "kokoro-v1.0",
+            }
+            if self.tts_model not in valid_kokoro_models and not self.tts_model.startswith("hexgrad/"):
                 raise ConfigurationError(
-                    "PHONE_AGENT_TTS_MODEL for kokoro must be kokoro-bf16 or kokoro-4bit"
+                    "PHONE_AGENT_TTS_MODEL for kokoro must be hexgrad/Kokoro-82M or kokoro-82m"
                 )
             # A Kokoro voice encodes its own language in the prefix, and the
             # phonemizer is driven separately by the call language. Mismatching

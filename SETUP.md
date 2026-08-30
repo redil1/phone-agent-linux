@@ -64,6 +64,10 @@ installer rebuilds on every install.
 uv run phone-agent-qualify --ensure-forwards          # formal readiness report
 ```
 
+Full build and install detail, including why an overlay install disappears on
+reboot and how to bake the APK into the system image instead, is in
+[`docs/ANDROID_APP.md`](docs/ANDROID_APP.md).
+
 The privileged install writes into a `/system` overlay that **Android discards
 on reboot**, restoring whatever APK is baked into the system image. For an
 install that survives reboots, bake it in:

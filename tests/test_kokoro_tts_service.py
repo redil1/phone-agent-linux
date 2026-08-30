@@ -1,8 +1,7 @@
-"""Unit tests for the MLX-backed Kokoro service and its telephony conversion."""
+"""Unit tests for the PyTorch/CUDA-backed Kokoro service and its telephony conversion."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -50,26 +49,22 @@ def test_non_finite_samples_cannot_reach_the_phone() -> None:
     ],
 )
 def test_locale_maps_to_a_kokoro_lang_code(locale: str, expected: str) -> None:
-    # Kokoro's G2P takes a single letter, not an espeak tag. Passing a full
-    # locale through raised inside the pipeline rather than at configuration.
+    # Kokoro's G2P takes a single letter, not an espeak tag.
     assert _lang_code(locale) == expected
 
 
-def test_only_known_mlx_repos_are_accepted() -> None:
-    assert _resolve_repo("kokoro-bf16") == "mlx-community/Kokoro-82M-bf16"
-    assert _resolve_repo("kokoro-4bit") == "mlx-community/Kokoro-82M-4bit"
-    assert _resolve_repo("mlx-community/Kokoro-82M-8bit") == "mlx-community/Kokoro-82M-8bit"
+def test_known_repos_and_aliases_are_accepted() -> None:
+    assert _resolve_repo("hexgrad/Kokoro-82M") == "hexgrad/Kokoro-82M"
+    assert _resolve_repo("kokoro-82m") == "hexgrad/Kokoro-82M"
+    assert _resolve_repo("kokoro-bf16") == "hexgrad/Kokoro-82M"
+    assert _resolve_repo("kokoro-4bit") == "hexgrad/Kokoro-82M"
+    assert _resolve_repo("kokoro-v1.0") == "hexgrad/Kokoro-82M"
     with pytest.raises(ValueError, match="unsupported Kokoro model"):
-        # The retired ONNX identifier must not silently resolve to anything.
-        _resolve_repo("kokoro-v1.0")
+        _resolve_repo("unknown-model-xyz")
 
 
 @pytest.mark.asyncio
 async def test_service_emits_phone_ready_audio_frames() -> None:
-    @dataclass
-    class _Segment:
-        audio: Any
-
     class _Executor:
         def submit(self, fn, *args, **kwargs):
             from concurrent.futures import Future
@@ -78,12 +73,15 @@ async def test_service_emits_phone_ready_audio_frames() -> None:
             future.set_result(fn(*args, **kwargs))
             return future
 
-    class _Backend:
-        def generate(self, **_kwargs):
-            yield _Segment(audio=np.zeros(2400, dtype=np.float32))
+    class _Pipeline:
+        def __init__(self) -> None:
+            self.lang_code = "a"
+
+        def __call__(self, text: str, voice: str = "af_heart", speed: float = 1.0):
+            yield ("g", "p", np.zeros(2400, dtype=np.float32))
 
     service = PhoneAgentKokoroTTSService(voice="af_heart", sample_rate=16_000)
-    service._engine = _KokoroEngine(backend=_Backend(), executor=_Executor())
+    service._engine = _KokoroEngine(backend=_Pipeline(), executor=_Executor(), device="cpu")
 
     frames = [frame async for frame in service.run_tts("Hello from Kokoro!", "ctx-1")]
 

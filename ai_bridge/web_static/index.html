@@ -1620,6 +1620,20 @@
           </div>
           <div id="remote-link-address" style="font-size:12px;margin-top:10px;"></div>
           <div id="remote-link-status" style="font-size:12px;color:var(--text-muted);margin-top:6px;"></div>
+          <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <button class="btn-save" onclick="showPairingQr(false)">Show pairing QR</button>
+            <button class="btn-save" onclick="rotatePairingKey()"
+                    style="opacity:.7;">Generate a new key</button>
+          </div>
+          <div id="pairing-panel" style="display:none;margin-top:14px;text-align:center;">
+            <div id="pairing-qr" style="background:#fff;padding:14px;border-radius:8px;display:inline-block;"></div>
+            <div id="pairing-fingerprint" style="font-size:12px;margin-top:10px;font-family:monospace;"></div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5;">
+              On the phone: <b>PhoneAgent Gateway → Connect to a runtime without a cable →
+              Scan pairing code from Studio</b>. One scan carries the key, the address and
+              the port. The phone shows the same key id back — check they match.
+            </div>
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Voice Pipeline Architecture</label>
@@ -1697,19 +1711,19 @@
         <button class="btn-save" onclick="saveConfiguration()">Save Pipeline Settings</button>
       </div>
 
-      <!-- TAB 4: TTS Voice -->
+      <!-- TAB 4: TTS Voice & Speech -->
       <div class="tab-content" id="tab-tts">
         <div class="form-group">
           <label class="form-label">TTS Provider</label>
           <select id="tts-provider" class="form-select" onchange="handleTtsProviderChange()">
-            <option value="supertonic" selected>Supertonic Local</option>
+            <option value="kokoro" selected>Kokoro-82M Studio Local (CUDA Tensor Core) [Default]</option>
+            <option value="supertonic">Supertonic Local</option>
             <option value="edge_tts">Microsoft Edge Neural</option>
             <option value="google_genai">Google Gemini TTS</option>
-            <option value="kokoro">Kokoro-82M Studio Local</option>
             <option value="vibevoice">VibeVoice Realtime (experimental)</option>
           </select>
         </div>
-        <div class="form-group" id="edge-voice-group">
+        <div class="form-group" id="edge-voice-group" style="display:none;">
           <label class="form-label">Microsoft Edge Voice — English US &amp; French</label>
           <select id="edge-tts-voice" class="form-select" onchange="rememberEdgeVoice()">
             <option value="en-US-AndrewMultilingualNeural">Loading current Edge voices…</option>
@@ -1719,12 +1733,13 @@
             <button type="button" class="preset-chip" onclick="refreshEdgeVoices()">Refresh voices</button>
           </div>
         </div>
-        <div id="kokoro-options" style="display:none;">
+        <div id="kokoro-options">
           <div class="form-group">
-            <label class="form-label">Kokoro Weights — bf16 measured fastest on Apple Silicon</label>
+            <label class="form-label">Kokoro Weights — High Speed CUDA Acceleration</label>
             <select id="kokoro-model" class="form-select">
-              <option value="kokoro-bf16" selected>bf16 — fastest here (~18x realtime)</option>
-              <option value="kokoro-4bit">4-bit — less memory, slower on M-series</option>
+              <option value="hexgrad/Kokoro-82M" selected>hexgrad/Kokoro-82M (CUDA ~140ms)</option>
+              <option value="kokoro-bf16">kokoro-bf16</option>
+              <option value="kokoro-4bit">kokoro-4bit</option>
             </select>
           </div>
           <div class="form-group">
@@ -1734,7 +1749,7 @@
                 <option value="ff_siwis">ff_siwis — French female</option>
               </optgroup>
               <optgroup label="American English — female">
-                <option value="af_heart">af_heart</option>
+                <option value="af_heart" selected>af_heart (Warm conversational female)</option>
                 <option value="af_bella">af_bella</option>
                 <option value="af_nicole">af_nicole</option>
                 <option value="af_sarah">af_sarah</option>
@@ -1744,7 +1759,7 @@
                 <option value="af_nova">af_nova</option>
               </optgroup>
               <optgroup label="American English — male">
-                <option value="am_adam">am_adam</option>
+                <option value="am_adam">am_adam (Professional male)</option>
                 <option value="am_michael">am_michael</option>
                 <option value="am_echo">am_echo</option>
                 <option value="am_eric">am_eric</option>
@@ -1766,8 +1781,6 @@
             </select>
             <div style="font-size:11px;color:var(--text-muted);margin-top:7px;">
               Use <b>ff_siwis</b> for French calls and an af_/am_/bf_/bm_ voice for English.
-              A mismatched voice is rejected on save. Measured 1,464&nbsp;ms first audio in
-              French versus 244&nbsp;ms for Supertonic&nbsp;2.
             </div>
           </div>
         </div>
@@ -1788,14 +1801,9 @@
                 <option value="fr-Spk1_woman">fr-Spk1_woman</option>
               </optgroup>
             </select>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:7px;">
-              Research-only model. English is the only supported language; French is an
-              exploration voice and may produce unexpected audio. Measured slower than
-              real time on this machine, so playback can starve. Prefer Supertonic for calls.
-            </div>
           </div>
         </div>
-        <div id="supertonic-options">
+        <div id="supertonic-options" style="display:none;">
           <div class="form-group">
             <label class="form-label">Supertonic Model</label>
             <select id="supertonic-model" class="form-select">
@@ -1814,14 +1822,7 @@
             </select>
           </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Default Conversation Language</label>
-          <select id="stt-language" class="form-select">
-            <option value="en-US" selected>English</option>
-            <option value="fr-FR">French</option>
-          </select>
-        </div>
-        <div id="google-tts-options">
+        <div id="google-tts-options" style="display:none;">
           <div class="form-group">
             <label class="form-label" for="google-tts-model">Google TTS Model</label>
             <select id="google-tts-model" class="form-select">
@@ -1841,41 +1842,57 @@
           <div class="form-group">
             <label class="form-label" for="google-tts-scene">Scene</label>
             <textarea id="google-tts-scene" class="form-control" rows="5" maxlength="2000" placeholder="Describe the phone environment, relationship, and emotional atmosphere."></textarea>
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.45;">
-              Sets the environment and overall vibe of Gemini's voice performance.
-            </div>
           </div>
           <div class="form-group">
             <label class="form-label" for="google-tts-sample-context">Sample Context</label>
             <textarea id="google-tts-sample-context" class="form-control" rows="5" maxlength="2000" placeholder="Describe how the speaker enters and continues the conversation naturally."></textarea>
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.45;">
-              Guides tone, pace, articulation, and continuity. It is never added to conversation memory.
-            </div>
           </div>
         </div>
-        <button class="btn-save" onclick="saveConfiguration()">Apply Voice</button>
+
+        <div class="form-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border, #333);">
+          <label class="form-label">Speech-to-Text (STT) Engine</label>
+          <select id="stt-provider" class="form-select">
+            <option value="sensevoice" selected>SenseVoice-Small (Non-Autoregressive, ~30ms, Zero Hallucinations) [Default]</option>
+            <option value="whisper_cuda">Faster-Whisper (CUDA Large-v3-Turbo + Silero VAD)</option>
+            <option value="antigravity_live">Google Gemini Live STT (Streaming Cloud)</option>
+            <option value="deepgram_flux">Deepgram Flux (Cloud Realtime)</option>
+          </select>
+          <div id="stt-provider-hint" style="font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.45;">
+            SenseVoice-Small runs resident in GPU VRAM with single-pass non-autoregressive decoding, eliminating silence hallucinations.
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Default Conversation Language</label>
+          <select id="stt-language" class="form-select">
+            <option value="en-US" selected>English</option>
+            <option value="fr-FR">French</option>
+          </select>
+        </div>
+
+        <button class="btn-save" onclick="saveConfiguration()">Apply Voice &amp; Speech</button>
       </div>
 
-      <!-- TAB 5: LLM -->
+      <!-- TAB 5: LLM Models -->
       <div class="tab-content" id="tab-llm">
         <div class="form-group">
           <label class="form-label">LLM Provider</label>
-          <select id="llm-provider" class="form-select">
-            <option value="antigravity_gemini" selected>Antigravity Gemini Bridge</option>
-            <option value="ollama">Local Ollama</option>
+          <select id="llm-provider" class="form-select" onchange="handleLlmProviderChange()">
+            <option value="ollama" selected>Local Ollama (Native Local Inference - Qwen 2.5 / Phi-4 / Qwen 3.8)</option>
+            <option value="antigravity_gemini">Antigravity Gemini (Zero-config, Real-time Gemini 2.5 Flash)</option>
+            <option value="vllm">vLLM (Local Engine)</option>
             <option value="gemini">Google Gemini API</option>
             <option value="openai">OpenAI API</option>
-            <option value="lmstudio">LM Studio / OpenAI-compatible local server</option>
+            <option value="lmstudio">LM Studio / Local OpenAI Server</option>
             <option value="openrouter">OpenRouter</option>
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Primary Intelligence</label>
-          <select id="llm-model" class="form-select">
-            <option value="gemini-3.1-flash-lite" selected>Gemini 3.1 Flash Lite (Zero-Latency Bridge)</option>
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-            <option value="qwen3.5:4b-mlx">Local Ollama Native (Qwen 3.5 4B)</option>
-          </select>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <label class="form-label" style="margin-bottom:0;">Primary Intelligence</label>
+            <button type="button" class="btn" style="font-size:11px; padding:2px 8px;" onclick="refreshLlmModels()">↻ Refresh Models</button>
+          </div>
+          <select id="llm-model" class="form-select"></select>
+          <div id="llm-model-hint" style="font-size:12px; color:var(--text-muted); margin-top:6px; line-height:1.45;"></div>
         </div>
         <div class="form-group">
           <label class="form-label" for="speculative-pipeline">
@@ -2347,6 +2364,11 @@
       setWorkspaceHeading(copy[0], copy[1]);
       if (tabId === 'tools') { loadToolControl(); loadOpenWA(); loadWebResearch(); }
       if (tabId === 'business') loadFrappe();
+      if (tabId === 'tts') handleTtsProviderChange();
+      if (tabId === 'llm') {
+        const modelEl = document.getElementById('llm-model');
+        if (!modelEl || !modelEl.options.length) refreshLlmModels();
+      }
     }
 
     let productProviders = {};
@@ -3405,6 +3427,38 @@
     }
 
     // ---- Remote phone link ------------------------------------------------
+    async function showPairingQr(rotate) {
+      const panel = document.getElementById('pairing-panel');
+      const port = parseInt(document.getElementById('remote-link-port').value, 10) || 8770;
+      try {
+        const res = await fetch('/api/pairing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rotate: !!rotate, port }),
+        });
+        const data = await res.json();
+        if (data.status !== 'ok') {
+          document.getElementById('remote-link-status').textContent = data.message || 'Failed.';
+          return;
+        }
+        document.getElementById('pairing-qr').innerHTML = data.qr_svg;
+        document.getElementById('pairing-fingerprint').textContent =
+          'Key id ' + data.fingerprint + ' · ' + data.host + ':' + data.port;
+        panel.style.display = 'block';
+      } catch (err) {
+        document.getElementById('remote-link-status').textContent = String(err);
+      }
+    }
+
+    async function rotatePairingKey() {
+      const ok = confirm(
+        'Generate a new key?\n\nThe phone must be paired again by scanning the new code. ' +
+        'Until then it cannot connect over the tunnel OR over the USB cable, because both ' +
+        'use this same key.');
+      if (!ok) return;
+      await showPairingQr(true);
+    }
+
     async function refreshRemoteLink() {
       try {
         const res = await fetch('/api/status');
@@ -3541,14 +3595,16 @@
       delete config.fingerprint;
       config.base_url = document.getElementById('frappe-base-url').value.trim();
       config.site_name = document.getElementById('frappe-site-name').value.trim();
-      config.api_key = document.getElementById('frappe-api-key').value.trim();
-      config.api_secret = document.getElementById('frappe-api-secret').value.trim();
-      config.request_timeout_ms = Number(document.getElementById('frappe-timeout').value);
-      config.max_result_items = Number(document.getElementById('frappe-max-items').value);
+      const keyVal = document.getElementById('frappe-api-key').value.trim();
+      const secretVal = document.getElementById('frappe-api-secret').value.trim();
+      config.api_key = keyVal || (frappeConfig.api_key ? '••••••••' : '');
+      config.api_secret = secretVal || (frappeConfig.api_secret ? '••••••••' : '');
+      config.request_timeout_ms = Number(document.getElementById('frappe-timeout').value) || 8000;
+      config.max_result_items = Number(document.getElementById('frappe-max-items').value) || 10;
       config.enabled = document.getElementById('frappe-enabled').checked;
       config.campaign_autopilot_enabled = document.getElementById('frappe-campaign-enabled').checked;
-      config.campaign_poll_seconds = Number(document.getElementById('frappe-campaign-poll').value);
-      config.campaign_claim_seconds = Number(document.getElementById('frappe-campaign-claim').value);
+      config.campaign_poll_seconds = Number(document.getElementById('frappe-campaign-poll').value) || 15;
+      config.campaign_claim_seconds = Number(document.getElementById('frappe-campaign-claim').value) || 300;
       config.tools = (config.tools || []).map((tool, index) => ({
         ...tool,
         enabled: Boolean(document.querySelector(`[data-frappe-tool-index="${index}"]`)?.checked),
@@ -3603,8 +3659,13 @@
 
     async function saveFrappe() {
       try {
+        const config = collectFrappeConfig();
+        if (config.enabled && !config.api_key && !config.api_secret) {
+          frappeStatus('Please enter your Frappe Integration API key and secret before activating.', true);
+          return;
+        }
         frappeStatus('Saving and applying Business Suite tools…');
-        const response = await fetch('/api/frappe', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({config:collectFrappeConfig()})});
+        const response = await fetch('/api/frappe', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({config})});
         const result = await response.json();
         if (!response.ok) throw new Error(result.message || 'Save failed.');
         applyFrappeConfig(result.config);
@@ -4477,6 +4538,7 @@
         tts_aggregation: ttsProvider === 'edge_tts' ? 'phrase' : 'sentence',
         google_tts_scene: document.getElementById('google-tts-scene').value.trim(),
         google_tts_sample_context: document.getElementById('google-tts-sample-context').value.trim(),
+        stt_provider: document.getElementById('stt-provider').value,
         stt_language: document.getElementById('stt-language').value,
         llm_provider: document.getElementById('llm-provider').value,
         llm_model: document.getElementById('llm-model').value,
@@ -4536,9 +4598,18 @@
       if (config.tts_provider === 'vibevoice' && config.tts_voice_id) {
         document.getElementById('vibevoice-voice').value = config.tts_voice_id;
       }
+      if (config.stt_provider) {
+        const sttEl = document.getElementById('stt-provider');
+        if (sttEl) {
+          if (config.stt_provider === 'parakeet_local') {
+            sttEl.value = 'whisper_cuda';
+          } else {
+            sttEl.value = config.stt_provider;
+          }
+        }
+      }
       if (config.stt_language) document.getElementById('stt-language').value = config.stt_language;
       if (config.llm_provider) document.getElementById('llm-provider').value = config.llm_provider;
-      if (config.llm_model) document.getElementById('llm-model').value = config.llm_model;
       if (config.speculative_pipeline_enabled !== undefined) {
         document.getElementById('speculative-pipeline').checked = Boolean(config.speculative_pipeline_enabled);
       }
@@ -4555,6 +4626,78 @@
       if (config.system_prompt !== undefined) document.getElementById('system-prompt').value = config.system_prompt;
       handlePipelineModeChange();
       handleTtsProviderChange();
+      handleLlmProviderChange(config.llm_model);
+    }
+
+    async function handleLlmProviderChange(preferredModel) {
+      const providerEl = document.getElementById('llm-provider');
+      const modelEl = document.getElementById('llm-model');
+      const hintEl = document.getElementById('llm-model-hint');
+      if (!providerEl || !modelEl) return;
+      const provider = providerEl.value;
+      const selectedValue = preferredModel || modelEl.value;
+
+      modelEl.disabled = true;
+      if (hintEl) {
+        hintEl.textContent = 'Fetching available models…';
+        hintEl.style.color = '';
+      }
+
+      try {
+        const res = await fetch(`/api/llm/models?provider=${encodeURIComponent(provider)}`);
+        const data = await res.json();
+        const names = data.names || [];
+
+        if (names.length > 0) {
+          modelEl.innerHTML = names.map(n => `<option value="${n}">${n}</option>`).join('');
+          modelEl.disabled = false;
+
+          if (selectedValue && names.includes(selectedValue)) {
+            modelEl.value = selectedValue;
+          } else if (names[0]) {
+            modelEl.value = names[0];
+          }
+
+          if (hintEl) {
+            if (provider === 'ollama') {
+              hintEl.textContent = `Found ${names.length} local Ollama model(s) installed on this system.`;
+              hintEl.style.color = 'var(--success)';
+            } else if (provider === 'vllm') {
+              hintEl.textContent = `vLLM Engine (${names.length} model(s) available).`;
+              hintEl.style.color = 'var(--success)';
+            } else {
+              hintEl.textContent = `${names.length} model(s) available for ${provider}.`;
+              hintEl.style.color = '';
+            }
+          }
+        } else {
+          modelEl.innerHTML = '<option value="">No models found</option>';
+          modelEl.disabled = true;
+          if (hintEl) {
+            if (provider === 'ollama') {
+              hintEl.textContent = data.error || 'Ollama is offline or has no models pulled. Run "ollama pull qwen2.5:3b" in terminal.';
+              hintEl.style.color = '#ef4444';
+            } else {
+              hintEl.textContent = data.error || 'No models available.';
+              hintEl.style.color = '#e0a030';
+            }
+          }
+        }
+      } catch (err) {
+        if (selectedValue) {
+          modelEl.innerHTML = `<option value="${selectedValue}">${selectedValue}</option>`;
+        }
+        modelEl.disabled = false;
+        if (hintEl) {
+          hintEl.textContent = `Failed to fetch models: ${err.message}`;
+          hintEl.style.color = '#ef4444';
+        }
+      }
+    }
+
+    async function refreshLlmModels() {
+      const currentModel = document.getElementById('llm-model') ? document.getElementById('llm-model').value : '';
+      await handleLlmProviderChange(currentModel);
     }
 
     async function loadConfiguration() {

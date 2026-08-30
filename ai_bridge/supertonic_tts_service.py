@@ -17,7 +17,19 @@ from typing import Any, Protocol
 import numpy as np
 import soxr
 from pipecat.frames.frames import ErrorFrame, Frame, TTSAudioRawFrame
-from pipecat.services.settings import TTSSettings, assert_given
+from pipecat.services.settings import TTSSettings
+
+try:
+    from pipecat.services.settings import assert_given  # type: ignore[attr-defined]
+except ImportError:
+    def assert_given(value: Any) -> Any:
+        try:
+            from pipecat.services.settings import NOT_GIVEN, is_given
+            if not is_given(value) or value is NOT_GIVEN:
+                return ""
+        except Exception:
+            pass
+        return value if value is not None else ""
 from pipecat.services.tts_service import TextAggregationMode, TTSService
 from pipecat.transcriptions.language import Language, resolve_language
 from pipecat.utils.tracing.service_decorators import traced_tts

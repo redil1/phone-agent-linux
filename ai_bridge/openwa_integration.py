@@ -265,9 +265,9 @@ class OpenWAClient:
         body = await self._request("GET", "/api/health/ready", api_key="")
         return body if isinstance(body, dict) else {"ready": True}
 
-    async def session_status(self) -> dict[str, Any]:
+    async def session_status(self, api_key: str | None = None) -> dict[str, Any]:
         body = await self._request(
-            "GET", f"/api/sessions/{quote(self.config.session_id, safe='')}"
+            "GET", f"/api/sessions/{quote(self.config.session_id, safe='')}", api_key=api_key
         )
         if not isinstance(body, dict):
             raise OpenWAError("OpenWA session response is invalid")
@@ -727,7 +727,7 @@ class OpenWAToolRuntime:
         self._self_chat = False
 
     async def start(self) -> dict[str, RealtimeTool]:
-        if not self.config.enabled or not self._phone_digits:
+        if not self.config.enabled:
             return {}
         self.session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=self.config.request_timeout_ms / 1_000)
@@ -738,6 +738,7 @@ class OpenWAToolRuntime:
             self._openwa_account_digits = self._session_phone_digits(session_status)
             self._self_chat = bool(
                 self._openwa_account_digits
+                and self._phone_digits
                 and self._openwa_account_digits == self._phone_digits
             )
         except Exception as exc:
@@ -753,7 +754,7 @@ class OpenWAToolRuntime:
             if not self._active(policy):
                 continue
             self._register_tool(name, policy)
-        if self.config.live_events_enabled:
+        if self.config.live_events_enabled and self._phone_digits:
             self.event_bridge = OpenWAEventBridge(
                 self.config,
                 phone_digits=self._phone_digits,
@@ -794,11 +795,16 @@ class OpenWAToolRuntime:
             not policy.task_ids or "*" in policy.task_ids or self.task_id in policy.task_ids
         )
 
-    async def _current_chat(self) -> str:
+    async def _current_chat(self, fallback_phone: str = "") -> str:
         if self._chat_id:
             return self._chat_id
         client = self._require_client()
-        self._chat_id = await client.resolve_chat(self._phone_digits)
+        phone = self._phone_digits or _phone_digits(fallback_phone)
+        if not phone:
+            raise OpenWAError(
+                "No recipient phone number is available for WhatsApp. Please confirm the customer's phone number first."
+            )
+        self._chat_id = await client.resolve_chat(phone)
         return self._chat_id
 
     def _register_tool(self, name: str, policy: OpenWAToolPolicy) -> None:
@@ -867,7 +873,8 @@ class OpenWAToolRuntime:
         if name == "whatsapp_last_delivery_status":
             statuses = self.event_bridge.delivery_status if self.event_bridge else {}
             return {"verified": True, "statuses": dict(list(statuses.items())[-10:])}
-        chat_id = await self._current_chat()
+        fallback_phone = str(arguments.get("phone_number") or arguments.get("phone") or "")
+        chat_id = await self._current_chat(fallback_phone=fallback_phone)
         if name == "whatsapp_read_current_customer_chat":
             messages = await client.history(chat_id, int(arguments.get("limit", 8)))
             return {"verified": True, "messages": messages}
@@ -1078,34 +1085,43 @@ class OpenWAToolRuntime:
 
         text = {"type": "string", "minLength": 1, "maxLength": 4_000}
         message_id = {"type": "string", "minLength": 1, "maxLength": 256}
+        phone_param = {
+            "type": "string",
+            "description": "Optional destination phone number if not using the active caller's phone line.",
+        }
         return {
             "whatsapp_read_current_customer_chat": tool(
-                "Read recent WhatsApp messages only from the customer on the current phone call.",
-                {"limit": {"type": "integer", "minimum": 1, "maximum": MAX_HISTORY_ITEMS}},
+                "Read recent WhatsApp messages from the customer on the current phone call or specified phone number.",
+                {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": MAX_HISTORY_ITEMS},
+                    "phone_number": phone_param,
+                },
                 ["limit"],
             ),
             "whatsapp_send_text_current_customer": tool(
-                "Send a WhatsApp text only to the customer on the current call. Say briefly "
-                "that you will send it before calling. When the caller dictates message wording, "
+                "Send a WhatsApp text message to the customer on the current call (or specified phone number). "
+                "Use this immediately when the caller requests info, links, or catalogs on WhatsApp. Say briefly "
+                "that you are sending it before or as you dispatch it. When the caller dictates message wording, "
                 "preserve every word exactly except harmless capitalization or punctuation. Never "
                 "claim delivery unless delivery_confirmed is true in the result.",
-                {"text": text},
+                {"text": text, "phone_number": phone_param},
                 ["text"],
             ),
             "whatsapp_send_media_current_customer": tool(
-                "Send approved HTTPS media only to the current caller on WhatsApp.",
+                "Send approved HTTPS media to the current caller on WhatsApp.",
                 {
                     "kind": {"type": "string", "enum": ["image", "video", "audio", "document"]},
                     "url": {"type": "string", "minLength": 8, "maxLength": 2_000},
                     "caption": {"type": "string", "maxLength": 1_024},
                     "filename": {"type": "string", "maxLength": 255},
+                    "phone_number": phone_param,
                 },
                 ["kind", "url"],
             ),
             "whatsapp_reply_current_customer": tool(
                 "Reply on WhatsApp to a specific message from the current caller. Copy any "
                 "caller-dictated reply text exactly without paraphrasing.",
-                {"message_id": message_id, "text": text},
+                {"message_id": message_id, "text": text, "phone_number": phone_param},
                 ["message_id", "text"],
             ),
             "whatsapp_react_current_customer": tool(
@@ -1113,6 +1129,7 @@ class OpenWAToolRuntime:
                 {
                     "message_id": message_id,
                     "emoji": {"type": "string", "maxLength": 16},
+                    "phone_number": phone_param,
                 },
                 ["message_id", "emoji"],
             ),
@@ -1122,6 +1139,7 @@ class OpenWAToolRuntime:
                     "latitude": {"type": "number", "minimum": -90, "maximum": 90},
                     "longitude": {"type": "number", "minimum": -180, "maximum": 180},
                     "description": {"type": "string", "maxLength": 500},
+                    "phone_number": phone_param,
                 },
                 ["latitude", "longitude"],
             ),
@@ -1130,15 +1148,21 @@ class OpenWAToolRuntime:
                 {
                     "name": {"type": "string", "minLength": 1, "maxLength": 200},
                     "number": {"type": "string", "minLength": 8, "maxLength": 32},
+                    "phone_number": phone_param,
                 },
                 ["name", "number"],
             ),
             "whatsapp_mark_current_customer_read": tool(
-                "Mark the current caller's WhatsApp chat as read.", {}, []
+                "Mark the current caller's WhatsApp chat as read.",
+                {"phone_number": phone_param},
+                [],
             ),
             "whatsapp_set_typing_current_customer": tool(
                 "Show or clear a WhatsApp typing indicator only in the current caller chat.",
-                {"state": {"type": "string", "enum": ["typing", "recording", "paused"]}},
+                {
+                    "state": {"type": "string", "enum": ["typing", "recording", "paused"]},
+                    "phone_number": phone_param,
+                },
                 ["state"],
             ),
             "whatsapp_last_delivery_status": tool(

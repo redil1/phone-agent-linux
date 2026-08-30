@@ -960,6 +960,7 @@ class TranscriptionPolicyProcessor(FrameProcessor):
 # special-cased: releasing one clause early is cheap, and the run-on guard below
 # bounds the damage if a model never punctuates.
 _SENTENCE_BOUNDARY = re.compile(r"[^.!?…]*[.!?…]+(?:\s+|$)", re.UNICODE)
+_EARLY_CLAUSE_BOUNDARY = re.compile(r"^([^,;:\n]{12,60}[,;:])(?:\s+|$)", re.UNICODE)
 _RUN_ON_CHARS = 160
 
 
@@ -985,7 +986,16 @@ class ResponsePolicyProcessor(FrameProcessor):
         self._epoch = -1
 
     def _take_sentence(self) -> str | None:
-        """Pop one complete sentence, or a bounded chunk of a run-on reply."""
+        """Pop one complete sentence, or an early clause/bounded chunk of a reply."""
+
+        # If this is the very first chunk of the turn, allow an early clause (e.g., "Great,", "I see,")
+        # to stream to TTS immediately for minimum latency.
+        if not self._spoken:
+            clause_match = _EARLY_CLAUSE_BOUNDARY.match(self._pending)
+            if clause_match and clause_match.group(1).strip():
+                clause = clause_match.group(1)
+                self._pending = self._pending[len(clause) :].lstrip()
+                return clause.strip()
 
         match = _SENTENCE_BOUNDARY.match(self._pending)
         if match and match.group(0).strip():

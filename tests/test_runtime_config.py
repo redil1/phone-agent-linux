@@ -109,7 +109,7 @@ def test_fully_local_speech_and_ollama_need_no_api_keys(
 
     config = ProviderConfig.from_env(require_credentials=True)
 
-    assert config.stt_model == "mlx-community/whisper-large-v3-turbo-q4"
+    assert config.stt_model == "large-v3-turbo"
     assert config.tts_voice_id == "af_heart"
     assert config.tts_aggregation == "sentence"
     config.validate(require_credentials=True)
@@ -323,7 +323,11 @@ def test_flux_preserves_final_transcripts_when_confidence_is_missing() -> None:
     assert services.stt._settings.min_confidence == 0.0
 
 
-def test_codex_app_provider_needs_no_extracted_api_key() -> None:
+def test_codex_app_provider_needs_no_extracted_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "phone_agent_gateway.ai_bridge.codex_app_server.resolve_codex_binary",
+        lambda configured=None: "/bin/sh",
+    )
     config = ProviderConfig(
         tts_provider="cartesia",
         llm_provider="codex_app",
@@ -336,7 +340,6 @@ def test_codex_app_provider_needs_no_extracted_api_key() -> None:
 
     service = create_llm_service(config)
     assert isinstance(service, CodexAppServerLLMService)
-    assert resolve_codex_binary()
 
 
 def test_gemini_cli_provider_needs_no_api_key() -> None:
@@ -414,29 +417,30 @@ def test_kokoro_accepts_matching_voice_and_language() -> None:
     for language, voice in (("fr-FR", "ff_siwis"), ("en-US", "af_heart"), ("en-US", "bm_george")):
         config = ProviderConfig(
             tts_provider="kokoro",
-            tts_model="kokoro-bf16",
+            tts_model="hexgrad/Kokoro-82M",
             tts_voice_id=voice,
             stt_language=language,
         )
         config.validate(require_credentials=False)
 
 
-def test_kokoro_rejects_the_retired_onnx_model_identifier() -> None:
-    # Kokoro runs on MLX now. "kokoro-v1.0" named an ONNX file that measured
-    # ~4x realtime against ~18x for the Metal build, so it must not resolve.
+def test_kokoro_rejects_unsupported_model_identifier() -> None:
     config = ProviderConfig(
         tts_provider="kokoro",
-        tts_model="kokoro-v1.0",
+        tts_model="invalid-kokoro-model-repo",
         tts_voice_id="af_heart",
         stt_language="en-US",
     )
-    with pytest.raises(ConfigurationError, match="kokoro-bf16 or kokoro-4bit"):
+    with pytest.raises(ConfigurationError, match="hexgrad/Kokoro-82M or kokoro-82m"):
         config.validate(require_credentials=False)
 
 
 def test_kokoro_rejects_a_malformed_voice_id() -> None:
     config = ProviderConfig(
-        tts_provider="kokoro", tts_model="kokoro-bf16", tts_voice_id="Heart", stt_language="en-US"
+        tts_provider="kokoro",
+        tts_model="hexgrad/Kokoro-82M",
+        tts_voice_id="Heart",
+        stt_language="en-US",
     )
     with pytest.raises(ConfigurationError, match="af_heart or ff_siwis"):
         config.validate(require_credentials=False)

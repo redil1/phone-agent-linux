@@ -137,7 +137,13 @@ def classify_caller_turn(
         return TurnQuality.REPEAT_REQUEST
     if _matches(_IDENTITY_CHALLENGE, normalized):
         return TurnQuality.IDENTITY_CHALLENGE
-    if _matches(_NOT_NOW, normalized):
+    if any(
+        k in normalized
+        for k in ("whatsapp", "message", "sms", "link", "email", "envoyer", "send", "start first")
+    ):
+        # Actionable customer inquiry or dispatch request; must reach the model & tools.
+        pass
+    elif _matches(_NOT_NOW, normalized):
         return TurnQuality.NOT_NOW
 
     # Known conversational tokens are checked before the noise detector.
