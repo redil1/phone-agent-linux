@@ -4,9 +4,22 @@ PhoneAgent connects a rooted Android phone call to a Pipecat voice pipeline on t
 runtime combines speech recognition, an LLM, streaming speech synthesis, a configurable agent
 persona, task contracts, caller memory, deterministic permission checks, and per-turn evaluation.
 
+## Install on a new Mac
+
+```bash
+git clone https://github.com/redil1/PhoneAgent.git
+cd PhoneAgent
+./tools/bootstrap_macos.sh
+```
+
+Installs the locked environment, runs lint and the full suite, builds the macOS
+app and installs the Studio service. Requires Apple Silicon: Kokoro and Parakeet
+run on MLX/Metal, which has no Intel build. See [`SETUP.md`](SETUP.md) for the
+phone, link key and provider steps a clone cannot carry with it.
+
 ## Run
 
-Install dependencies and start the local Studio:
+Already set up? Start the local Studio directly:
 
 ```bash
 uv sync
