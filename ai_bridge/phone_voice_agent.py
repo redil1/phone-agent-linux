@@ -733,6 +733,7 @@ class PhoneVoiceAgent:
                 control=self.config.protocol_control_port,
             ),
             device_id=self.config.device_id,
+            auto_forward_adb=self.config.use_adb_forward,
         )
         audio_receiver = (
             transport.feed_s2s_phone_frame

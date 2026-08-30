@@ -767,6 +767,10 @@ class RuntimeConfig:
     system_prompt: str
     link_authentication_key: bytes | None = field(repr=False)
     providers: ProviderConfig = field(repr=False)
+    # False once a handset tunnels in: the relay owns the gateway ports
+    # and an adb forward would fight it for them. Defaulted so every existing
+    # construction keeps the cabled behaviour it had.
+    use_adb_forward: bool = True
 
     @classmethod
     def from_env(cls, *, require_provider_credentials: bool = True) -> RuntimeConfig:
@@ -801,6 +805,7 @@ class RuntimeConfig:
         return cls(
             device_id=os.getenv("PHONE_AGENT_DEVICE_ID") or None,
             control_host=os.getenv("PHONE_AGENT_CONTROL_HOST", "127.0.0.1"),
+            use_adb_forward=_env_bool("PHONE_AGENT_USE_ADB_FORWARD", True),
             control_port=_env_int("PHONE_AGENT_CONTROL_PORT", 8765, 1, 65535),
             protocol_control_port=_env_int("PHONE_AGENT_PROTOCOL_CONTROL_PORT", 8768, 1, 65535),
             rx_port=_env_int("PHONE_AGENT_RX_PORT", 8766, 1, 65535),

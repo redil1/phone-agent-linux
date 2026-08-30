@@ -505,3 +505,42 @@ async def test_a_port_held_by_an_adb_forward_says_so() -> None:
     finally:
         blocker.close()
         await relay.close()
+
+
+def test_a_tunnelled_phone_is_not_asked_for_a_usb_cable() -> None:
+    """The relay presents on loopback too, so "local" no longer implies adb.
+
+    Demanding adb here refused every dial on a healthy tunnel with
+    "Reconnect USB, unlock the phone, and authorize USB debugging".
+    """
+
+    from types import SimpleNamespace
+
+    from phone_agent_gateway.ai_bridge.runtime_config import ProviderConfig
+    from phone_agent_gateway.ai_bridge.web_server import PhoneAgentWebServer
+
+    server = PhoneAgentWebServer(config=ProviderConfig())
+    server._remote_link = SimpleNamespace(
+        stats=SimpleNamespace(phone_connected=True)
+    )
+
+    # With a phone tunnelled in, the preflight must reach the health probe
+    # rather than stopping at an adb check, so the failure names the gateway.
+    message = server._gateway_preflight_sync()
+
+    assert message is None or "USB" not in message
+
+
+def test_the_child_is_told_not_to_fight_the_relay_for_the_ports() -> None:
+    """adb forward and the relay cannot both own 8765-8768."""
+
+    from types import SimpleNamespace
+
+    from phone_agent_gateway.ai_bridge.runtime_config import ProviderConfig
+    from phone_agent_gateway.ai_bridge.web_server import PhoneAgentWebServer
+
+    server = PhoneAgentWebServer(config=ProviderConfig())
+    assert server._child_environment()["PHONE_AGENT_USE_ADB_FORWARD"] == "true"
+
+    server._remote_link = SimpleNamespace(stats=SimpleNamespace(phone_connected=True))
+    assert server._child_environment()["PHONE_AGENT_USE_ADB_FORWARD"] == "false"

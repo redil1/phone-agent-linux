@@ -2592,7 +2592,14 @@ class PhoneAgentWebServer:
     def _gateway_preflight_sync(self) -> str | None:
         host = os.getenv("PHONE_AGENT_CONTROL_HOST", "127.0.0.1").strip()
         port = int(os.getenv("PHONE_AGENT_CONTROL_PORT", "8765"))
-        if host in {"127.0.0.1", "localhost"}:
+        # The relay presents the phone on this same loopback, so "local" no
+        # longer implies USB. Demanding adb here refused every dial on a
+        # perfectly healthy tunnel; the health probe below still proves the
+        # handset is actually reachable.
+        tunnelled = (
+            self._remote_link is not None and self._remote_link.stats.phone_connected
+        )
+        if host in {"127.0.0.1", "localhost"} and not tunnelled:
             adb = ["adb"]
             device_id = os.getenv("PHONE_AGENT_DEVICE_ID", "").strip()
             if device_id:
@@ -2709,6 +2716,14 @@ class PhoneAgentWebServer:
                 "PHONE_AGENT_MEMORY_PATH": str(self.memory_manager.storage_path),
                 "PHONE_AGENT_RECORDING_ENABLED": ("true" if recording_consent else "false"),
                 "PHONE_AGENT_RECORDING_CONSENT": ("true" if recording_consent else "false"),
+                "PHONE_AGENT_USE_ADB_FORWARD": (
+                    "false"
+                    if (
+                        self._remote_link is not None
+                        and self._remote_link.stats.phone_connected
+                    )
+                    else "true"
+                ),
                 "PHONE_AGENT_TOOL_CONTROL": str(self.tool_control_store.path),
                 "PHONE_AGENT_TOOL_APPROVAL_DIR": str(self.tool_approval_queue.directory),
                 "PHONE_AGENT_OPENWA_CONFIG": str(self.openwa_config_store.path),
