@@ -202,6 +202,18 @@ class OllamaNativeClient:
             response = await session.post(f"{self.base_url}/api/chat", json=payload)
             self._active_response = response
             try:
+                if response.status == 400 and tools:
+                    raw = await response.content.read(MAX_ERROR_BYTES)
+                    detail = raw.decode(errors="replace").strip()
+                    if "does not support tools" in detail.lower():
+                        logger.warning(
+                            "Ollama model %s does not support native tools; falling back to text stream",
+                            model,
+                        )
+                        payload.pop("tools", None)
+                        response.close()
+                        response = await session.post(f"{self.base_url}/api/chat", json=payload)
+                        self._active_response = response
                 if response.status != 200:
                     await self._raise_response_error(response)
                 while raw_line := await response.content.readline():
