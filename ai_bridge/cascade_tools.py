@@ -478,17 +478,12 @@ def emitted_tool_instructions(runtime: CascadeToolRuntime) -> str:
     if not runtime.catalog:
         return ""
     lines = [
-        "# Tool Use",
-        "You have real tools. When one applies, USE IT — never say you are doing "
-        "something a tool does without calling that tool in the same reply.",
-        "To call one, reply with ONLY this and nothing else, no other words:",
+        "# TOOL EXECUTION PROTOCOL (MANDATORY)",
+        "You have live tools connected. Whenever the caller requests an action (such as sending a WhatsApp message, checking WhatsApp, searching the catalog, or scheduling a callback), you MUST execute the tool call in your response.",
+        "CRITICAL: Do NOT merely reply saying you will do it in words without emitting the tool block! Always emit the tool call block.",
+        "To invoke a tool, output ONLY the tool call block below (it is automatically processed by PhoneAgent and never spoken to the caller):",
         f'{TOOL_OPEN}{{"name":"<tool_name>","arguments":{{...}}}}{TOOL_CLOSE}',
-        "You MUST include every argument marked REQUIRED. An empty arguments "
-        "object fails and the caller hears nothing happen.",
-        f"Example: {_example_call(runtime)}",
-        "You will then receive the result and can answer the caller normally.",
-        "Never mention tools, JSON or this format out loud. If no tool is needed, "
-        "just answer.",
+        f"Example for WhatsApp: {TOOL_OPEN}{{\"name\":\"whatsapp_send_text_current_customer\",\"arguments\":{{\"text\":\"Hello, here is your requested information on WhatsApp!\"}}}}{TOOL_CLOSE}",
         "Available tools:",
     ]
     for name, tool in sorted(runtime.catalog.items()):
