@@ -307,23 +307,21 @@ class AgentPolicyRuntime:
     def _continuity_guard(self, text: str) -> tuple[str, bool]:
         if not self._opening_attempted or not self._repeats_opening_or_permission(text):
             return text, False
-        if self._permission_state == "refused":
-            replacement = (
-                "Je comprends. Je ne vais pas vous retenir. Bonne journée."
-                if self.reply_language.lower().startswith("fr")
-                else "I understand. I won't keep you. Have a good day."
-            )
-        elif self.reply_language.lower().startswith("fr"):
-            replacement = (
-                "Merci. Pour commencer, qu'est-ce que vous regardez le plus souvent : "
-                "le sport, les films ou les chaînes internationales ?"
-            )
-        else:
-            replacement = (
-                "Thank you. To start, what do you watch most often: sports, films, "
-                "or international channels?"
-            )
-        return replacement, True
+        # Remove repetitive self-introduction phrases if model repeated them, but keep the actual response content
+        cleaned = text
+        patterns = (
+            r"\b(?:bonjour|bonsoir)\b.{0,80}\b(?:je suis|ici)\b[^.!?]*[.!?]*",
+            r"\bje vous appelle\b.{0,100}\b(?:iptv|abonnement|subscription)\b[^.!?]*[.!?]*",
+            r"\b(?:est ce|est-ce|c est|c'est)\b.{0,60}\b(?:bon moment|quelques minutes)\b[^.!?]*[.!?]*",
+            r"\b(?:hello|hi|good morning|good afternoon)\b.{0,80}\b(?:this is|i am|i'm)\b[^.!?]*[.!?]*",
+            r"\bi(?:'m| am) calling\b.{0,100}\b(?:iptv|subscription)\b[^.!?]*[.!?]*",
+            r"\b(?:is this|is it)\b.{0,50}\b(?:good time|quick conversation|few minutes)\b[^.!?]*[.!?]*",
+        )
+        for pattern in patterns:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+        if cleaned:
+            return cleaned, True
+        return text, False
 
     def classify_turn(self, text: str) -> TurnQuality:
         """Decide whether this turn carries something to answer at all."""

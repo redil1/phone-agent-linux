@@ -89,12 +89,7 @@ def words_of(text: str) -> list[str]:
 
 
 def looks_like_noise(text: str) -> bool:
-    """Detect a transcript carrying no recoverable meaning.
-
-    Recognizers do not return empty strings for a cough or line noise; they
-    return short, vowel-poor, or repeated tokens. Those must never be treated
-    as something the caller actually said.
-    """
+    """Detect a transcript carrying no recoverable meaning."""
 
     normalized = normalize(text)
     if not normalized:
@@ -102,14 +97,16 @@ def looks_like_noise(text: str) -> bool:
     tokens = words_of(normalized)
     if not tokens:
         return True
+    # If the transcript contains 3 or more words, check if it's just a single repeated word like 'beep beep beep'
+    if len(tokens) >= 3:
+        return len(set(tokens)) == 1
     letters = re.sub(r"[^a-zà-ÿ]", "", normalized)
     if not letters:
         return True
     vowels = sum(character in "aeiouyàâäéèêëîïôöùûü" for character in letters)
-    if len(letters) >= 4 and vowels / len(letters) < 0.16:
+    if len(letters) >= 4 and vowels / len(letters) < 0.14:
         return True
-    # One short token repeated is a stutter artefact, not a sentence.
-    return len(tokens) >= 3 and len(set(tokens)) == 1
+    return False
 
 
 def _matches(patterns: tuple[str, ...], normalized: str) -> bool:
@@ -122,33 +119,38 @@ def classify_caller_turn(
     question_is_open: bool = False,
     language: str = "en-US",
 ) -> TurnQuality:
-    """Decide what kind of thing the caller just said.
-
-    ``question_is_open`` decides the meaning of a bare "oui": a complete answer
-    when the agent just asked something, an empty acknowledgement when it did
-    not. Without that distinction the agent either ignores real answers or
-    replies at length to filler.
-    """
+    """Decide what kind of thing the caller just said."""
 
     normalized = normalize(text)
     if not normalized:
         return TurnQuality.UNINTELLIGIBLE
+    if any(
+        k in normalized
+        for k in (
+            "whatsapp",
+            "message",
+            "sms",
+            "link",
+            "email",
+            "envoyer",
+            "send",
+            "start first",
+            "phone",
+            "number",
+            "hear",
+            "catalog",
+            "price",
+            "prix",
+        )
+    ):
+        return TurnQuality.ACTIONABLE
     if normalized in _REPEAT_REQUESTS:
         return TurnQuality.REPEAT_REQUEST
     if _matches(_IDENTITY_CHALLENGE, normalized):
         return TurnQuality.IDENTITY_CHALLENGE
-    if any(
-        k in normalized
-        for k in ("whatsapp", "message", "sms", "link", "email", "envoyer", "send", "start first")
-    ):
-        # Actionable customer inquiry or dispatch request; must reach the model & tools.
-        pass
-    elif _matches(_NOT_NOW, normalized):
+    if _matches(_NOT_NOW, normalized):
         return TurnQuality.NOT_NOW
 
-    # Known conversational tokens are checked before the noise detector.
-    # "mm-hmm" carries no vowels and would otherwise be discarded as noise,
-    # even though it is one of the most common things a listener says.
     if normalized in _SHORT_ANSWERS:
         return TurnQuality.ACTIONABLE if question_is_open else TurnQuality.BACKCHANNEL
     if normalized in _BACKCHANNELS:
@@ -159,8 +161,6 @@ def classify_caller_turn(
 
     tokens = words_of(normalized)
     if len(tokens) == 1:
-        # A lone unfamiliar word is usually a mis-recognition, but it is a real
-        # answer to a direct question ("sport", "cinq", "Casablanca").
         return TurnQuality.ACTIONABLE if question_is_open else TurnQuality.FRAGMENT
     return TurnQuality.ACTIONABLE
 
