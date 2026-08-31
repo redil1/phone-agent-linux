@@ -3234,7 +3234,11 @@ class PhoneAgentWebServer:
         return process.stdin
 
     async def _dial_on_resident_host(
-        self, writer: asyncio.StreamWriter, phone_number: str
+        self,
+        writer: asyncio.StreamWriter,
+        phone_number: str,
+        *,
+        recording_consent: bool = False,
     ) -> None:
         """Place a call on the already-loaded host and wait for it to finish.
 
@@ -3246,7 +3250,10 @@ class PhoneAgentWebServer:
 
         self._warm_call_active = False
         self._warm_call_finished.clear()
-        command = json.dumps({"command": "dial", "number": phone_number})
+        payload: dict[str, Any] = {"command": "dial", "number": phone_number}
+        if recording_consent:
+            payload["recording_consent"] = True
+        command = json.dumps(payload)
         writer.write(command.encode() + b"\n")
         await writer.drain()
         try:
@@ -3264,14 +3271,15 @@ class PhoneAgentWebServer:
                 await writer.drain()
 
     async def _execute_dial(self, phone_number: str, *, recording_consent: bool) -> None:
-        # Recording consent is baked into a host's environment at startup, so a
-        # consented call still gets its own process. Every other call reuses the
-        # resident host and skips the model load entirely.
-        writer = None if recording_consent else self._resident_host_stdin()
+        # Every call reuses the resident host when available and passes recording consent
+        # dynamically to skip model loading and prevent process lock collisions.
+        writer = self._resident_host_stdin()
         if writer is not None:
             self._child_reported_error = False
             try:
-                await self._dial_on_resident_host(writer, phone_number)
+                await self._dial_on_resident_host(
+                    writer, phone_number, recording_consent=recording_consent
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

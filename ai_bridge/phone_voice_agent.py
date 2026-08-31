@@ -908,7 +908,10 @@ class PhoneVoiceAgent:
     async def _handle_command(self, command: dict[str, Any]) -> None:
         name = str(command.get("command", "")).strip()
         if name == "dial":
-            await self._command_dial(str(command.get("number", "")).strip())
+            await self._command_dial(
+                str(command.get("number", "")).strip(),
+                recording_consent=bool(command.get("recording_consent", False)),
+            )
         elif name == "hangup":
             runtime = self._runtime
             if runtime is not None:
@@ -921,7 +924,9 @@ class PhoneVoiceAgent:
         else:
             logger.warning("ignoring unknown host command %r", name)
 
-    async def _command_dial(self, number: str) -> None:
+    async def _command_dial(
+        self, number: str, *, recording_consent: bool = False
+    ) -> None:
         if not number:
             self._emit_event({"type": "call_error", "message": "dial command had no number"})
             return
@@ -931,6 +936,8 @@ class PhoneVoiceAgent:
                 {"type": "call_error", "message": "phone link is not ready for a dial"}
             )
             return
+        os.environ["PHONE_AGENT_RECORDING_CONSENT"] = "true" if recording_consent else "false"
+        os.environ["PHONE_AGENT_RECORDING_ENABLED"] = "true" if recording_consent else "false"
         # A warm host keeps per-call state between calls, so the identity of the
         # previous conversation has to be cleared or the next caller inherits
         # its greeting suppression and direction.
@@ -942,7 +949,7 @@ class PhoneVoiceAgent:
         self._greeting_attempted = False
         self._auto_answer_attempted = False
         self._active_caller_id = ""
-        logger.info("placing outbound call to %s", number)
+        logger.info("placing outbound call to %s (recording_consent=%s)", number, recording_consent)
         try:
             response = await self._place_outbound_call(runtime, number)
         except Exception as exc:

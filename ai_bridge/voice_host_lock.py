@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import os
+import time
 from pathlib import Path
 from typing import TextIO
 
@@ -19,18 +20,24 @@ class VoiceHostLock:
         self.path = path
         self._stream: TextIO | None = None
 
-    def acquire(self) -> None:
+    def acquire(self, timeout_secs: float = 1.0) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         stream = self.path.open("a+", encoding="utf-8")
-        try:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            stream.seek(0)
-            owner = stream.read().strip() or "unknown"
-            stream.close()
-            raise VoiceHostBusyError(
-                f"another PhoneAgent voice host is already running (pid {owner})"
-            ) from exc
+        deadline = time.monotonic() + max(0.0, timeout_secs)
+        while True:
+            try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() < deadline:
+                    time.sleep(0.05)
+                    continue
+                stream.seek(0)
+                owner = stream.read().strip() or "unknown"
+                stream.close()
+                raise VoiceHostBusyError(
+                    f"another PhoneAgent voice host is already running (pid {owner})"
+                ) from exc
         stream.seek(0)
         stream.truncate()
         stream.write(str(os.getpid()))
@@ -42,8 +49,11 @@ class VoiceHostLock:
         self._stream = None
         if stream is None:
             return
-        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-        stream.close()
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            stream.close()
+        except Exception:
+            pass
 
     def __enter__(self) -> VoiceHostLock:
         self.acquire()
