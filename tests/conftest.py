@@ -39,6 +39,15 @@ def _isolated_user_tools(tmp_path_factory, monkeypatch):
     # dial does not pay the ~20 s speech-model load. That spawns a real
     # subprocess, so the suite runs with it off.
     monkeypatch.setenv("PHONE_AGENT_WARM_VOICE_HOST", "0")
+    # Deployment settings must not leak into the suite. The production container
+    # exports PHONE_AGENT_ALLOW_EXTERNAL=true, which made the bind/DNS-rebinding
+    # guard test pass or fail depending on where it ran rather than on the code.
+    for name in (
+        "PHONE_AGENT_ALLOW_EXTERNAL",
+        "PHONE_AGENT_ALLOWED_HOSTS",
+        "PHONE_AGENT_WEB_HOST",
+    ):
+        monkeypatch.delenv(name, raising=False)
     tool_registry.clear_registry()
     yield
     tool_registry.clear_registry()

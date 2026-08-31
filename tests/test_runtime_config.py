@@ -11,7 +11,6 @@ import pytest
 
 from phone_agent_gateway.ai_bridge.codex_app_server import (
     CodexAppServerLLMService,
-    resolve_codex_binary,
 )
 from phone_agent_gateway.ai_bridge.edge_tts_service import EdgeTTSService
 from phone_agent_gateway.ai_bridge.gemini_cli import GeminiCliLLMService

@@ -123,8 +123,11 @@ change live call state.
 Install the tested macOS app and local service with `tools/install_macos.sh`; restore the previous
 installation with `tools/rollback_macos.sh`. Run `uv run phone-agent-qualify --ensure-forwards` to
 produce a formal report for the connected Android device. The local stdio MCP entry point is
-`uv run phone-agent-mcp`. Dial requests made through MCP require an exact one-time approval in the
-Studio before execution.
+`uv run phone-agent-mcp`. Dial requests made through MCP execute autonomously: `phone-agent-mcp`
+holds the control token, and a caller presenting it can place a call without a further operator
+step. The dial still passes destination normalization, the allow-list, rate and cooldown limits,
+the hardware preflight and the one-call lock, and the destination is recorded in the audit ledger
+only as a salted hash. Treat the control token as the authority to dial.
 
 Studio 0.7 includes a **Tools & MCP** workspace for declarative HTTP tools, local stdio MCP servers
 and remote Streamable HTTP MCP servers. Connections and individual tools have separate activation,

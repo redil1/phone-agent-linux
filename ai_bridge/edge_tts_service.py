@@ -21,7 +21,6 @@ from typing import Any, Protocol
 import edge_tts
 from pipecat.frames.frames import ErrorFrame, Frame, TTSAudioRawFrame
 from pipecat.services.settings import NOT_GIVEN, TTSSettings, _NotGiven
-from typing import Any
 
 try:
     from pipecat.services.settings import assert_given  # type: ignore[attr-defined]

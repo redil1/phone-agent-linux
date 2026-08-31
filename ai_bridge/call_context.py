@@ -49,7 +49,8 @@ _EXPLICIT_INTEREST = re.compile(
     r"\b(?:i(?:'m| am) interested|tell me more|sounds (?:good|useful|interesting)|"
     r"that (?:could|would) help|(?:that|it) is interesting|would be interesting|worth exploring|"
     r"i(?:'d| would) like to know more|what do you offer|how much|what(?:'s| is) the price|"
-    r"i need (?:that|this|something)|je suis intéressé|ça m'intéresse|"
+    r"i need (?:that|this|something)|whatsapp|send (?:me )?(?:the )?(?:offer|details|info|message)|"
+    r"je suis intéressé|ça m'intéresse|envoyez(?:-moi)?|"
     r"dites-m'en plus|combien|quel est le prix|qu'est-ce que vous proposez)\b",
     re.IGNORECASE,
 )
@@ -141,7 +142,7 @@ class CallContextPolicy:
 - Do not force a cold-sales permission script onto an inbound caller.
 - Still verify facts, listen first, and never assume the exact product or action they want."""
         return """# CALL DIRECTION — OUTBOUND COLD PROSPECTING
-- You initiated this call. The person has not shown product interest yet.
+- You initiated this call to the prospect. Never ask 'What made you decide to call today?' or 'Why did you call?' because YOU are the one who dialed them.
 - Permission to continue means only “you may speak”; it NEVER means interest, need,
   or buying intent.
 - After permission, do not jump to device, package, price, plan, trial, payment, or setup questions.
@@ -205,25 +206,47 @@ class CallContextPolicy:
             and _PRODUCT_QUALIFICATION_QUESTION.search(str(text))
         )
 
-    def safe_replacement_question(self, language: str) -> str:
+    def safe_replacement_question(
+        self,
+        language: str,
+        spoken_history: set[str] | None = None,
+    ) -> str:
         french = str(language).lower().startswith("fr")
         if self.phase is ProspectingPhase.INTEREST_CHECK:
-            return (
+            candidates = [
                 "Est-ce que ce type d'amélioration vaudrait la peine d'être exploré pour vous ?"
                 if french
-                else "Would that kind of improvement be worth exploring for you?"
-            )
-        if self.phase is ProspectingPhase.NEED_DEVELOPMENT:
-            return (
+                else "Would that kind of improvement be worth exploring for you?",
+                "Qu'en pensez-vous, est-ce que cela pourrait vous être utile ?"
+                if french
+                else "What do you think, could that be helpful for your setup?",
+                "Est-ce que vous aimeriez voir comment notre offre se compare à votre service actuel ?"
+                if french
+                else "Would you like to see how our options compare to your current setup?",
+            ]
+        elif self.phase is ProspectingPhase.NEED_DEVELOPMENT:
+            candidates = [
                 "Qu'est-ce que vous aimeriez surtout améliorer dans votre solution actuelle ?"
                 if french
-                else "What would you most like to improve about your current setup?"
-            )
-        return (
-            "Comment regardez-vous actuellement les programmes qui comptent le plus pour vous ?"
-            if french
-            else "How do you currently watch the programs that matter most to you?"
-        )
+                else "What would you most like to improve about your current setup?",
+                "Quels sont les programmes ou chaînes que vous regardez le plus souvent ?"
+                if french
+                else "What channels or shows do you find yourself watching most?",
+            ]
+        else:
+            candidates = [
+                "Comment regardez-vous actuellement les programmes qui comptent le plus pour vous ?"
+                if french
+                else "How do you currently watch the programs that matter most to you?",
+                "Quel est votre équipement principal pour la télévision à la maison ?"
+                if french
+                else "What is your main TV setup at home right now?",
+            ]
+        if spoken_history:
+            for c in candidates:
+                if c not in spoken_history:
+                    return c
+        return candidates[0]
 
     def opening_greeting(
         self,

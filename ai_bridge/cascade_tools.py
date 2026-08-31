@@ -255,8 +255,10 @@ class CascadeToolRuntime:
                 raise
             previous = self._runtimes[key]
             self._runtimes[key] = candidate
-            self._tool_names[key] = set(tools)
-            self.catalog = {**retained, **tools}
+            allowed = self._contract_allowed_tools
+            active_tools = {k: v for k, v in tools.items() if not allowed or k in allowed}
+            self._tool_names[key] = set(active_tools)
+            self.catalog = {**retained, **active_tools}
             self._fingerprints[key] = fingerprint
             if previous is not None:
                 self._retired.append(previous)
@@ -483,7 +485,13 @@ def emitted_tool_instructions(runtime: CascadeToolRuntime) -> str:
         "CRITICAL: Do NOT merely reply saying you will do it in words without emitting the tool block! Always emit the tool call block.",
         "To invoke a tool, output ONLY the tool call block below (it is automatically processed by PhoneAgent and never spoken to the caller):",
         f'{TOOL_OPEN}{{"name":"<tool_name>","arguments":{{...}}}}{TOOL_CLOSE}',
-        f"Example for WhatsApp: {TOOL_OPEN}{{\"name\":\"whatsapp_send_text_current_customer\",\"arguments\":{{\"text\":\"Hello, here is your requested information on WhatsApp!\"}}}}{TOOL_CLOSE}",
+        # Restored from the pre-8906c78 block. The hardcoded WhatsApp example
+        # that replaced these left every other tool -- catalog search, callback
+        # scheduling -- with no filled example at all, which is the exact
+        # condition that previously taught a model to emit empty arguments.
+        "You MUST include every argument marked REQUIRED. An empty arguments "
+        "object fails and the caller hears nothing happen.",
+        f"Example: {_example_call(runtime)}",
         "Available tools:",
     ]
     for name, tool in sorted(runtime.catalog.items()):

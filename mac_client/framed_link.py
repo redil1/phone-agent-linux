@@ -197,7 +197,7 @@ class FramedGatewayLink:
             self.session.generation_id,
         )
 
-    def connect_media(self, timeout: float = 3.0) -> None:
+    def connect_media(self, timeout: float = 15.0) -> None:
         """Attach authenticated media only after Telecom reports ACTIVE."""
 
         if not self.connected:

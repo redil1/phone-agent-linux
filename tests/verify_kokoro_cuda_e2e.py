@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+
 import numpy as np
 import torch
 from pipecat.frames.frames import TTSAudioRawFrame
@@ -27,7 +28,6 @@ async def main() -> None:
 
     # 2. Prewarm Test
     print("\n[Step 1] Running prewarm_kokoro()...")
-    t_prewarm_start = time.perf_counter()
     prewarm_duration_ms = prewarm_kokoro(
         model="hexgrad/Kokoro-82M",
         voice="af_heart",

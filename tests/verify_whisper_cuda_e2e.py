@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+
 import numpy as np
 import torch
 from faster_whisper import WhisperModel

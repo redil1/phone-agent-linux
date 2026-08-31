@@ -320,8 +320,31 @@ class AgentPolicyRuntime:
         for pattern in patterns:
             cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
         if cleaned:
+            # The model appended something real after a redundant re-introduction:
+            # keep that and drop only the repetition.
             return cleaned, True
-        return text, False
+        # Nothing survived the strip, so the whole sentence WAS the repeat.
+        # Returning `text` here spoke it anyway, which is how callers ended up
+        # hearing the opening a second time. Substitute a forward-moving turn
+        # instead: it avoids both the repetition and the dead silence that
+        # returning "" would create.
+        if self._permission_state == "refused":
+            replacement = (
+                "Je comprends. Je ne vais pas vous retenir. Bonne journée."
+                if self.reply_language.lower().startswith("fr")
+                else "I understand. I won't keep you. Have a good day."
+            )
+        elif self.reply_language.lower().startswith("fr"):
+            replacement = (
+                "Merci. Pour commencer, qu'est-ce que vous regardez le plus souvent : "
+                "le sport, les films ou les chaînes internationales ?"
+            )
+        else:
+            replacement = (
+                "Thank you. To start, what do you watch most often: sports, films, "
+                "or international channels?"
+            )
+        return replacement, True
 
     def classify_turn(self, text: str) -> TurnQuality:
         """Decide whether this turn carries something to answer at all."""
@@ -692,7 +715,9 @@ class AgentPolicyRuntime:
             and is_first
             and self.call_context.is_premature_product_qualification(spoken)
         ):
-            replacement = self.call_context.safe_replacement_question(self.reply_language)
+            replacement = self.call_context.safe_replacement_question(
+                self.reply_language, spoken_history=set(self._spoken_sentences)
+            )
             logger.warning(
                 "Replaced premature product qualification direction=%s phase=%s",
                 self.call_context.direction.value,
@@ -710,9 +735,22 @@ class AgentPolicyRuntime:
             return "", True
         if self._is_repeat(spoken):
             logger.warning("Repeated sentence detected in this call: %r", spoken[:40])
-            # Do not drop if it's the primary response to avoid creating dead silence on live call
             if not is_first:
+                # Mid-turn: the caller has already heard something this turn, so
+                # dropping the repeat costs nothing audible.
                 return "", True
+            # First sentence of the turn. Dropping it would leave dead silence,
+            # but speaking it makes the caller hear the identical sentence twice
+            # -- which is the defect this guard exists to prevent. Substitute a
+            # forward-moving question instead of choosing between the two.
+            replacement = self.call_context.safe_replacement_question(
+                self.reply_language, spoken_history=set(self._spoken_sentences)
+            )
+            self._remember_spoken(replacement)
+            self._asked_question_this_turn = True
+            self._question_open = True
+            self._last_ai_response = replacement
+            return replacement, True
         if response_kind != "greeting" and is_first:
             # Repeated openings and permission requests always lead a response,
             # so checking the first sentence catches them while nothing has

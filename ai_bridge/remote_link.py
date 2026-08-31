@@ -26,6 +26,7 @@ import hashlib
 import hmac
 import logging
 import os
+import pathlib
 import secrets
 import struct
 import time
@@ -495,7 +496,14 @@ def load_remote_link_key() -> bytes:
         if not candidate:
             continue
         try:
-            data = open(candidate, "rb").read().strip()
+            # Read the key exactly as written. .strip() here treated 0x20, 0x0a
+            # and the other whitespace bytes as padding, but they are ordinary
+            # key material: every writer emits raw bytes with no trailing
+            # newline, so a key that happened to begin or end with one of them
+            # -- about one in twenty -- loaded shorter and different than the
+            # one the handset scanned, and the tunnel then failed to
+            # authenticate with no indication why.
+            data = pathlib.Path(candidate).read_bytes()
         except OSError:
             continue
         if len(data) >= 16:

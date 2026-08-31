@@ -153,7 +153,14 @@ def _runtime(tmp_path: Any) -> AgentPolicyRuntime:
 
 
 def test_an_already_spoken_sentence_is_blocked(tmp_path: Any) -> None:
-    """The real call said the identical sentence twice."""
+    """The real call said the identical sentence twice.
+
+    The invariant is that the caller never hears it twice. Asserting the guard
+    returned exactly "" encoded one particular way of achieving that, and
+    returning "" as the first sentence of a turn leaves dead silence on a live
+    call. The guard now substitutes a forward-moving question instead, so this
+    asserts the property rather than the old mechanism.
+    """
 
     runtime = _runtime(tmp_path)
     sentence = "Pour commencer, qu'est-ce que vous regardez le plus souvent ?"
@@ -161,8 +168,20 @@ def test_an_already_spoken_sentence_is_blocked(tmp_path: Any) -> None:
     assert spoken and stop is False
 
     repeated, stop_again = runtime.guard_sentence(sentence, is_first=True)
-    assert repeated == ""
+    assert repeated != sentence, "the caller must not hear the same sentence twice"
+    assert repeated != "", "and must not hear dead silence in its place"
     assert stop_again is True
+
+
+def test_a_mid_turn_repeat_is_dropped_outright(tmp_path: Any) -> None:
+    """Mid-turn there is nothing to cover, so the repeat is simply dropped."""
+
+    runtime = _runtime(tmp_path)
+    sentence = "Pour commencer, qu'est-ce que vous regardez le plus souvent ?"
+    runtime.guard_sentence(sentence, is_first=True)
+    repeated, stop = runtime.guard_sentence(sentence, is_first=False)
+    assert repeated == ""
+    assert stop is True
 
 
 def test_a_different_sentence_is_still_allowed(tmp_path: Any) -> None:

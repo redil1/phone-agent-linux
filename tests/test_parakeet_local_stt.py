@@ -31,8 +31,8 @@ def _pcm(milliseconds: int, amplitude: int) -> bytes:
     return struct.pack(f"<{count}h", *([amplitude] * count))
 
 
-LOUD = lambda ms: _pcm(ms, 8000)  # noqa: E731 - well above the -42 dBFS gate
-SILENT = lambda ms: _pcm(ms, 0)  # noqa: E731
+LOUD = lambda ms: _pcm(ms, 8000)
+SILENT = lambda ms: _pcm(ms, 0)
 
 
 class _Harness:

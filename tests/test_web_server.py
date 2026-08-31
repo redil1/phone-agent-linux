@@ -763,7 +763,10 @@ def test_inbound_supervisor_reports_listening_and_uses_no_dial_argument(monkeypa
 
         async def wait(self) -> int:
             self.returncode = 0
-            self.server.auto_answer_enabled = False
+            # Ends the supervisor. Turning auto-answer off used to do this, but
+            # the warm host now outlives that setting -- only shutdown stops the
+            # loop, or an exited host would never be replaced.
+            self.server._shutting_down = True
             return 0
 
         def terminate(self) -> None:
@@ -1081,3 +1084,113 @@ def test_warm_call_reaches_finished_only_after_it_went_live() -> None:
     server._note_warm_call_state("IDLE")
     assert server._warm_call_finished.is_set()
     assert not server._warm_call_active
+
+
+def test_warm_host_reports_warm_once_models_load_even_with_no_gateway(monkeypatch) -> None:
+    """The warm host's job is holding the speech models, not reaching the phone.
+
+    Its whole purpose is that the next dial skips the ~20 s SenseVoice/Kokoro
+    load, and that is achieved the moment the child reports "speech providers
+    ready". Waiting for "gateway control ready" meant that with the handset
+    offline the host sat at "starting" indefinitely while its models were in
+    fact loaded, so the Studio reported the opposite of the truth.
+    """
+
+    class FakeStdout:
+        def __init__(self) -> None:
+            # No "gateway control ready": the phone is not reachable.
+            self.lines = iter([b"speech providers ready stt=sensevoice tts=kokoro\n"])
+
+        async def readline(self) -> bytes:
+            return next(self.lines, b"")
+
+    class FakeProcess:
+        def __init__(self, server: PhoneAgentWebServer) -> None:
+            self.server = server
+            self.stdout = FakeStdout()
+            self.returncode = None
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            self.server._shutting_down = True
+            return 0
+
+        def terminate(self) -> None:
+            self.returncode = 0
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    async def _test() -> None:
+        server = _studio()
+        server.auto_answer_enabled = False
+
+        async def create_process(*args, **kwargs):
+            return FakeProcess(server)
+
+        async def broadcast(event: dict[str, object]) -> None:
+            return None
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+        monkeypatch.setattr(server, "broadcast", broadcast)
+        await server._inbound_monitor_supervisor()
+        assert server.receptionist_state == "warm"
+
+    asyncio.run(_test())
+
+
+def test_a_warm_host_that_exits_is_replaced_even_when_auto_answer_is_off(monkeypatch) -> None:
+    """A host that dies must be respawned, or every later dial pays the cold start.
+
+    The supervisor used to leave its loop whenever auto-answer was off. That was
+    correct while the only warm host *was* the inbound receptionist, but once the
+    host became unconditional it meant a single exit silently disabled warm
+    dialing for the rest of the process's life.
+    """
+
+    spawns: list[int] = []
+
+    class FakeStdout:
+        async def readline(self) -> bytes:
+            return b""
+
+    class FakeProcess:
+        def __init__(self, server: PhoneAgentWebServer) -> None:
+            self.server = server
+            self.stdout = FakeStdout()
+            self.returncode = None
+
+        async def wait(self) -> int:
+            self.returncode = 1
+            # Stop after the host has been replaced once.
+            if len(spawns) >= 2:
+                self.server._shutting_down = True
+            return 1
+
+        def terminate(self) -> None:
+            self.returncode = 1
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    async def _test() -> None:
+        server = _studio()
+        server.auto_answer_enabled = False
+
+        async def create_process(*args, **kwargs):
+            spawns.append(1)
+            return FakeProcess(server)
+
+        async def broadcast(event: dict[str, object]) -> None:
+            return None
+
+        async def no_sleep(_seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+        monkeypatch.setattr(asyncio, "sleep", no_sleep)
+        monkeypatch.setattr(server, "broadcast", broadcast)
+        await server._inbound_monitor_supervisor()
+        assert len(spawns) >= 2, "the exited warm host was never replaced"
+
+    asyncio.run(_test())

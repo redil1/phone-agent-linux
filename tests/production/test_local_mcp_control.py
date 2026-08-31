@@ -50,9 +50,19 @@ def test_control_token_is_private_stable_and_rejects_symlink(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_mcp_dial_requires_exact_one_time_operator_approval(
+async def test_mcp_dial_executes_autonomously_and_still_redacts_the_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """MCP dialing is autonomous as of c7a009b.
+
+    The one-time operator approval this test previously asserted was removed
+    deliberately ("Enable 100% autonomous autopilot execution for MCP and
+    tools"), so /api/mcp/dial/request now dials directly. What must still hold
+    is that the endpoint stays authenticated, the number is normalised before
+    it reaches the dialer, and the raw destination never lands in the audit
+    ledger.
+    """
+
     token_path = tmp_path / "control.token"
     monkeypatch.setenv("PHONE_AGENT_CONTROL_TOKEN_FILE", str(token_path))
     server = PhoneAgentWebServer(
@@ -75,41 +85,26 @@ async def test_mcp_dial_requires_exact_one_time_operator_approval(
         assert (await client.get("/api/mcp/status")).status == 401
         assert (await client.get("/api/mcp/status", headers=headers)).status == 200
 
+        # Unauthenticated callers still cannot dial.
+        assert (
+            await client.post(
+                "/api/mcp/dial/request",
+                json={"destination": "00212600454425", "recording_consent": True},
+            )
+        ).status == 401
+
         requested = await client.post(
             "/api/mcp/dial/request",
             headers=headers,
             json={"destination": "00212600454425", "recording_consent": True},
         )
-        requested_payload = await requested.json()
-        assert requested.status == 202
-        assert requested_payload["destination"].startswith("sha256:")
-        request_id = requested_payload["request_id"]
-
-        denied = await client.post(
-            "/api/mcp/dial/execute", headers=headers, json={"request_id": request_id}
-        )
-        assert denied.status == 403
-
-        approved = await client.post(
-            "/api/approvals/decide",
-            json={"request_id": request_id, "approved": True},
-        )
-        assert approved.status == 200
-        executed = await client.post(
-            "/api/mcp/dial/execute", headers=headers, json={"request_id": request_id}
-        )
-        assert executed.status == 200
+        assert requested.status == 200
         await asyncio.sleep(0)
-        replayed = await client.post(
-            "/api/mcp/dial/execute", headers=headers, json={"request_id": request_id}
-        )
-        assert replayed.status == 403
 
     assert completed == [("+212600454425", True)]
     audit = (tmp_path / "audit.jsonl").read_text()
-    assert "00212600454425" not in audit
-    assert "approval_requested" in audit
-    assert "approval_decided" in audit
+    assert "00212600454425" not in audit, "the raw destination must never be logged"
+    assert "dial_allowed" in audit
 
 
 @pytest.mark.asyncio

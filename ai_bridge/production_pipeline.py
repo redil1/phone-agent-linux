@@ -44,7 +44,11 @@ from .conversational_reflex import ConversationalReflexProcessor
 from .pipecat_transport import PhoneAgentTransport
 from .repair_processor import ConversationRepairProcessor
 from .runtime_config import ProviderConfig, RuntimeConfig
-from .speculative_turn import SpeculativeTurnCoordinator
+from .speculative_turn import (
+    SPECULATION_CAPABLE_STT_PROVIDERS,
+    SpeculativeSTT,
+    SpeculativeTurnCoordinator,
+)
 from .telemetry import CallTelemetry, FluxTurnTimingTracker
 from .turn_continuity import SemanticTurnGuardProcessor
 
@@ -115,7 +119,7 @@ def create_provider_services(config: ProviderConfig, sample_rate: int) -> Provid
             should_interrupt=True,
             settings=DeepgramFluxSTTService.Settings(**flux_settings),
         )
-    elif config.stt_provider in {"whisper_mlx", "whisper_cuda", "whisper_local"}:
+    elif config.stt_provider in {"whisper_mlx", "whisper_cuda", "whisper_turbo", "distil_whisper", "whisper_local"}:
         try:
             import torch
 
@@ -129,10 +133,10 @@ def create_provider_services(config: ProviderConfig, sample_rate: int) -> Provid
 
         # Normalize MLX or HF repo names if provided on Linux
         model_name = config.stt_model
-        if "whisper-large-v3-turbo" in model_name or "turbo" in model_name:
-            model_name = "large-v3-turbo"
-        elif "distil" in model_name:
+        if config.stt_provider == "distil_whisper" or "distil" in model_name:
             model_name = "distil-large-v3"
+        elif config.stt_provider == "whisper_turbo" or "whisper-large-v3-turbo" in model_name or "turbo" in model_name:
+            model_name = "large-v3-turbo"
         elif "/" in model_name and not model_name.startswith("Systran/"):
             model_name = "large-v3-turbo"
 
@@ -329,14 +333,18 @@ def _is_service_reachable(url: str, timeout: float = 0.4) -> bool:
     """Check whether a local or remote HTTP endpoint is actively listening."""
     if not url:
         return False
+    # urllib.error is imported explicitly: the except clause below only resolved
+    # because importing urllib.request happens to bind it on the parent package.
+    import urllib.error
+    import urllib.request
+
     try:
-        import urllib.request
         endpoint = url.rstrip("/")
         req = urllib.request.Request(endpoint, headers={"User-Agent": "PhoneAgentProbe"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout):
             return True
     except urllib.error.HTTPError:
-        # HTTP 401/404/405/400 still confirms the server daemon is alive and listening
+        # 401/404/405/400 still prove a daemon is listening and answering.
         return True
     except Exception:
         return False
@@ -386,6 +394,19 @@ def create_llm_service(config: ProviderConfig) -> Any:
             turn_timeout_secs=config.gemini_cli_turn_timeout_secs,
         )
     if config.llm_provider == "ollama":
+        if "phonellm" in (config.llm_model or "").lower() and _is_service_reachable(config.vllm_base_url):
+            logger.info(
+                "Auto-routing %s to high-throughput vLLM engine at %s for low-latency inference",
+                config.llm_model,
+                config.vllm_base_url,
+            )
+            from pipecat.services.openai.llm import OpenAILLMService
+
+            return OpenAILLMService(
+                api_key=config.vllm_api_key or "EMPTY",
+                base_url=config.vllm_base_url,
+                settings=OpenAILLMService.Settings(**settings),
+            )
         from .ollama_native import OllamaNativeLLMService
 
         return OllamaNativeLLMService(
@@ -469,25 +490,28 @@ async def prewarm_primary_llm(config: ProviderConfig) -> float | None:
 
     if config.llm_provider != "ollama":
         return None
-    from .ollama_native import OllamaNativeClient
+    from .ollama_native import OllamaNativeClient, required_model_options
 
     client = OllamaNativeClient(
         base_url=config.ollama_base_url,
-        turn_timeout_secs=config.ollama_turn_timeout_secs,
+        turn_timeout_secs=max(float(config.ollama_turn_timeout_secs), 120.0),
     )
     try:
+        model_name = config.llm_model or "qwen2.5:3b"
+        options = {
+            "temperature": config.ollama_temperature,
+            "top_p": config.ollama_top_p,
+            "top_k": config.ollama_top_k,
+            "min_p": config.ollama_min_p,
+            "presence_penalty": config.ollama_presence_penalty,
+            "num_predict": config.ollama_num_predict,
+            "num_ctx": config.ollama_num_ctx,
+        }
+        options.update(required_model_options(model_name))
         result = await client.prewarm(
-            model=config.llm_model or "qwen2.5:3b",
+            model=model_name,
             keep_alive=config.ollama_keep_alive,
-            options={
-                "temperature": config.ollama_temperature,
-                "top_p": config.ollama_top_p,
-                "top_k": config.ollama_top_k,
-                "min_p": config.ollama_min_p,
-                "presence_penalty": config.ollama_presence_penalty,
-                "num_predict": config.ollama_num_predict,
-                "num_ctx": config.ollama_num_ctx,
-            },
+            options=options,
         )
         return result.elapsed_ms
     finally:
@@ -498,23 +522,24 @@ async def prewarm_speech_models(config: ProviderConfig) -> dict[str, float]:
     """Load lazy local speech weights before the first caller utterance."""
 
     timings: dict[str, float] = {}
-    if config.stt_provider in {"whisper_mlx", "whisper_cuda", "whisper_local"}:
+    if config.stt_provider in {"whisper_mlx", "whisper_cuda", "whisper_turbo", "distil_whisper", "whisper_local"}:
         import time
+
         import numpy as np
 
         started = time.perf_counter()
         silence = np.zeros(3_200, dtype=np.float32)
         try:
-            from faster_whisper import WhisperModel
             import torch
+            from faster_whisper import WhisperModel
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
             comp_type = "float16" if torch.cuda.is_available() else "default"
             model_name = config.stt_model
-            if "whisper-large-v3-turbo" in model_name or "turbo" in model_name:
-                model_name = "large-v3-turbo"
-            elif "distil" in model_name:
+            if config.stt_provider == "distil_whisper" or "distil" in model_name:
                 model_name = "distil-large-v3"
+            elif config.stt_provider == "whisper_turbo" or "whisper-large-v3-turbo" in model_name or "turbo" in model_name:
+                model_name = "large-v3-turbo"
             elif "/" in model_name and not model_name.startswith("Systran/"):
                 model_name = "large-v3-turbo"
 
@@ -794,18 +819,33 @@ class ProductionCallPipeline:
                 policy=self.policy,
                 event_sink=event_sink,
             )
-            if speculative_turn.supported and hasattr(
-                self.services.stt, "set_speculation_handlers"
-            ):
+            stt_provider = config.providers.stt_provider
+            drives_speculation = isinstance(self.services.stt, SpeculativeSTT)
+            if speculative_turn.supported and drives_speculation:
                 self.speculative_turn = speculative_turn
                 self.services.stt.set_speculation_handlers(
                     speculative_turn.consider,
                     speculative_turn.cancel,
                 )
-                logger.info("speculative turn pipeline enabled")
+                logger.info(
+                    "speculative turn pipeline enabled stt=%s", stt_provider
+                )
+            elif not drives_speculation and stt_provider in SPECULATION_CAPABLE_STT_PROVIDERS:
+                # Naming the provider matters. The old message was identical for
+                # "this backend cannot speculate" and "this backend was supposed
+                # to and the hook did not match", so a wiring bug read as a
+                # supported configuration and ran without speculation for weeks.
+                logger.error(
+                    "speculative turn pipeline DISABLED: stt=%s is expected to implement "
+                    "set_speculation_handlers(candidate, cancel) but does not satisfy "
+                    "SpeculativeSTT; this is a wiring bug, not an unsupported provider",
+                    stt_provider,
+                )
             else:
                 logger.warning(
-                    "speculative turn pipeline unsupported by selected providers; using normal path"
+                    "speculative turn pipeline unsupported by stt=%s (llm/tts cannot "
+                    "speculate); using normal path",
+                    stt_provider,
                 )
         uses_external_turn_frames = config.providers.stt_provider in {
             "sensevoice",
@@ -813,9 +853,6 @@ class ProductionCallPipeline:
             "antigravity_live",
             "deepgram_flux",
             "parakeet_local",
-            "whisper_cuda",
-            "whisper_mlx",
-            "whisper_local",
         }
         self.user_aggregator, self.assistant_aggregator = LLMContextAggregatorPair(
             self.context,

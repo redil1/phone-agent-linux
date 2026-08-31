@@ -97,12 +97,26 @@ def _environment_bool(name: str, default: bool = False) -> bool:
 
 
 def _loopback_host(value: str) -> bool:
+    """Whether this host may address the Studio.
+
+    ``PHONE_AGENT_ALLOW_EXTERNAL`` defaults to false. Defaulting it true made
+    this function return true for every hostname with no configuration at all,
+    which silently disabled both the bind guard and the DNS-rebinding check.
+    Deployments that genuinely serve a non-loopback interface set the variable
+    explicitly (the production compose file does), so the safe default costs
+    them nothing.
+    """
+
     host = value.strip().lower().strip("[]")
-    if host in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}:
+    if host in {"127.0.0.1", "localhost", "::1"}:
         return True
-    if _environment_bool("PHONE_AGENT_ALLOW_EXTERNAL", True) or os.getenv("PHONE_AGENT_WEB_HOST", "") in {"0.0.0.0", "*"}:
+    if _environment_bool("PHONE_AGENT_ALLOW_EXTERNAL", False):
         return True
-    allowed = {h.strip().lower() for h in os.getenv("PHONE_AGENT_ALLOWED_HOSTS", "").split(",") if h.strip()}
+    allowed = {
+        h.strip().lower()
+        for h in os.getenv("PHONE_AGENT_ALLOWED_HOSTS", "").split(",")
+        if h.strip()
+    }
     return host in allowed
 
 
@@ -3114,6 +3128,20 @@ class PhoneAgentWebServer:
                     while line := await process.stdout.readline():
                         text = line.decode(errors="replace").strip()
                         self._write_raw_child_line(text)
+                        # The warm host exists to hold the speech models, which
+                        # is done well before the phone gateway is reachable.
+                        # Waiting for the gateway to report "warm" meant that
+                        # with the handset offline the host sat at "starting"
+                        # forever even though its models were loaded and the next
+                        # dial would already skip the ~20 s load.
+                        if "speech providers ready" in text:
+                            failures = 0
+                            if not self.auto_answer_enabled:
+                                await self._set_receptionist_state(
+                                    "warm",
+                                    "Voice host warm; the next dial skips model loading. "
+                                    "Incoming calls are not answered.",
+                                )
                         if "gateway control ready" in text:
                             failures = 0
                             if self.auto_answer_enabled:
@@ -3129,7 +3157,12 @@ class PhoneAgentWebServer:
                         await self._handle_child_line(text)
                 return_code = await process.wait()
                 self._receptionist_process = None
-                if not self.auto_answer_enabled or self._shutting_down:
+                # Only shutdown ends the supervisor. This previously also broke
+                # when auto-answer was off, which -- once the warm host became
+                # unconditional -- meant a host that exited for any reason was
+                # never replaced, silently returning every later dial to the
+                # ~20 s cold start this supervisor exists to avoid.
+                if self._shutting_down:
                     break
                 failures += 1
                 delay = min(2**failures, 15)

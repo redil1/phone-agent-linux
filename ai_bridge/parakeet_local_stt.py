@@ -107,8 +107,8 @@ def load_model(model_id: str = DEFAULT_MODEL) -> Any:
             return model
         except (ImportError, ModuleNotFoundError):
             # Fallback on Linux / CUDA environments using faster-whisper
-            from faster_whisper import WhisperModel
             import torch
+            from faster_whisper import WhisperModel
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
             comp_type = "float16" if torch.cuda.is_available() else "default"

@@ -1851,9 +1851,10 @@
 
         <div class="form-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border, #333);">
           <label class="form-label">Speech-to-Text (STT) Engine</label>
-          <select id="stt-provider" class="form-select">
-            <option value="sensevoice" selected>SenseVoice-Small (Non-Autoregressive, ~30ms, Zero Hallucinations) [Default]</option>
-            <option value="whisper_cuda">Faster-Whisper (CUDA Large-v3-Turbo + Silero VAD)</option>
+          <select id="stt-provider" class="form-select" onchange="handleSttProviderChange()">
+            <option value="sensevoice" selected>SenseVoice-Small (Non-Autoregressive, ~35ms, Zero Hallucinations) [Ultra Fast]</option>
+            <option value="whisper_turbo">Faster-Whisper Large-V3-Turbo (Universal 99+ Languages, Top Multilingual Quality) [Recommended for French / Arabic]</option>
+            <option value="distil_whisper">Faster-Distil-Whisper Large-V3 (6x Accelerated Multilingual, ~75ms) [Fast Multilingual]</option>
             <option value="antigravity_live">Google Gemini Live STT (Streaming Cloud)</option>
             <option value="deepgram_flux">Deepgram Flux (Cloud Realtime)</option>
           </select>
@@ -4601,8 +4602,10 @@
       if (config.stt_provider) {
         const sttEl = document.getElementById('stt-provider');
         if (sttEl) {
-          if (config.stt_provider === 'parakeet_local') {
-            sttEl.value = 'whisper_cuda';
+          if (config.stt_provider === 'whisper_cuda') {
+            sttEl.value = 'whisper_turbo';
+          } else if (config.stt_provider === 'parakeet_local') {
+            sttEl.value = 'whisper_turbo';
           } else {
             sttEl.value = config.stt_provider;
           }
@@ -4626,7 +4629,26 @@
       if (config.system_prompt !== undefined) document.getElementById('system-prompt').value = config.system_prompt;
       handlePipelineModeChange();
       handleTtsProviderChange();
+      handleSttProviderChange();
       handleLlmProviderChange(config.llm_model);
+    }
+
+    function handleSttProviderChange() {
+      const sttEl = document.getElementById('stt-provider');
+      const hintEl = document.getElementById('stt-provider-hint');
+      if (!sttEl || !hintEl) return;
+      const val = sttEl.value;
+      if (val === 'sensevoice') {
+        hintEl.textContent = 'SenseVoice-Small runs resident in GPU VRAM with single-pass non-autoregressive decoding (~35ms), eliminating silence hallucinations.';
+      } else if (val === 'whisper_turbo' || val === 'whisper_cuda') {
+        hintEl.textContent = 'Faster-Whisper Large-V3-Turbo offers world-class multilingual accuracy across 99+ languages, including French, Arabic, and regional accents (~175ms).';
+      } else if (val === 'distil_whisper') {
+        hintEl.textContent = 'Faster-Distil-Whisper Large-V3 provides 6x accelerated multilingual transcription (~75ms) while matching Large-V3 accuracy.';
+      } else if (val === 'antigravity_live') {
+        hintEl.textContent = 'Google Gemini Live STT connects to cloud real-time streaming speech recognition.';
+      } else if (val === 'deepgram_flux') {
+        hintEl.textContent = 'Deepgram Flux provides cloud low-latency speech recognition.';
+      }
     }
 
     async function handleLlmProviderChange(preferredModel) {

@@ -6,13 +6,49 @@ import asyncio
 import inspect
 import logging
 import time
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol, runtime_checkable
 
 from pipecat.processors.aggregators.llm_context import LLMContext
 
 from .agent_policy import AgentPolicyRuntime, EventSink
 
 logger = logging.getLogger("PhoneAgentSpeculativeTurn")
+
+SpeculationCandidateHandler = Callable[[str], Awaitable[None] | None]
+SpeculationCancelHandler = Callable[[str], Awaitable[None] | None]
+
+
+@runtime_checkable
+class SpeculativeSTT(Protocol):
+    """An STT service the speculative turn pipeline can drive.
+
+    This exists because the wiring used to be a bare
+    ``hasattr(stt, "set_speculation_handlers")``. A provider that spelled the
+    method differently silently lost the feature: the pipeline logged one
+    warning and fell back to the normal path while the Studio still reported
+    speculation as enabled. Stating the contract lets a mismatch be named at
+    the call site instead of disappearing into an ``else``.
+    """
+
+    def set_speculation_handlers(
+        self,
+        candidate_handler: SpeculationCandidateHandler | None,
+        cancel_handler: SpeculationCancelHandler | None,
+    ) -> None: ...
+
+
+# Providers expected to drive speculation. A provider listed here that does not
+# satisfy SpeculativeSTT is a wiring bug, not an unsupported configuration, and
+# is reported as such rather than silently downgraded.
+SPECULATION_CAPABLE_STT_PROVIDERS = frozenset(
+    {
+        "antigravity_live",
+        "parakeet_local",
+        "sensevoice",
+        "sensevoice_small",
+    }
+)
 
 
 class SpeculativeTurnCoordinator:

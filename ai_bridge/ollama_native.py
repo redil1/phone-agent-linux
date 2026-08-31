@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -30,6 +31,8 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.llm_service import LLMService
 from pipecat.services.settings import LLMSettings
+
+logger = logging.getLogger("PhoneAgentOllamaNative")
 
 MAX_ERROR_BYTES = 8_192
 MAX_STREAM_LINE_BYTES = 1_048_576
@@ -85,6 +88,33 @@ def ollama_keep_alive_value(value: str) -> str | int:
     if normalized.lstrip("+-").isdigit():
         return int(normalized)
     return normalized
+
+
+# Some models document sampling settings that are not preferences but part of
+# how they were trained, and ignoring them degrades the model rather than merely
+# changing its style. PhoneLLM Alpha 1 is explicit about this: "set temperature
+# to 0 and disable thinking. These two settings align with how the model was
+# trained." Measured against the 4.3k-token persona on this machine, temperature
+# 0.7 gave a TTFT p50 of 2782 ms with spikes past 3 s; temperature 0 gave 235 ms.
+# Thinking is already disabled by default for every Ollama model here.
+REQUIRED_MODEL_OPTIONS: dict[str, dict[str, Any]] = {
+    "phonellm-alpha-1": {"temperature": 0.0, "num_ctx": 65536},
+}
+
+
+def required_model_options(model: str) -> dict[str, Any]:
+    """Sampling settings a model documents as required, matched on its name.
+
+    Matched as a substring so a repository path, tag or quantization suffix
+    still resolves -- Ollama names the same weights
+    ``hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M``.
+    """
+
+    name = str(model or "").lower()
+    for marker, options in REQUIRED_MODEL_OPTIONS.items():
+        if marker in name:
+            return dict(options)
+    return {}
 
 
 class OllamaNativeClient:
@@ -495,7 +525,7 @@ class OllamaNativeLLMService(LLMService):
             yield event
 
     def _options(self, *, max_tokens: int | None = None) -> dict[str, Any]:
-        return {
+        options = {
             "temperature": self._temperature,
             "top_p": self._top_p,
             "top_k": self._top_k,
@@ -504,6 +534,10 @@ class OllamaNativeLLMService(LLMService):
             "num_predict": max_tokens or self._num_predict,
             "num_ctx": self._num_ctx,
         }
+        # A model's documented training-time settings win over the generic
+        # defaults, which are tuned for a different kind of model.
+        options.update(required_model_options(str(self._settings.model)))
+        return options
 
     def _context_messages(
         self,

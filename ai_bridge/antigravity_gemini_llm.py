@@ -221,31 +221,43 @@ class AntigravityGeminiLLMService(LLMService):
             candidates.append((int(env_port), env_token))
 
         # 2. Dynamic Process Inspection (Linux & macOS)
-        try:
-            ps_out = subprocess.check_output(
-                ["ps", "-eo", "pid,args"], stderr=subprocess.DEVNULL
-            ).decode("utf-8", errors="ignore")
+        #
+        # ps and lsof are forked off the event loop. Run inline they block every
+        # other coroutine for as long as the shell-outs take, and this runs on a
+        # live call where the same loop is carrying 20 ms audio frames.
+        def _scan_processes() -> list[tuple[int, str]]:
+            found: list[tuple[int, str]] = []
+            try:
+                ps_out = subprocess.check_output(
+                    ["ps", "-eo", "pid,args"], stderr=subprocess.DEVNULL
+                ).decode("utf-8", errors="ignore")
+            except Exception as exc:
+                logger.debug("Process discovery exception: %s", exc)
+                return found
             for line in ps_out.splitlines():
-                if "language_server" in line:
-                    pid_m = re.match(r"\s*(\d+)", line)
-                    csrf_m = re.search(r"--csrf_token\s+([a-f0-9-]+)", line)
-                    if pid_m and csrf_m:
-                        pid = pid_m.group(1)
-                        token = csrf_m.group(1)
-                        try:
-                            lsof_out = subprocess.check_output(
-                                ["lsof", "-Pan", "-p", pid, "-i", "TCP"],
-                                stderr=subprocess.DEVNULL,
-                            ).decode("utf-8", errors="ignore")
-                            for lline in lsof_out.splitlines():
-                                if "LISTEN" in lline:
-                                    pm = re.search(r"127\.0\.0\.1:(\d+)", lline)
-                                    if pm:
-                                        candidates.append((int(pm.group(1)), token))
-                        except Exception:
-                            pass
-        except Exception as exc:
-            logger.debug("Process discovery exception: %s", exc)
+                if "language_server" not in line:
+                    continue
+                pid_m = re.match(r"\s*(\d+)", line)
+                csrf_m = re.search(r"--csrf_token\s+([a-f0-9-]+)", line)
+                if not (pid_m and csrf_m):
+                    continue
+                pid = pid_m.group(1)
+                token = csrf_m.group(1)
+                try:
+                    lsof_out = subprocess.check_output(
+                        ["lsof", "-Pan", "-p", pid, "-i", "TCP"],
+                        stderr=subprocess.DEVNULL,
+                    ).decode("utf-8", errors="ignore")
+                except Exception:
+                    continue
+                for lline in lsof_out.splitlines():
+                    if "LISTEN" in lline:
+                        pm = re.search(r"127\.0\.0\.1:(\d+)", lline)
+                        if pm:
+                            found.append((int(pm.group(1)), token))
+            return found
+
+        candidates.extend(await asyncio.to_thread(_scan_processes))
 
         # 3. Test discovered candidates with a lightweight verification probe
         connector = aiohttp.TCPConnector(ssl=self._ssl_ctx)

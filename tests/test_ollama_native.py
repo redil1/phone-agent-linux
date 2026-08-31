@@ -379,3 +379,39 @@ async def test_prewarm_with_messages_forces_a_single_token() -> None:
     assert captured["messages"] == [{"role": "system", "content": "You are Adam."}]
     assert captured["options"]["num_predict"] == 1
     assert captured["options"]["num_ctx"] == 8192
+
+
+def test_a_model_documenting_required_settings_gets_them_over_the_defaults() -> None:
+    """PhoneLLM Alpha 1 documents temperature 0 as a training-time requirement.
+
+    Its card is explicit that temperature 0 and disabled thinking "align with
+    how the model was trained". Measured against the 4.3k-token persona, the
+    generic 0.7 default gave a TTFT p50 of 2782 ms with spikes past 3 s, while
+    temperature 0 gave 235 ms, so this is a correctness setting rather than a
+    stylistic one. Other models must keep the operator's configured value.
+    """
+
+    from phone_agent_gateway.ai_bridge.ollama_native import (
+        OllamaNativeLLMService,
+        required_model_options,
+    )
+
+    # Matched on the name, including a full Ollama/HuggingFace repo path.
+    assert required_model_options("hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M") == {
+        "temperature": 0.0,
+        "num_ctx": 65536,
+    }
+    assert required_model_options("phonellm-alpha-1") == {
+        "temperature": 0.0,
+        "num_ctx": 65536,
+    }
+    assert required_model_options("phi4:latest") == {}
+
+    phonellm = OllamaNativeLLMService(
+        model="hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M", temperature=0.7
+    )
+    assert phonellm._options()["temperature"] == 0.0
+    assert phonellm._options()["num_ctx"] == 65536
+
+    other = OllamaNativeLLMService(model="phi4:latest", temperature=0.7)
+    assert other._options()["temperature"] == 0.7

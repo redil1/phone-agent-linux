@@ -92,8 +92,13 @@ Calling:
 
 - `phone_agent_dial`
 - `phone_agent_hangup`
-- the legacy one-time approval pair `phone_agent_request_dial` and
-  `phone_agent_execute_approved_dial`
+- `phone_agent_request_dial`, which since c7a009b dials immediately rather than
+  queueing an approval
+
+`phone_agent_execute_approved_dial` and `phone_agent_list_approvals` are retained for
+protocol compatibility but can no longer succeed: nothing populates the approval
+queue, so execute always answers `403 exact operator approval is required` and the
+listing is always empty. Use `phone_agent_request_dial` or `phone_agent_dial`.
 
 The administrator-scoped `phone_agent_dial` still passes PhoneAgent's destination normalization,
 rate, cooldown, hardware, recording-consent and one-call checks. It does not bypass those policies.

@@ -8,6 +8,7 @@ autoregressive hallucinations on background noise and silence.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import math
 import re
@@ -23,7 +24,6 @@ from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
     CancelFrame,
     EndFrame,
-    ErrorFrame,
     Frame,
     InterimTranscriptionFrame,
     StartFrame,
@@ -233,15 +233,22 @@ class SenseVoiceSTTService(STTService):
         self._speculation_candidate_handler: SpeculationCandidateHandler | None = None
         self._speculation_cancel_handler: SpeculationCancelHandler | None = None
 
-    def set_speculation_candidate_handler(
-        self, handler: SpeculationCandidateHandler | None
+    def set_speculation_handlers(
+        self,
+        candidate_handler: SpeculationCandidateHandler | None,
+        cancel_handler: SpeculationCancelHandler | None,
     ) -> None:
-        self._speculation_candidate_handler = handler
+        """Attach the optional speculative turn hooks used by the pipeline.
 
-    def set_speculation_cancel_handler(
-        self, handler: SpeculationCancelHandler | None
-    ) -> None:
-        self._speculation_cancel_handler = handler
+        The name matters: ProductionCallPipeline probes for exactly this method
+        and silently falls back to the normal path when it is absent. Two
+        separate singular setters here meant the probe missed, so the
+        speculative turn pipeline never engaged on SenseVoice while the Studio
+        still reported it as enabled.
+        """
+
+        self._speculation_candidate_handler = candidate_handler
+        self._speculation_cancel_handler = cancel_handler
 
     async def _invoke(self, handler: Any, *args: Any) -> None:
         if handler is None:
