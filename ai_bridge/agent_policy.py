@@ -709,8 +709,10 @@ class AgentPolicyRuntime:
             logger.warning("Blocked reply in the wrong language for a %s turn", self.reply_language)
             return "", True
         if self._is_repeat(spoken):
-            logger.warning("Blocked a sentence already spoken in this call")
-            return "", True
+            logger.warning("Repeated sentence detected in this call: %r", spoken[:40])
+            # Do not drop if it's the primary response to avoid creating dead silence on live call
+            if not is_first:
+                return "", True
         if response_kind != "greeting" and is_first:
             # Repeated openings and permission requests always lead a response,
             # so checking the first sentence catches them while nothing has

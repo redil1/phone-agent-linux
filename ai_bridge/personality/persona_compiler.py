@@ -327,13 +327,12 @@ class PersonaCompiler:
         parts = [
             kernel_context,
             "",
-            CallContextPolicy(call_direction).base_instructions(),
             (
-                "# VERIFIED CURRENT CALL METADATA\n"
-                f"- Current caller phone number: {current_number}\n"
-                "- This number comes from the authenticated current call. State, repeat, or "
-                "send it only when the caller explicitly asks or when required for an action "
-                "the caller requested. Never announce it unsolicited."
+                "# VERIFIED CURRENT CALL METADATA (CRITICAL)\n"
+                f"- Active Caller Phone Number: {current_number}\n"
+                f"- You are connected on a live phone call with this phone number: {current_number}.\n"
+                "- You ALREADY possess the customer's phone number. NEVER ask the caller to provide, confirm, repeat, or spell their phone number.\n"
+                "- If the caller asks 'what is my phone number', 'do you have my number', or asks to send information on WhatsApp or SMS, immediately state their phone number and dispatch the message using the WhatsApp tool."
                 if current_number
                 else ""
             ),
