@@ -1931,6 +1931,31 @@ class PhoneAgentWebServer:
             for key in self.GOOGLE_TTS_TEXT_FIELDS:
                 if key in data:
                     updates[key] = str(data[key]).strip()
+            # The Studio selects an STT engine, not an independent model name.
+            # Keeping the previous provider's model made the persisted config
+            # claim combinations such as whisper_turbo + SenseVoiceSmall.
+            if "stt_provider" in updates and "stt_model" not in updates:
+                updates["stt_model"] = {
+                    "sensevoice": "iic/SenseVoiceSmall",
+                    "sensevoice_small": "iic/SenseVoiceSmall",
+                    "whisper_turbo": "large-v3-turbo",
+                    "whisper_cuda": "large-v3-turbo",
+                    "whisper_local": "large-v3-turbo",
+                    "whisper_mlx": "large-v3-turbo",
+                    "distil_whisper": "distil-large-v3",
+                    "parakeet_local": "mlx-community/parakeet-tdt-0.6b-v3",
+                }.get(str(updates["stt_provider"]), self.config.stt_model)
+            effective_stt_provider = str(
+                updates.get("stt_provider", self.config.stt_provider)
+            )
+            effective_stt_language = str(
+                updates.get("stt_language", self.config.stt_language)
+            )
+            if effective_stt_provider in {"sensevoice", "sensevoice_small"} and not (
+                effective_stt_language.lower().startswith("en")
+            ):
+                updates["stt_provider"] = "whisper_turbo"
+                updates["stt_model"] = "large-v3-turbo"
             candidate = replace(self.config, **updates)
             candidate.validate(require_credentials=False)
             task_id = str(data.get("task_id", self.task_id)).strip()

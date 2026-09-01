@@ -58,6 +58,39 @@ def test_conversational_reflex_has_an_independent_disable_flag(
     assert config.conversational_reflex_enabled is False
 
 
+def test_sensevoice_french_falls_back_to_reliable_whisper() -> None:
+    config = ProviderConfig(
+        stt_provider="sensevoice",
+        stt_model="iic/SenseVoiceSmall",
+        stt_language="fr-FR",
+    )
+
+    services = create_provider_services(config, sample_rate=16_000)
+
+    from phone_agent_gateway.ai_bridge.parakeet_local_stt import (
+        ParakeetLocalSTTService,
+    )
+
+    assert isinstance(services.stt, ParakeetLocalSTTService)
+    assert services.stt._model_id == "large-v3-turbo"
+
+
+def test_whisper_turbo_uses_buffered_reliable_phone_service() -> None:
+    from phone_agent_gateway.ai_bridge.parakeet_local_stt import (
+        ParakeetLocalSTTService,
+    )
+
+    config = ProviderConfig(
+        stt_provider="whisper_turbo",
+        stt_model="large-v3-turbo",
+        stt_language="en-US",
+    )
+    services = create_provider_services(config, sample_rate=16_000)
+
+    assert isinstance(services.stt, ParakeetLocalSTTService)
+    assert services.stt._model_id == "large-v3-turbo"
+
+
 def test_ollama_provider_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PHONE_AGENT_LLM_PROVIDER", "ollama")
     monkeypatch.setenv("PHONE_AGENT_LLM_MODEL", "qwen3.5:4b-mlx")

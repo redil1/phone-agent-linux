@@ -779,6 +779,31 @@ def test_provider_change_restarts_idle_resident_voice_host(tmp_path: Path) -> No
     asyncio.run(_test())
 
 
+def test_studio_provider_selection_sets_matching_stt_model(tmp_path: Path) -> None:
+    async def _test() -> None:
+        server = _studio()
+        server.settings_path = tmp_path / "studio.json"
+
+        async def noop() -> None:
+            return None
+
+        server._start_inbound_monitor = noop  # type: ignore[method-assign]
+        server._stop_inbound_monitor = noop  # type: ignore[method-assign]
+        async with TestClient(TestServer(server.app)) as client:
+            response = await client.post(
+                "/api/config", json={"stt_provider": "whisper_turbo"}
+            )
+            payload = await response.json()
+
+        assert response.status == 200
+        assert payload["config"]["stt_provider"] == "whisper_turbo"
+        assert payload["config"]["stt_model"] == "large-v3-turbo"
+        saved = json.loads((tmp_path / "studio.json").read_text())
+        assert saved["stt_model"] == "large-v3-turbo"
+
+    asyncio.run(_test())
+
+
 def test_provider_change_during_call_defers_voice_host_restart(tmp_path: Path) -> None:
     async def _test() -> None:
         server = _studio()

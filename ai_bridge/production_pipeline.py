@@ -56,6 +56,16 @@ from .turn_continuity import SemanticTurnGuardProcessor
 
 logger = logging.getLogger("PhoneAgentPipeline")
 
+LOCAL_WHISPER_PROVIDERS = frozenset(
+    {
+        "whisper_mlx",
+        "whisper_cuda",
+        "whisper_turbo",
+        "distil_whisper",
+        "whisper_local",
+    }
+)
+
 DEFAULT_ENGLISH_STT_CONTEXT = (
     "Natural telephone conversation primarily in English. Transcribe only words actually "
     "spoken by the caller and never translate them. Preserve names, numbers, dates, addresses, "
@@ -94,6 +104,21 @@ def _language(value: str) -> Language:
         raise ValueError(f"unsupported Pipecat language code: {value!r}") from exc
 
 
+def _local_whisper_model(config: ProviderConfig) -> str:
+    model_name = config.stt_model
+    if config.stt_provider == "distil_whisper" or "distil" in model_name:
+        return "distil-large-v3"
+    if (
+        config.stt_provider == "whisper_turbo"
+        or "whisper-large-v3-turbo" in model_name
+        or "turbo" in model_name
+    ):
+        return "large-v3-turbo"
+    if "/" in model_name and not model_name.startswith("Systran/"):
+        return "large-v3-turbo"
+    return model_name or "large-v3-turbo"
+
+
 def create_provider_services(config: ProviderConfig, sample_rate: int) -> ProviderServices:
     """Build the pinned low-latency provider cascade.
 
@@ -121,36 +146,22 @@ def create_provider_services(config: ProviderConfig, sample_rate: int) -> Provid
             should_interrupt=True,
             settings=DeepgramFluxSTTService.Settings(**flux_settings),
         )
-    elif config.stt_provider in {"whisper_mlx", "whisper_cuda", "whisper_turbo", "distil_whisper", "whisper_local"}:
-        try:
-            import torch
+    elif config.stt_provider in LOCAL_WHISPER_PROVIDERS:
+        # Use the same buffered, telephone-specific endpointing contract as the
+        # proven local path. The former Pipecat Whisper branch depended on a
+        # separate VAD/turn strategy and therefore behaved differently from
+        # the model selected in the Studio.
+        from .parakeet_local_stt import ParakeetLocalSTTService
 
-            device = "cuda" if torch.cuda.is_available() else "auto"
-            compute_type = "float16" if torch.cuda.is_available() else "default"
-        except Exception:
-            device = "auto"
-            compute_type = "default"
-
-        from pipecat.services.whisper.stt import WhisperSTTService
-
-        # Normalize MLX or HF repo names if provided on Linux
-        model_name = config.stt_model
-        if config.stt_provider == "distil_whisper" or "distil" in model_name:
-            model_name = "distil-large-v3"
-        elif config.stt_provider == "whisper_turbo" or "whisper-large-v3-turbo" in model_name or "turbo" in model_name:
-            model_name = "large-v3-turbo"
-        elif "/" in model_name and not model_name.startswith("Systran/"):
-            model_name = "large-v3-turbo"
-
-        stt = WhisperSTTService(
+        stt = ParakeetLocalSTTService(
             sample_rate=sample_rate,
-            device=device,
-            compute_type=compute_type,
-            settings=WhisperSTTService.Settings(
-                model=model_name,
-                language=_language(config.stt_language),
-                no_speech_prob=0.6,
-            ),
+            language=config.stt_language,
+            model=_local_whisper_model(config),
+            endpoint_ms=config.parakeet_endpoint_ms,
+            incomplete_endpoint_ms=config.parakeet_incomplete_endpoint_ms,
+            prefetch_silence_ms=config.speculative_prefetch_silence_ms,
+            energy_threshold_dbfs=config.parakeet_energy_threshold_dbfs,
+            speculative_pipeline_enabled=config.speculative_pipeline_enabled,
         )
     elif config.stt_provider == "antigravity_live":
         from .antigravity_live_stt import AntigravityLiveSTTService
@@ -175,18 +186,37 @@ def create_provider_services(config: ProviderConfig, sample_rate: int) -> Provid
             speculative_incomplete_endpoint_ms=config.speculative_incomplete_endpoint_ms,
         )
     elif config.stt_provider in {"sensevoice", "sensevoice_small"}:
-        from .sensevoice_stt_service import SenseVoiceSTTService
+        if not config.stt_language.lower().startswith("en"):
+            from .parakeet_local_stt import ParakeetLocalSTTService
 
-        stt = SenseVoiceSTTService(
-            sample_rate=sample_rate,
-            language=config.stt_language,
-            model="iic/SenseVoiceSmall",
-            endpoint_ms=config.parakeet_endpoint_ms,
-            incomplete_endpoint_ms=config.parakeet_incomplete_endpoint_ms,
-            prefetch_silence_ms=config.speculative_prefetch_silence_ms,
-            energy_threshold_dbfs=-44.0,
-            speculative_pipeline_enabled=config.speculative_pipeline_enabled,
-        )
+            logger.warning(
+                "SenseVoiceSmall does not support language=%s; using reliable "
+                "faster-whisper large-v3-turbo",
+                config.stt_language,
+            )
+            stt = ParakeetLocalSTTService(
+                sample_rate=sample_rate,
+                language=config.stt_language,
+                model="large-v3-turbo",
+                endpoint_ms=config.parakeet_endpoint_ms,
+                incomplete_endpoint_ms=config.parakeet_incomplete_endpoint_ms,
+                prefetch_silence_ms=config.speculative_prefetch_silence_ms,
+                energy_threshold_dbfs=config.parakeet_energy_threshold_dbfs,
+                speculative_pipeline_enabled=config.speculative_pipeline_enabled,
+            )
+        else:
+            from .sensevoice_stt_service import SenseVoiceSTTService
+
+            stt = SenseVoiceSTTService(
+                sample_rate=sample_rate,
+                language=config.stt_language,
+                model="iic/SenseVoiceSmall",
+                endpoint_ms=config.parakeet_endpoint_ms,
+                incomplete_endpoint_ms=config.parakeet_incomplete_endpoint_ms,
+                prefetch_silence_ms=config.speculative_prefetch_silence_ms,
+                energy_threshold_dbfs=-44.0,
+                speculative_pipeline_enabled=config.speculative_pipeline_enabled,
+            )
     elif config.stt_provider == "parakeet_local":
         from .parakeet_local_stt import ParakeetLocalSTTService
 
@@ -524,36 +554,27 @@ async def prewarm_speech_models(config: ProviderConfig) -> dict[str, float]:
     """Load lazy local speech weights before the first caller utterance."""
 
     timings: dict[str, float] = {}
-    if config.stt_provider in {"whisper_mlx", "whisper_cuda", "whisper_turbo", "distil_whisper", "whisper_local"}:
-        import time
-
-        import numpy as np
-
-        started = time.perf_counter()
-        silence = np.zeros(3_200, dtype=np.float32)
+    sensevoice_language_fallback = (
+        config.stt_provider in {"sensevoice", "sensevoice_small"}
+        and not config.stt_language.lower().startswith("en")
+    )
+    if config.stt_provider in LOCAL_WHISPER_PROVIDERS or sensevoice_language_fallback:
         try:
-            import torch
-            from faster_whisper import WhisperModel
+            from .parakeet_local_stt import prewarm_parakeet
 
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            comp_type = "float16" if torch.cuda.is_available() else "default"
-            model_name = config.stt_model
-            if config.stt_provider == "distil_whisper" or "distil" in model_name:
-                model_name = "distil-large-v3"
-            elif config.stt_provider == "whisper_turbo" or "whisper-large-v3-turbo" in model_name or "turbo" in model_name:
-                model_name = "large-v3-turbo"
-            elif "/" in model_name and not model_name.startswith("Systran/"):
-                model_name = "large-v3-turbo"
-
-            def _prewarm_whisper():
-                wm = WhisperModel(model_name, device=device, compute_type=comp_type)
-                list(wm.transcribe(silence, beam_size=1)[0])
-
-            await asyncio.to_thread(_prewarm_whisper)
+            timings["whisper_ms"] = await asyncio.to_thread(
+                prewarm_parakeet,
+                "large-v3-turbo"
+                if sensevoice_language_fallback
+                else _local_whisper_model(config),
+            )
         except Exception as exc:
             logger.warning("Whisper CUDA prewarm notice: %s", exc)
-        timings["whisper_ms"] = (time.perf_counter() - started) * 1000
-    if config.stt_provider in {"sensevoice", "sensevoice_small"}:
+            timings["whisper_ms"] = 0.0
+    if (
+        config.stt_provider in {"sensevoice", "sensevoice_small"}
+        and not sensevoice_language_fallback
+    ):
         from .sensevoice_stt_service import prewarm_sensevoice
 
         timings["sensevoice_ms"] = await asyncio.to_thread(prewarm_sensevoice, "iic/SenseVoiceSmall")
@@ -639,7 +660,12 @@ async def prewarm_gpu_resident_models(
     except Exception:
         cuda = False
 
-    if stt in {"sensevoice", "sensevoice_small"}:
+    sensevoice_language_fallback = bool(
+        config
+        and stt in {"sensevoice", "sensevoice_small"}
+        and not config.stt_language.lower().startswith("en")
+    )
+    if stt in {"sensevoice", "sensevoice_small"} and not sensevoice_language_fallback:
         try:
             from .sensevoice_stt_service import prewarm_sensevoice
 
@@ -683,24 +709,20 @@ async def prewarm_gpu_resident_models(
     else:
         timings["kokoro_tts"] = {"status": "skipped", "reason": f"tts_provider={tts}"}
 
-    if stt in {"whisper_cuda", "whisper_mlx", "whisper_local"}:
+    if stt in LOCAL_WHISPER_PROVIDERS or sensevoice_language_fallback:
         try:
-            import numpy as np
-            from faster_whisper import WhisperModel
-
             device = "cuda" if cuda else "cpu"
-            comp_type = "float16" if cuda else "default"
-            silence = np.zeros(3_200, dtype=np.float32)
             started = time.perf_counter()
+            from .parakeet_local_stt import prewarm_parakeet
 
-            def _prewarm() -> None:
-                wm = WhisperModel("large-v3-turbo", device=device, compute_type=comp_type)
-                list(wm.transcribe(silence, beam_size=1)[0])
-
-            await asyncio.to_thread(_prewarm)
+            model_name = "large-v3-turbo"
+            if config and not sensevoice_language_fallback:
+                model_name = _local_whisper_model(config)
+            ms = await asyncio.to_thread(prewarm_parakeet, model_name)
             timings["whisper_stt"] = {
                 "device": device,
-                "elapsed_ms": (time.perf_counter() - started) * 1000,
+                "model": model_name,
+                "elapsed_ms": ms if ms is not None else (time.perf_counter() - started) * 1000,
                 "status": "resident",
             }
         except Exception as exc:
@@ -855,6 +877,7 @@ class ProductionCallPipeline:
             "antigravity_live",
             "deepgram_flux",
             "parakeet_local",
+            *LOCAL_WHISPER_PROVIDERS,
         }
         self.user_aggregator, self.assistant_aggregator = LLMContextAggregatorPair(
             self.context,

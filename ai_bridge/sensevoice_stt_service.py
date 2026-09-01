@@ -131,7 +131,7 @@ def transcribe_pcm(
 
     # Normalize language string for SenseVoice (e.g. 'en-US' -> 'en', 'fr-FR' -> 'fr')
     lang = (language or "auto").split("-")[0].lower()
-    if lang not in {"en", "fr", "es", "zh", "ja", "ko", "yue", "auto"}:
+    if lang not in {"en", "zh", "ja", "ko", "yue", "auto"}:
         lang = "auto"
 
     try:
@@ -202,6 +202,7 @@ class SenseVoiceSTTService(STTService):
         **kwargs: Any,
     ) -> None:
         super().__init__(audio_passthrough=False, sample_rate=sample_rate, **kwargs)
+        self._sample_rate = sample_rate
         self._model_id = model
         self._language = language
         self._endpoint_sec = endpoint_ms / 1000.0
@@ -417,6 +418,18 @@ class SenseVoiceSTTService(STTService):
                 return
 
         text = (text or "").strip()
+        if text and self._looks_hallucinated(text, len(snapshot)):
+            logger.warning(
+                "Discarded a hallucinated SenseVoice transcript chars=%d audio_ms=%d text=%r",
+                len(text),
+                len(snapshot) // (16 * SAMPLE_WIDTH),
+                text[:60],
+            )
+            await self._invoke(
+                self._speculation_cancel_handler, "hallucinated_transcript"
+            )
+            await self._end_speaking()
+            return
         if not text:
             await self._invoke(self._speculation_cancel_handler, "empty_transcript")
             await self._end_speaking()
@@ -433,3 +446,11 @@ class SenseVoiceSTTService(STTService):
             len(snapshot) // (16 * SAMPLE_WIDTH),
             text,
         )
+
+    def _looks_hallucinated(self, text: str, audio_bytes: int) -> bool:
+        """Reject implausibly short hypotheses produced from long line noise."""
+
+        if audio_bytes < self._hallucination_audio_bytes:
+            return False
+        seconds = audio_bytes / (self._sample_rate * SAMPLE_WIDTH)
+        return (len(text) / seconds) < self._min_chars_per_second

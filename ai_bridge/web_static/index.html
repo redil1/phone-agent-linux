@@ -1852,14 +1852,14 @@
         <div class="form-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border, #333);">
           <label class="form-label">Speech-to-Text (STT) Engine</label>
           <select id="stt-provider" class="form-select" onchange="handleSttProviderChange()">
-            <option value="sensevoice" selected>SenseVoice-Small (Non-Autoregressive, ~35ms, Zero Hallucinations) [Ultra Fast]</option>
-            <option value="whisper_turbo">Faster-Whisper Large-V3-Turbo (Universal 99+ Languages, Top Multilingual Quality) [Recommended for French / Arabic]</option>
+            <option value="sensevoice">SenseVoice-Small (English fast path; lower robustness on telephone noise)</option>
+            <option value="whisper_turbo" selected>Faster-Whisper Large-V3-Turbo (confidence-gated local telephone STT) [Recommended]</option>
             <option value="distil_whisper">Faster-Distil-Whisper Large-V3 (6x Accelerated Multilingual, ~75ms) [Fast Multilingual]</option>
             <option value="antigravity_live">Google Gemini Live STT (Streaming Cloud)</option>
             <option value="deepgram_flux">Deepgram Flux (Cloud Realtime)</option>
           </select>
           <div id="stt-provider-hint" style="font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.45;">
-            SenseVoice-Small runs resident in GPU VRAM with single-pass non-autoregressive decoding, eliminating silence hallucinations.
+            Faster-Whisper Large-V3-Turbo uses buffered telephone endpointing, neural VAD, confidence gates, and a careful retry for doubtful turns.
           </div>
         </div>
         <div class="form-group">
@@ -4559,6 +4559,7 @@
         alert(result.message || 'Settings could not be saved.');
         return;
       }
+      if (result.config) applyConfiguration(result.config);
       alert(result.message || 'Settings saved for the next call.');
     }
 
@@ -4639,9 +4640,9 @@
       if (!sttEl || !hintEl) return;
       const val = sttEl.value;
       if (val === 'sensevoice') {
-        hintEl.textContent = 'SenseVoice-Small runs resident in GPU VRAM with single-pass non-autoregressive decoding (~35ms), eliminating silence hallucinations.';
+        hintEl.textContent = 'SenseVoice-Small is the fastest English-only option, but it is not the recommended path for noisy or multilingual telephone calls.';
       } else if (val === 'whisper_turbo' || val === 'whisper_cuda') {
-        hintEl.textContent = 'Faster-Whisper Large-V3-Turbo offers world-class multilingual accuracy across 99+ languages, including French, Arabic, and regional accents (~175ms).';
+        hintEl.textContent = 'Faster-Whisper Large-V3-Turbo is the reliable local path: telephone turn buffering, neural VAD, acoustic confidence, and beam retry on doubtful audio.';
       } else if (val === 'distil_whisper') {
         hintEl.textContent = 'Faster-Distil-Whisper Large-V3 provides 6x accelerated multilingual transcription (~75ms) while matching Large-V3 accuracy.';
       } else if (val === 'antigravity_live') {

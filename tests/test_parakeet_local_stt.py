@@ -13,6 +13,7 @@ import asyncio
 import struct
 from typing import Any
 
+import numpy as np
 import pytest
 from pipecat.frames.frames import (
     InterimTranscriptionFrame,
@@ -62,7 +63,9 @@ async def _feed(service: ParakeetLocalSTTService, pcm: bytes, chunk_ms: int = 20
 async def _make(monkeypatch: pytest.MonkeyPatch, text: str, **kwargs: Any):
     calls: list[int] = []
 
-    def fake_transcribe(pcm: bytes, model_id: str = "") -> str:
+    def fake_transcribe(
+        pcm: bytes, model_id: str = "", language: str = "auto"
+    ) -> str:
         calls.append(len(pcm))
         return text
 
@@ -185,6 +188,92 @@ async def test_rejects_languages_outside_the_call_policy() -> None:
 def test_dbfs_distinguishes_speech_from_silence() -> None:
     assert parakeet_local_stt._calc_dbfs(SILENT(20)) == -120.0
     assert parakeet_local_stt._calc_dbfs(LOUD(20)) > -42.0
+
+
+def test_whisper_low_confidence_decode_retries_and_keeps_acoustic_evidence() -> None:
+    class Segment:
+        def __init__(self, text: str, logprob: float) -> None:
+            self.text = text
+            self.start = 0.0
+            self.end = 1.0
+            self.avg_logprob = logprob
+            self.no_speech_prob = 0.05
+            self.compression_ratio = 1.0
+
+    class Info:
+        language = "en"
+
+    class Model:
+        model_size_or_path = "large-v3-turbo"
+
+        def __init__(self) -> None:
+            self.beams: list[int] = []
+
+        def transcribe(self, samples: Any, **kwargs: Any):
+            beam = int(kwargs["beam_size"])
+            self.beams.append(beam)
+            segment = (
+                Segment("Jer, tries flowing up.", -1.4)
+                if beam == 1
+                else Segment("Yes, please follow up.", -0.2)
+            )
+            return iter([segment]), Info()
+
+    model = Model()
+    fast = parakeet_local_stt._decode_whisper(
+        model, np.zeros(16_000), language="en-US", beam_size=1
+    )
+    careful = parakeet_local_stt._decode_whisper(
+        model, np.zeros(16_000), language="en-US", beam_size=5
+    )
+
+    assert fast.trusted_for_task is False
+    assert careful.trusted_for_task is True
+    assert careful.text == "Yes, please follow up."
+    assert careful.diagnostics["avg_logprob"] == -0.2
+    assert model.beams == [1, 5]
+
+
+@pytest.mark.asyncio
+async def test_untrusted_hypothesis_is_annotated_for_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hypothesis = parakeet_local_stt.STTHypothesis(
+        text="Jer, tries flowing up.",
+        confidence=0.18,
+        trusted_for_task=False,
+        language="en",
+        diagnostics={"engine": "faster-whisper", "quality_retry": True},
+    )
+
+    def fake_transcribe(
+        pcm: bytes, model_id: str = "", language: str = "auto"
+    ) -> parakeet_local_stt.STTHypothesis:
+        return hypothesis
+
+    monkeypatch.setattr(parakeet_local_stt, "transcribe_pcm", fake_transcribe)
+    monkeypatch.setattr(parakeet_local_stt, "load_model", lambda model_id=None: object())
+    service = ParakeetLocalSTTService(
+        sample_rate=SAMPLE_RATE,
+        model="large-v3-turbo",
+        endpoint_ms=200,
+        incomplete_endpoint_ms=400,
+    )
+    harness = _Harness(service)
+    await service.start(
+        StartFrame(audio_in_sample_rate=SAMPLE_RATE, audio_out_sample_rate=SAMPLE_RATE)
+    )
+    try:
+        await _feed(service, LOUD(300))
+        await _feed(service, SILENT(200))
+        await asyncio.sleep(0.4)
+    finally:
+        await service.cleanup()
+
+    final = next(f for f in harness.frames if isinstance(f, TranscriptionFrame))
+    assert final.result["phone_agent"]["trusted_for_task"] is False
+    assert final.result["phone_agent"]["confidence"] == 0.18
+    assert final.result["phone_agent"]["quality_retry"] is True
 
 
 # ----------------------------------------- regression from the 19:22 call

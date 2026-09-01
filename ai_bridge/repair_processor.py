@@ -25,7 +25,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from .agent_policy import AgentPolicyRuntime
+from .agent_policy import AgentPolicyRuntime, transcription_evidence
 from .conversation_repair import TurnQuality
 
 logger = logging.getLogger("PhoneAgentRepair")
@@ -57,7 +57,12 @@ class ConversationRepairProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
-        quality = self.runtime.classify_turn(frame.text)
+        trusted, _, _ = transcription_evidence(frame)
+        quality = (
+            self.runtime.classify_turn(frame.text)
+            if trusted
+            else TurnQuality.UNINTELLIGIBLE
+        )
         self.runtime.note_turn_quality(quality)
 
         if quality is TurnQuality.ACTIONABLE:

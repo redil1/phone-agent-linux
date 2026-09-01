@@ -25,6 +25,7 @@ import threading
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -74,6 +75,25 @@ _EXECUTOR: ThreadPoolExecutor | None = None
 _EXECUTOR_LOCK = threading.Lock()
 
 
+@dataclass(frozen=True, slots=True)
+class STTHypothesis:
+    """Recognizer text plus acoustic evidence used by conversation policy."""
+
+    text: str
+    confidence: float | None = None
+    trusted_for_task: bool = True
+    language: str | None = None
+    diagnostics: dict[str, Any] = field(default_factory=dict)
+
+
+def _as_hypothesis(value: STTHypothesis | str | None) -> STTHypothesis:
+    """Keep test/provider compatibility while preserving rich Whisper results."""
+
+    if isinstance(value, STTHypothesis):
+        return value
+    return STTHypothesis(text=str(value or "").strip())
+
+
 def _inference_executor() -> ThreadPoolExecutor:
     """Return the single thread that owns this process's MLX stream."""
 
@@ -93,7 +113,13 @@ def load_model(model_id: str = DEFAULT_MODEL) -> Any:
         cached = _MODEL_CACHE.get(model_id)
         if cached is not None:
             return cached
+        wants_whisper = any(
+            marker in model_id.casefold()
+            for marker in ("whisper", "large-v3", "distil-large")
+        )
         try:
+            if wants_whisper:
+                raise ModuleNotFoundError("explicit faster-whisper backend")
             from parakeet_mlx import from_pretrained
 
             started = time.perf_counter()
@@ -112,7 +138,7 @@ def load_model(model_id: str = DEFAULT_MODEL) -> Any:
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
             comp_type = "float16" if torch.cuda.is_available() else "default"
-            whisper_model = "large-v3-turbo"
+            whisper_model = model_id if wants_whisper else "large-v3-turbo"
             started = time.perf_counter()
             model = WhisperModel(whisper_model, device=device, compute_type=comp_type)
             _MODEL_CACHE[model_id] = model
@@ -124,7 +150,116 @@ def load_model(model_id: str = DEFAULT_MODEL) -> Any:
             return model
 
 
-def transcribe_pcm(pcm: bytes, model_id: str = DEFAULT_MODEL) -> str:
+def _decode_whisper(
+    model: Any,
+    samples: np.ndarray,
+    *,
+    language: str,
+    beam_size: int,
+) -> STTHypothesis:
+    """Decode once and retain acoustic evidence instead of flattening to text."""
+
+    language_code = (language or "auto").split("-", 1)[0].lower()
+    requested_language = None if language_code == "auto" else language_code
+    segments_iter, info = model.transcribe(
+        samples,
+        language=requested_language,
+        beam_size=beam_size,
+        vad_filter=True,
+        vad_parameters=dict(min_silence_duration_ms=250, speech_pad_ms=100),
+        condition_on_previous_text=False,
+        no_speech_threshold=0.6,
+        temperature=0.0,
+    )
+    segments = list(segments_iter)
+    usable = [s for s in segments if float(getattr(s, "no_speech_prob", 0.0)) < 0.75]
+    text = " ".join(str(getattr(s, "text", "")).strip() for s in usable).strip()
+    durations = [
+        max(
+            0.01,
+            float(getattr(s, "end", 0.0)) - float(getattr(s, "start", 0.0)),
+        )
+        for s in usable
+    ]
+    total_duration = sum(durations)
+    if usable:
+        avg_logprob = sum(
+            float(getattr(s, "avg_logprob", -1.5)) * duration
+            for s, duration in zip(usable, durations, strict=True)
+        ) / total_duration
+        no_speech_prob = max(
+            float(getattr(s, "no_speech_prob", 0.0)) for s in usable
+        )
+        compression_ratio = max(
+            float(getattr(s, "compression_ratio", 0.0)) for s in usable
+        )
+        confidence = max(0.0, min(1.0, math.exp(avg_logprob)))
+    else:
+        avg_logprob = -10.0
+        no_speech_prob = float(getattr(info, "no_speech_prob", 1.0))
+        compression_ratio = 0.0
+        confidence = 0.0
+
+    # These phrases are common autoregressive completions of long silence, but
+    # are also perfectly legitimate short caller turns. Reject them only when
+    # their duration is acoustically implausible, never by text alone.
+    speech_seconds = len(samples) / 16_000
+    if (
+        text.casefold().rstrip(".!?, ")
+        in {
+            "thank you",
+            "thank you very much",
+            "thanks for watching",
+            "gracias",
+            "muchas gracias",
+            "subtitles by",
+            "merci",
+            "merci beaucoup",
+            "you",
+            "bye",
+        }
+        and speech_seconds >= 2.5
+        and len(text) / speech_seconds < 5.0
+    ):
+        text = ""
+        confidence = 0.0
+
+    trusted = bool(
+        text
+        and avg_logprob >= -1.0
+        and no_speech_prob <= 0.70
+        and compression_ratio <= 2.6
+    )
+    return STTHypothesis(
+        text=text,
+        confidence=confidence,
+        trusted_for_task=trusted,
+        language=str(getattr(info, "language", "") or requested_language or "") or None,
+        diagnostics={
+            "engine": "faster-whisper",
+            "model": getattr(model, "model_size_or_path", None),
+            "beam_size": beam_size,
+            "avg_logprob": round(avg_logprob, 4),
+            "no_speech_prob": round(no_speech_prob, 4),
+            "compression_ratio": round(compression_ratio, 4),
+            "segments": len(usable),
+        },
+    )
+
+
+def _hypothesis_rank(hypothesis: STTHypothesis) -> tuple[int, float, int]:
+    return (
+        int(hypothesis.trusted_for_task),
+        float(hypothesis.confidence or 0.0),
+        len(hypothesis.text),
+    )
+
+
+def transcribe_pcm(
+    pcm: bytes,
+    model_id: str = DEFAULT_MODEL,
+    language: str = "auto",
+) -> STTHypothesis:
     """Transcribe one fully buffered utterance of 16 kHz mono PCM16.
 
     Must run on the inference thread; call ``transcribe_pcm_async`` from the
@@ -132,7 +267,7 @@ def transcribe_pcm(pcm: bytes, model_id: str = DEFAULT_MODEL) -> str:
     """
 
     if len(pcm) < SAMPLE_WIDTH * 2:
-        return ""
+        return STTHypothesis(text="", trusted_for_task=False)
 
     model = load_model(model_id)
     samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / _INT16_FULL_SCALE
@@ -147,45 +282,43 @@ def transcribe_pcm(pcm: bytes, model_id: str = DEFAULT_MODEL) -> str:
             context_size=(256, 256), keep_original_attention=True
         ) as stream:
             stream.add_audio(mx.array(samples))
-            return stream.result.text.strip()
+            return STTHypothesis(
+                text=stream.result.text.strip(),
+                diagnostics={"engine": "parakeet", "model": model_id},
+            )
     elif hasattr(model, "transcribe"):
-        # Faster-Whisper on Linux / CUDA: Use Silero VAD and hallucination suppression
-        segments, _ = model.transcribe(
-            samples,
-            beam_size=1,
-            vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=250, speech_pad_ms=100),
-            condition_on_previous_text=False,
-            no_speech_threshold=0.6,
+        fast = _decode_whisper(model, samples, language=language, beam_size=1)
+        diagnostics = fast.diagnostics
+        needs_retry = bool(
+            not fast.text
+            or not fast.trusted_for_task
+            or float(diagnostics.get("avg_logprob", -10.0)) < -0.65
+            or float(diagnostics.get("compression_ratio", 0.0)) > 2.3
         )
-        text = " ".join(
-            s.text.strip() for s in segments if getattr(s, "no_speech_prob", 0.0) < 0.7
-        ).strip()
-        # Reject common Whisper phantom silence hallucinations on background noise
-        if text.lower().rstrip(".!?,") in {
-            "thank you",
-            "thank you.",
-            "thank you very much",
-            "thanks for watching",
-            "gracias",
-            "muchas gracias",
-            "subtitles by",
-            "merci",
-            "merci beaucoup",
-            "you",
-            "bye",
-        }:
-            return ""
-        return text
-    return ""
+        if not needs_retry:
+            return fast
+        careful = _decode_whisper(model, samples, language=language, beam_size=5)
+        chosen = max((fast, careful), key=_hypothesis_rank)
+        return STTHypothesis(
+            text=chosen.text,
+            confidence=chosen.confidence,
+            trusted_for_task=chosen.trusted_for_task,
+            language=chosen.language,
+            diagnostics={**chosen.diagnostics, "quality_retry": True},
+        )
+    return STTHypothesis(text="", trusted_for_task=False)
 
 
-async def transcribe_pcm_async(pcm: bytes, model_id: str = DEFAULT_MODEL) -> str:
+async def transcribe_pcm_async(
+    pcm: bytes,
+    model_id: str = DEFAULT_MODEL,
+    language: str = "auto",
+) -> STTHypothesis:
     """Transcribe off the event loop, on the thread that owns the MLX stream."""
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
-        _inference_executor(), lambda: transcribe_pcm(pcm, model_id)
+        _inference_executor(), lambda: transcribe_pcm(pcm, model_id, language)
     )
 
 
@@ -198,7 +331,7 @@ def prewarm_parakeet(model_id: str = DEFAULT_MODEL) -> float:
 
     started = time.perf_counter()
     _inference_executor().submit(
-        transcribe_pcm, b"\x00" * (16_000 * SAMPLE_WIDTH), model_id
+        transcribe_pcm, b"\x00" * (16_000 * SAMPLE_WIDTH), model_id, "auto"
     ).result()
     return (time.perf_counter() - started) * 1000
 
@@ -274,6 +407,7 @@ class ParakeetLocalSTTService(STTService):
         self._closing = False
 
         self._prefetch_text = ""
+        self._prefetch_hypothesis: STTHypothesis | None = None
         self._prefetch_bytes = -1
         self._prefetch_task: asyncio.Task | None = None
         self._speculation_candidate_handler: SpeculationCandidateHandler | None = None
@@ -303,7 +437,7 @@ class ParakeetLocalSTTService(STTService):
                 self._endpoint_watchdog(), name="parakeet_endpoint_watchdog"
             )
         logger.info(
-            "local Parakeet STT ready model=%s language=%s endpoint_ms=%d",
+            "reliable local STT ready model=%s language=%s endpoint_ms=%d",
             self._model_id,
             self._language,
             int(self._endpoint_sec * 1000),
@@ -450,21 +584,32 @@ class ParakeetLocalSTTService(STTService):
 
         snapshot, _ = await self._speech_snapshot()
         try:
-            text = await transcribe_pcm_async(snapshot, self._model_id)
+            raw = await transcribe_pcm_async(snapshot, self._model_id, self._language)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.debug("speculative local transcription failed", exc_info=True)
             return
         self._prefetch_bytes = buffered
-        text = (text or "").strip()
-        if not text or text == self._prefetch_text:
+        hypothesis = _as_hypothesis(raw)
+        text = hypothesis.text.strip()
+        if not text:
+            return
+        if text == self._prefetch_text:
+            self._prefetch_hypothesis = hypothesis
             return
         self._prefetch_text = text
+        self._prefetch_hypothesis = hypothesis
         await self.push_frame(
-            InterimTranscriptionFrame(text=text, user_id="caller", timestamp=None)
+            InterimTranscriptionFrame(
+                text=text,
+                user_id="caller",
+                timestamp=None,
+                result={"phone_agent": self._result_metadata(hypothesis)},
+            )
         )
-        await self._invoke(self._speculation_candidate_handler, text)
+        if hypothesis.trusted_for_task:
+            await self._invoke(self._speculation_candidate_handler, text)
 
     async def _commit_turn(self) -> None:
         """Emit exactly one authoritative caller turn and reset for the next."""
@@ -475,26 +620,29 @@ class ParakeetLocalSTTService(STTService):
             self._speech_seen = False
             self._speech_bytes = 0
         prefetch_text, prefetch_bytes = self._prefetch_text, self._prefetch_bytes
+        prefetch_hypothesis = self._prefetch_hypothesis
         self._prefetch_text, self._prefetch_bytes = "", -1
+        self._prefetch_hypothesis = None
 
         # The speculative pass already transcribed exactly this speech, so
         # re-running the model would spend another pass to produce the identical
         # string. Trimming the pause is what makes this match reliably.
-        if prefetch_text and prefetch_bytes == speech_bytes:
-            text = prefetch_text
+        if prefetch_text and prefetch_hypothesis and prefetch_bytes == speech_bytes:
+            hypothesis = prefetch_hypothesis
         else:
             try:
-                text = await transcribe_pcm_async(snapshot, self._model_id)
+                raw = await transcribe_pcm_async(snapshot, self._model_id, self._language)
+                hypothesis = _as_hypothesis(raw)
             except Exception as exc:
                 logger.exception("local transcription failed")
-                await self.push_frame(ErrorFrame(error=f"Parakeet transcription failed: {exc}"))
+                await self.push_frame(ErrorFrame(error=f"Local transcription failed: {exc}"))
                 await self._end_speaking()
                 return
 
         # A whitespace-only hypothesis is not a caller turn. Normalize here
         # rather than trusting the recognizer, so a model or version that
         # returns padding cannot inject an empty turn into the LLM context.
-        text = (text or "").strip()
+        text = hypothesis.text.strip()
         if text and self._looks_hallucinated(text, len(snapshot)):
             audio_ms = len(snapshot) // (16 * SAMPLE_WIDTH)
             logger.warning(
@@ -508,19 +656,38 @@ class ParakeetLocalSTTService(STTService):
             return
         if not text:
             await self._invoke(self._speculation_cancel_handler, "empty_transcript")
+            # An empty Whisper result means its neural VAD found no reliable
+            # speech. Do not manufacture a caller turn from line noise.
             await self._end_speaking()
             return
 
         if not self._speaking:
             self._speaking = True
             await self.push_frame(UserStartedSpeakingFrame())
-        await self.push_frame(TranscriptionFrame(text=text, user_id="caller", timestamp=None))
+        await self.push_frame(
+            TranscriptionFrame(
+                text=text,
+                user_id="caller",
+                timestamp=None,
+                result={"phone_agent": self._result_metadata(hypothesis)},
+                finalized=True,
+            )
+        )
         await self._end_speaking()
         logger.info(
             "Committed stable caller turn source=local_parakeet chars=%d audio_ms=%d",
             len(text),
             len(snapshot) // (16 * SAMPLE_WIDTH),
         )
+
+    @staticmethod
+    def _result_metadata(hypothesis: STTHypothesis) -> dict[str, Any]:
+        return {
+            "trusted_for_task": hypothesis.trusted_for_task,
+            "confidence": hypothesis.confidence,
+            "language": hypothesis.language,
+            **hypothesis.diagnostics,
+        }
 
     def _looks_hallucinated(self, text: str, audio_bytes: int) -> bool:
         """Reject a transcript far too short for the audio that produced it.

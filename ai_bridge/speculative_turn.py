@@ -47,6 +47,11 @@ SPECULATION_CAPABLE_STT_PROVIDERS = frozenset(
         "parakeet_local",
         "sensevoice",
         "sensevoice_small",
+        "whisper_mlx",
+        "whisper_cuda",
+        "whisper_turbo",
+        "distil_whisper",
+        "whisper_local",
     }
 )
 

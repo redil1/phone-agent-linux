@@ -9,6 +9,7 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     ErrorFrame,
+    TranscriptionFrame,
 )
 from pipecat.processors.aggregators.llm_response_universal import LLMContext
 from pipecat.processors.frame_processor import FrameDirection
@@ -17,9 +18,27 @@ from phone_agent_gateway.ai_bridge.agent_policy import (
     AgentPolicyRuntime,
     PlaybackEventProcessor,
     ResponsePolicyProcessor,
+    transcription_evidence,
 )
 from phone_agent_gateway.ai_bridge.memory.memory_manager import LayeredMemoryManager
 from phone_agent_gateway.ai_bridge.session import CallSessionState
+
+
+def test_transcription_evidence_preserves_acoustic_trust() -> None:
+    frame = TranscriptionFrame(
+        text="Jer, tries flowing up.",
+        user_id="caller",
+        timestamp=None,
+        result={
+            "phone_agent": {
+                "trusted_for_task": False,
+                "confidence": 0.18,
+                "language": "en",
+            }
+        },
+    )
+
+    assert transcription_evidence(frame) == (False, 0.18, "en")
 
 
 @pytest.mark.asyncio

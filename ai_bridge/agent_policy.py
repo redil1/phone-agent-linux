@@ -973,6 +973,27 @@ class AgentPolicyRuntime:
             await result
 
 
+def transcription_evidence(
+    frame: TranscriptionFrame,
+) -> tuple[bool, float | None, str | None]:
+    """Read project-owned acoustic metadata without trusting provider payloads."""
+
+    result = frame.result if isinstance(frame.result, dict) else {}
+    metadata = result.get("phone_agent", {}) if isinstance(result, dict) else {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    trusted = metadata.get("trusted_for_task", True) is not False
+    raw_confidence = metadata.get("confidence")
+    confidence = (
+        float(raw_confidence)
+        if isinstance(raw_confidence, (int, float))
+        else None
+    )
+    raw_language = metadata.get("language")
+    language = str(raw_language).strip() if raw_language else None
+    return trusted, confidence, language
+
+
 class TranscriptionPolicyProcessor(FrameProcessor):
     """Observe final caller transcriptions without changing pipeline semantics."""
 
@@ -983,7 +1004,13 @@ class TranscriptionPolicyProcessor(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if direction is FrameDirection.DOWNSTREAM and isinstance(frame, TranscriptionFrame):
-            await self.runtime.observe_transcription(frame.text)
+            trusted, confidence, language = transcription_evidence(frame)
+            await self.runtime.observe_transcription(
+                frame.text,
+                language_code=language,
+                trusted_for_task=trusted,
+                transcription_confidence=confidence,
+            )
         await self.push_frame(frame, direction)
 
 
