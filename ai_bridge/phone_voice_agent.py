@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import json
 import logging
@@ -86,6 +87,7 @@ class PhoneVoiceAgent:
             await self._prewarm_primary_llm()
             await self._prepare_provider_services()
             await self._preload_realtime_pipeline()
+            self._emit_voice_host_ready()
             await self._replace_runtime(retry=True)
             if self._dial_number:
                 logger.info("placing outbound call to %s", self._dial_number)
@@ -737,6 +739,36 @@ class PhoneVoiceAgent:
             self.config.providers.stt_provider,
             self.config.providers.tts_provider,
             (time.perf_counter() - started) * 1000,
+        )
+
+    def _emit_voice_host_ready(self) -> None:
+        """Publish the effective configuration after every selected pipeline is warm."""
+
+        # The Studio keeps this process resident between calls. Publish the
+        # parsed configuration, rather than asking the parent to trust that the
+        # environment it supplied was actually applied.
+        providers = self.config.providers
+        self._emit_event(
+            {
+                "type": "voice_host_ready",
+                "config": {
+                    "pipeline_mode": providers.pipeline_mode,
+                    "stt_provider": providers.stt_provider,
+                    "stt_model": providers.stt_model,
+                    "stt_language": providers.stt_language,
+                    "llm_provider": providers.llm_provider,
+                    "llm_model": providers.llm_model,
+                    "tts_provider": providers.tts_provider,
+                    "tts_model": providers.tts_model,
+                    "tts_voice_id": providers.tts_voice_id,
+                    "tts_aggregation": providers.tts_aggregation,
+                    "task_id": self.config.task_id,
+                    "system_prompt_sha256": hashlib.sha256(
+                        self.config.system_prompt.encode("utf-8")
+                    ).hexdigest(),
+                    "auto_answer": self.config.auto_answer,
+                },
+            }
         )
 
     async def _replace_runtime(self, *, retry: bool = False) -> None:

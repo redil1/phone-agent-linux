@@ -83,12 +83,13 @@ async def test_realtime_preload_finishes_before_gateway_is_declared_ready(
     monkeypatch.setattr(agent, "_prewarm_primary_llm", lambda: step("llm"))
     monkeypatch.setattr(agent, "_prepare_provider_services", lambda: step("providers"))
     monkeypatch.setattr(agent, "_preload_realtime_pipeline", lambda: step("preload"))
+    monkeypatch.setattr(agent, "_emit_voice_host_ready", lambda: order.append("verified"))
     monkeypatch.setattr(agent, "_replace_runtime", gateway_ready)
     monkeypatch.setattr(agent, "_close_runtime", lambda **_kwargs: step("closed"))
 
     await agent.run()
 
-    assert order == ["llm", "providers", "preload", "gateway_ready", "closed"]
+    assert order == ["llm", "providers", "preload", "verified", "gateway_ready", "closed"]
 
 
 @pytest.mark.asyncio
@@ -668,6 +669,27 @@ def _commanded_host(monkeypatch: pytest.MonkeyPatch, **kwargs: object) -> PhoneV
     monkeypatch.setenv("PHONE_AGENT_LINK_KEY_BASE64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
     config = RuntimeConfig.from_env(require_provider_credentials=False)
     return PhoneVoiceAgent(config, **kwargs)  # type: ignore[arg-type]
+
+
+def test_voice_host_ready_reports_effective_parsed_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _commanded_host(monkeypatch)
+    events: list[dict[str, object]] = []
+    agent._emit_event = events.append  # type: ignore[method-assign]
+
+    agent._emit_voice_host_ready()
+
+    assert events[0]["type"] == "voice_host_ready"
+    reported = events[0]["config"]
+    assert isinstance(reported, dict)
+    assert reported["stt_provider"] == agent.config.providers.stt_provider
+    assert reported["stt_model"] == agent.config.providers.stt_model
+    assert reported["llm_model"] == agent.config.providers.llm_model
+    assert reported["tts_voice_id"] == agent.config.providers.tts_voice_id
+    assert reported["task_id"] == agent.config.task_id
+    assert reported["auto_answer"] == agent.config.auto_answer
+    assert len(str(reported["system_prompt_sha256"])) == 64
 
 
 def test_a_commanded_host_outlives_its_calls(monkeypatch: pytest.MonkeyPatch) -> None:

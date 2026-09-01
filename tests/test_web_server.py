@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -550,6 +551,14 @@ def _studio() -> PhoneAgentWebServer:
     )
 
 
+def _mark_resident_host_current(server: PhoneAgentWebServer) -> None:
+    server._resident_host_environment_signature = (
+        server._expected_resident_host_environment_signature()
+    )
+    server._resident_host_reported_config = server._expected_voice_host_config()
+    server._resident_host_ready = True
+
+
 def test_stale_dial_task_does_not_block_the_next_call() -> None:
     """A task whose child already exited must never strand the Studio.
 
@@ -806,9 +815,14 @@ def test_provider_change_during_call_defers_voice_host_restart(tmp_path: Path) -
 
 def test_inbound_supervisor_reports_listening_and_uses_no_dial_argument(monkeypatch) -> None:
     class FakeStdout:
-        def __init__(self) -> None:
+        def __init__(self, server: PhoneAgentWebServer) -> None:
+            ready = {
+                "type": "voice_host_ready",
+                "config": server._expected_voice_host_config(),
+            }
             self.lines = iter(
                 [
+                    ("PHONE_AGENT_EVENT " + json.dumps(ready) + "\n").encode(),
                     b"gateway control ready call_id=test\n",
                     b"cellular state=RINGING\n",
                     b"cellular state=ACTIVE\n",
@@ -822,7 +836,7 @@ def test_inbound_supervisor_reports_listening_and_uses_no_dial_argument(monkeypa
     class FakeProcess:
         def __init__(self, server: PhoneAgentWebServer) -> None:
             self.server = server
-            self.stdout = FakeStdout()
+            self.stdout = FakeStdout(server)
             self.returncode = None
 
         async def wait(self) -> int:
@@ -866,7 +880,7 @@ def test_inbound_supervisor_reports_listening_and_uses_no_dial_argument(monkeypa
         states = [
             event["state"] for event in broadcasts if event.get("type") == "receptionist_status"
         ]
-        assert states[:2] == ["starting", "listening"]
+        assert states[:3] == ["starting", "starting", "listening"]
         assert server.call_state == "IDLE"
 
     asyncio.run(_test())
@@ -1091,6 +1105,7 @@ def test_resident_host_serves_a_dial_without_spawning_a_process() -> None:
                 return None
 
         server._receptionist_process = SimpleNamespace(returncode=None, stdin=_Writer())
+        _mark_resident_host_current(server)
 
         async def finish_shortly() -> None:
             await asyncio.sleep(0)
@@ -1117,6 +1132,7 @@ def test_a_consented_recording_never_reuses_the_resident_host() -> None:
 
     server = _studio()
     server._receptionist_process = SimpleNamespace(returncode=None, stdin=object())
+    _mark_resident_host_current(server)
 
     assert server._resident_host_stdin() is not None
     # The dial path consults this only when consent is absent.
@@ -1132,6 +1148,63 @@ def test_an_exited_resident_host_is_never_dialled() -> None:
 
     server._receptionist_process = None
     assert server._resident_host_stdin() is None
+
+
+def test_unverified_or_stale_resident_host_is_never_dialled() -> None:
+    server = _studio()
+    writer = object()
+    server._receptionist_process = SimpleNamespace(returncode=None, stdin=writer)
+
+    assert server._resident_host_stdin() is None
+
+    _mark_resident_host_current(server)
+    assert server._resident_host_stdin() is writer
+
+    server.config = replace(server.config, stt_provider="sensevoice")
+    assert server._resident_host_stdin() is None
+
+
+def test_dynamic_phone_route_does_not_make_verified_host_stale() -> None:
+    server = _studio()
+    writer = object()
+    server._receptionist_process = SimpleNamespace(returncode=None, stdin=writer)
+    _mark_resident_host_current(server)
+
+    server._remote_link = SimpleNamespace(
+        stats=SimpleNamespace(phone_connected=True)
+    )  # type: ignore[assignment]
+
+    assert server._resident_host_stdin() is writer
+
+
+def test_mismatched_voice_host_ready_handshake_terminates_host() -> None:
+    async def _test() -> None:
+        server = _studio()
+
+        class Process:
+            returncode = None
+            stdin = object()
+            terminated = False
+
+            def terminate(self) -> None:
+                self.terminated = True
+                self.returncode = 1
+
+        process = Process()
+        server._receptionist_process = process  # type: ignore[assignment]
+        reported = server._expected_voice_host_config()
+        reported["stt_provider"] = "distil_whisper"
+
+        await server._handle_child_line(
+            "PHONE_AGENT_EVENT "
+            + json.dumps({"type": "voice_host_ready", "config": reported})
+        )
+
+        assert process.terminated is True
+        assert server._resident_host_ready is False
+        assert server.receptionist_state == "error"
+
+    asyncio.run(_test())
 
 
 def test_warm_call_reaches_finished_only_after_it_went_live() -> None:
@@ -1161,9 +1234,17 @@ def test_warm_host_reports_warm_once_models_load_even_with_no_gateway(monkeypatc
     """
 
     class FakeStdout:
-        def __init__(self) -> None:
-            # No "gateway control ready": the phone is not reachable.
-            self.lines = iter([b"speech providers ready stt=sensevoice tts=kokoro\n"])
+        def __init__(self, server: PhoneAgentWebServer) -> None:
+            # No "gateway control ready": the phone is not reachable. The
+            # effective-configuration handshake is enough to prove the models
+            # are warm and safe to reuse.
+            event = {
+                "type": "voice_host_ready",
+                "config": server._expected_voice_host_config(),
+            }
+            self.lines = iter(
+                [("PHONE_AGENT_EVENT " + json.dumps(event) + "\n").encode()]
+            )
 
         async def readline(self) -> bytes:
             return next(self.lines, b"")
@@ -1171,7 +1252,7 @@ def test_warm_host_reports_warm_once_models_load_even_with_no_gateway(monkeypatc
     class FakeProcess:
         def __init__(self, server: PhoneAgentWebServer) -> None:
             self.server = server
-            self.stdout = FakeStdout()
+            self.stdout = FakeStdout(server)
             self.returncode = None
 
         async def wait(self) -> int:

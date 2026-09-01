@@ -337,6 +337,9 @@ class PhoneAgentWebServer:
         # environment. If they change during a call, keep that call alive and
         # replace the host as soon as it finishes.
         self._restart_voice_host_after_call = False
+        self._resident_host_environment_signature: tuple[tuple[str, str], ...] | None = None
+        self._resident_host_ready = False
+        self._resident_host_reported_config: dict[str, Any] = {}
         self._receptionist_task: asyncio.Task[None] | None = None
         self._shutting_down = False
         self.receptionist_state = "disabled"
@@ -1511,9 +1514,18 @@ class PhoneAgentWebServer:
                 "phone_number": self.current_public_destination,
                 "clients_connected": len(self._ws_clients),
                 "remote_link": self.remote_link_status(),
-            "inbound_receptionist": {
+                "inbound_receptionist": {
                     "enabled": self.auto_answer_enabled,
                     "state": self.receptionist_state,
+                },
+                "voice_host": {
+                    "ready": self._resident_host_ready,
+                    "configuration_current": self._resident_host_matches_current_config(),
+                    "effective_config": {
+                        key: value
+                        for key, value in self._resident_host_reported_config.items()
+                        if key != "system_prompt_sha256"
+                    },
                 },
                 "identity": {
                     "identity_id": identity.identity_id,
@@ -3055,6 +3067,62 @@ class PhoneAgentWebServer:
         )
         return env
 
+    @staticmethod
+    def _voice_host_environment_signature(
+        environment: dict[str, str],
+    ) -> tuple[tuple[str, str], ...]:
+        """Identify every environment value that can alter voice-host behavior."""
+
+        return tuple(
+            sorted(
+                (name, value)
+                for name, value in environment.items()
+                if name.startswith("PHONE_AGENT_")
+                # The remote phone can connect after the host is spawned. That
+                # changes only how the next transport opens, not the configured
+                # STT/LLM/TTS/task behavior verified by this signature.
+                and name != "PHONE_AGENT_USE_ADB_FORWARD"
+            )
+        )
+
+    def _expected_voice_host_config(self) -> dict[str, Any]:
+        return {
+            "pipeline_mode": self.config.pipeline_mode,
+            "stt_provider": self.config.stt_provider,
+            "stt_model": self.config.stt_model,
+            "stt_language": self.config.stt_language,
+            "llm_provider": self.config.llm_provider,
+            "llm_model": self.config.llm_model,
+            "tts_provider": self.config.tts_provider,
+            "tts_model": self.config.tts_model,
+            "tts_voice_id": self.config.tts_voice_id,
+            "tts_aggregation": self.config.tts_aggregation,
+            "task_id": self.task_id,
+            "system_prompt_sha256": hashlib.sha256(
+                self.system_prompt.encode("utf-8")
+            ).hexdigest(),
+            "auto_answer": self.auto_answer_enabled,
+        }
+
+    def _expected_resident_host_environment_signature(
+        self,
+    ) -> tuple[tuple[str, str], ...]:
+        environment = self._child_environment(
+            auto_answer=self.auto_answer_enabled,
+            recording_consent=False,
+            call_channel="gsm",
+            command_stdin=True,
+        )
+        return self._voice_host_environment_signature(environment)
+
+    def _resident_host_matches_current_config(self) -> bool:
+        return bool(
+            self._resident_host_ready
+            and self._resident_host_reported_config == self._expected_voice_host_config()
+            and self._resident_host_environment_signature
+            == self._expected_resident_host_environment_signature()
+        )
+
     async def _set_receptionist_state(self, state: str, message: str = "") -> None:
         self.receptionist_state = state
         await self.broadcast(
@@ -3112,6 +3180,9 @@ class PhoneAgentWebServer:
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
         self._receptionist_process = None
+        self._resident_host_environment_signature = None
+        self._resident_host_ready = False
+        self._resident_host_reported_config = {}
         await self._set_receptionist_state(
             "disabled" if not self.auto_answer_enabled else "paused"
         )
@@ -3129,6 +3200,15 @@ class PhoneAgentWebServer:
                     if self.auto_answer_enabled
                     else "Warming the voice host so the next dial skips model loading…",
                 )
+                child_environment = self._child_environment(
+                    auto_answer=self.auto_answer_enabled,
+                    recording_consent=False,
+                    call_channel="gsm",
+                    # This host stays resident between calls, so an outbound
+                    # dial can reuse its already-loaded models instead of
+                    # paying the cold start again.
+                    command_stdin=True,
+                )
                 process = await asyncio.create_subprocess_exec(
                     sys.executable,
                     "-m",
@@ -3136,17 +3216,14 @@ class PhoneAgentWebServer:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
-                    env=self._child_environment(
-                        auto_answer=self.auto_answer_enabled,
-                        recording_consent=False,
-                        call_channel="gsm",
-                        # This host stays resident between calls, so an outbound
-                        # dial can reuse its already-loaded models instead of
-                        # paying the cold start again.
-                        command_stdin=True,
-                    ),
+                    env=child_environment,
                 )
                 self._receptionist_process = process
+                self._resident_host_environment_signature = (
+                    self._voice_host_environment_signature(child_environment)
+                )
+                self._resident_host_ready = False
+                self._resident_host_reported_config = {}
                 if process.stdout is not None:
                     while line := await process.stdout.readline():
                         text = line.decode(errors="replace").strip()
@@ -3157,21 +3234,13 @@ class PhoneAgentWebServer:
                         # with the handset offline the host sat at "starting"
                         # forever even though its models were loaded and the next
                         # dial would already skip the ~20 s load.
-                        if "speech providers ready" in text:
-                            failures = 0
-                            if not self.auto_answer_enabled:
-                                await self._set_receptionist_state(
-                                    "warm",
-                                    "Voice host warm; the next dial skips model loading. "
-                                    "Incoming calls are not answered.",
-                                )
                         if "gateway control ready" in text:
                             failures = 0
-                            if self.auto_answer_enabled:
+                            if self.auto_answer_enabled and self._resident_host_ready:
                                 await self._set_receptionist_state(
                                     "listening", "Waiting for an incoming GSM call."
                                 )
-                            else:
+                            elif self._resident_host_ready:
                                 await self._set_receptionist_state(
                                     "warm",
                                     "Voice host warm; the next dial skips model loading. "
@@ -3180,6 +3249,9 @@ class PhoneAgentWebServer:
                         await self._handle_child_line(text)
                 return_code = await process.wait()
                 self._receptionist_process = None
+                self._resident_host_environment_signature = None
+                self._resident_host_ready = False
+                self._resident_host_reported_config = {}
                 # Only shutdown ends the supervisor. This previously also broke
                 # when auto-answer was off, which -- once the warm host became
                 # unconditional -- meant a host that exited for any reason was
@@ -3256,6 +3328,11 @@ class PhoneAgentWebServer:
 
         process = self._receptionist_process
         if process is None or process.returncode is not None:
+            return None
+        if not self._resident_host_matches_current_config():
+            logger.error(
+                "refusing resident voice host because its verified configuration is stale"
+            )
             return None
         return process.stdin
 
@@ -3372,6 +3449,38 @@ class PhoneAgentWebServer:
                 logger.warning("Ignored malformed PhoneAgent event")
                 return
             if isinstance(event, dict):
+                if event.get("type") == "voice_host_ready":
+                    reported = event.get("config")
+                    expected = self._expected_voice_host_config()
+                    if not isinstance(reported, dict) or reported != expected:
+                        self._resident_host_ready = False
+                        self._resident_host_reported_config = (
+                            dict(reported) if isinstance(reported, dict) else {}
+                        )
+                        logger.error(
+                            "resident voice host rejected: effective configuration "
+                            "does not match current Studio settings"
+                        )
+                        process = self._receptionist_process
+                        if process is not None and process.returncode is None:
+                            process.terminate()
+                        await self._set_receptionist_state(
+                            "error",
+                            "Voice host configuration mismatch; restarting safely.",
+                        )
+                    else:
+                        self._resident_host_reported_config = dict(reported)
+                        self._resident_host_ready = True
+                        if self.auto_answer_enabled:
+                            await self._set_receptionist_state(
+                                "starting",
+                                "Voice models verified; connecting to the phone.",
+                            )
+                        else:
+                            await self._set_receptionist_state(
+                                "warm",
+                                "Voice host configuration verified; ready for the next call.",
+                            )
                 if event.get("type") == "call_error":
                     self._child_reported_error = True
                 if event.get("type") == "call_state":
