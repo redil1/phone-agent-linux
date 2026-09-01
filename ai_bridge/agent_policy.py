@@ -34,6 +34,7 @@ from .human_speech import (
     acknowledgements_for,
     detect_language,
     detect_register,
+    normalize_for_speech,
     violates_language_lock,
 )
 from .memory.memory_manager import LayeredMemoryManager
@@ -765,6 +766,7 @@ class AgentPolicyRuntime:
                 )
                 return spoken, True
         if spoken:
+            spoken = normalize_for_speech(spoken, self.reply_language)
             self._remember_spoken(spoken)
             if "?" in spoken:
                 self._asked_question_this_turn = True
@@ -859,7 +861,7 @@ class AgentPolicyRuntime:
             verified_actions=set(),
         )
         spoken_text, _rewritten = self._continuity_guard(spoken_text)
-        return spoken_text
+        return normalize_for_speech(spoken_text, self.reply_language)
 
     async def playback_started(self) -> None:
         if self._active_playback_id is None and self._pending_playback_ids:
@@ -1026,8 +1028,13 @@ class ResponsePolicyProcessor(FrameProcessor):
     def _take_sentence(self) -> str | None:
         """Pop one complete sentence, or an early clause/bounded chunk of a reply."""
 
-        # If this is the very first chunk of the turn, allow an early clause (e.g., "Great,", "I see,")
-        # to stream to TTS immediately for minimum latency.
+        match = _SENTENCE_BOUNDARY.match(self._pending)
+        if match and match.group(0).strip():
+            sentence = match.group(0)
+            self._pending = self._pending[len(sentence) :]
+            return sentence.strip()
+
+        # If full sentence is not ready, allow an early clause (e.g., "Great,", "I see,") for the first chunk
         if not self._spoken:
             clause_match = _EARLY_CLAUSE_BOUNDARY.match(self._pending)
             if clause_match and clause_match.group(1).strip():
@@ -1035,11 +1042,6 @@ class ResponsePolicyProcessor(FrameProcessor):
                 self._pending = self._pending[len(clause) :].lstrip()
                 return clause.strip()
 
-        match = _SENTENCE_BOUNDARY.match(self._pending)
-        if match and match.group(0).strip():
-            sentence = match.group(0)
-            self._pending = self._pending[len(sentence) :]
-            return sentence.strip()
         if len(self._pending) >= _RUN_ON_CHARS:
             cut = self._pending.rfind(" ", 0, _RUN_ON_CHARS)
             if cut <= 0:

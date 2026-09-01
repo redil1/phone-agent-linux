@@ -49,7 +49,11 @@ public class DigitalAudioBridge {
     private static final int PLAYOUT_PREBUFFER_FRAMES = 5;
     private static final int PLAYOUT_MAX_ADAPTIVE_PREBUFFER_FRAMES = 8;
     private static final int STARVATION_GRACE_MS = 12;
-    private static final int TRACK_START_ATTEMPTS = 3;
+    // The MTK/GSI audio policy restores setPreferredDevice(TYPE_TELEPHONY)
+    // tracks onto INCALL_MUSIC. A failed retry can leave that restored native
+    // track alive even after Java releases its AudioTrack. Never amplify one
+    // failed media attach into several permanently occupied mixer slots.
+    private static final int TRACK_START_ATTEMPTS = 1;
     private static final int PLAYOUT_JOIN_ATTEMPTS = 4;
     private static final int PLAYOUT_JOIN_TIMEOUT_MS = 250;
     private static final byte[] SILENCE_FRAME = new byte[NETWORK_CHUNK_BYTES];
@@ -69,6 +73,9 @@ public class DigitalAudioBridge {
     private static final AtomicLong midSpeechConcealmentFrames = new AtomicLong();
     private static final AtomicLong peakPlayoutQueueDepth = new AtomicLong();
     private static final AtomicLong playoutAcksSent = new AtomicLong();
+    private static final AtomicLong telephonyTrackStartAttempts = new AtomicLong();
+    private static final AtomicLong audioServerRecoveries = new AtomicLong();
+    private static final AtomicBoolean audioServerRecoveryScheduled = new AtomicBoolean();
 
     private static volatile boolean running;
     private static volatile boolean rxConnected;
@@ -78,6 +85,8 @@ public class DigitalAudioBridge {
     private static volatile String lastError = "";
     private static volatile boolean playoutPrebuffering = true;
     private static volatile int adaptivePlayoutPrebufferFrames = PLAYOUT_PREBUFFER_FRAMES;
+    private static volatile boolean cellularRouteTouched;
+    private static volatile String audioServerRecoveryStatus = "not_needed";
 
     /**
      * Whether the call to bridge is a VoIP call placed by an app on this phone
@@ -788,6 +797,8 @@ public class DigitalAudioBridge {
     private static AudioTrack createStartedTelephonyInjectionTrack() throws Exception {
         Exception lastFailure = null;
         for (int attempt = 1; attempt <= TRACK_START_ATTEMPTS; attempt++) {
+            cellularRouteTouched = true;
+            telephonyTrackStartAttempts.incrementAndGet();
             // Re-check the call on every attempt, not once before the loop. The
             // retries sleep, and a call that ends inside one of those sleeps
             // leaves Telephony TX still exposed with nothing behind it. Building
@@ -856,6 +867,71 @@ public class DigitalAudioBridge {
                         + " releases them.",
                 lastFailure
         );
+    }
+
+    /**
+     * Tear down call-owned media and clear vendor-restored Telephony TX tracks.
+     *
+     * <p>On this reviewed MTK/GSI device, setPreferredDevice(TYPE_TELEPHONY)
+     * restores the Java AudioTrack onto INCALL_MUSIC. AudioFlinger can retain
+     * that restored track after stop/flush/release and eventually reaches its
+     * 40-track ceiling. Binder-level release is therefore not a sufficient
+     * cleanup boundary. Restarting audioserver after Telecom has removed the
+     * call is the only verified operation that releases those native orphans.
+     */
+    public static void onCellularCallEnded() {
+        if (voipMode || !cellularRouteTouched) return;
+
+        synchronized (OUTPUT_LOCK) {
+            if (activePlaybackQueue != null) activePlaybackQueue.clear();
+            if (activeTrack != null) stopTrackQuietly(activeTrack);
+            if (activeTxSocket != null) {
+                try { activeTxSocket.close(); } catch (Exception ignored) {}
+            }
+        }
+
+        if (!audioServerRecoveryScheduled.compareAndSet(false, true)) return;
+        audioServerRecoveryStatus = "scheduled";
+        Thread recovery = new Thread(() -> {
+            try {
+                // Let streamUplink stop, join and release its Java track first.
+                Thread.sleep(1500L);
+                String state = CallManager.getCallState();
+                if (!"IDLE".equals(state) && !"DISCONNECTED".equals(state)) {
+                    audioServerRecoveryStatus = "deferred_call_" + state.toLowerCase();
+                    return;
+                }
+
+                // phh-su keeps the caller's uid unless the target uid is
+                // explicit. Without the trailing 0 this runs as the app and
+                // cannot signal audioserver even when policy allows it.
+                Process process = new ProcessBuilder(
+                        "su", "-c", "killall audioserver", "0"
+                )
+                        .redirectErrorStream(true)
+                        .start();
+                if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                    process.destroy();
+                    throw new IOException("audioserver recovery command timed out");
+                }
+                if (process.exitValue() != 0) {
+                    throw new IOException(
+                            "audioserver recovery command exited " + process.exitValue()
+                    );
+                }
+                audioServerRecoveries.incrementAndGet();
+                cellularRouteTouched = false;
+                audioServerRecoveryStatus = "completed";
+                Log.i(TAG, "Restarted audioserver after cellular call to release Telephony TX tracks");
+            } catch (Exception failure) {
+                audioServerRecoveryStatus = "failed:" + failure.getClass().getSimpleName();
+                recordError("Post-call audioserver recovery failed", failure);
+            } finally {
+                audioServerRecoveryScheduled.set(false);
+            }
+        }, "gateway-post-call-audioserver-recovery");
+        recovery.setDaemon(true);
+        recovery.start();
     }
 
     private static String describeCause(Throwable failure) {
@@ -977,6 +1053,9 @@ public class DigitalAudioBridge {
             );
             result.put("playout_prebuffering", playoutPrebuffering);
             result.put("audio_track_underruns", audioTrackUnderruns);
+            result.put("telephony_track_start_attempts", telephonyTrackStartAttempts.get());
+            result.put("audioserver_recoveries", audioServerRecoveries.get());
+            result.put("audioserver_recovery_status", audioServerRecoveryStatus);
             result.put("downlink_bytes", downlinkBytes.get());
             result.put("uplink_bytes", uplinkBytes.get());
             result.put("last_error", lastError);

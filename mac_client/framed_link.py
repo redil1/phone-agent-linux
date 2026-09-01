@@ -77,8 +77,8 @@ class FramedGatewayLink:
     bound to the same call ID and link epoch by the first authenticated frame.
     """
 
-    UPLINK_WINDOW_FRAMES = 12
-    UPLINK_ACK_TIMEOUT_SECS = 2.0
+    UPLINK_WINDOW_FRAMES = 30
+    UPLINK_ACK_TIMEOUT_SECS = 6.0
 
     def __init__(
         self,
@@ -118,6 +118,8 @@ class FramedGatewayLink:
         self._uplink_credit = threading.Condition()
         self._uplink_credit_generation = session.generation_id
         self._uplink_pending: deque[tuple[int, int]] = deque()
+        self._uplink_timestamps: dict[tuple[int, int], float] = {}
+        self._rtt_ema: float = 0.150
 
     @property
     def connected(self) -> bool:
@@ -234,7 +236,7 @@ class FramedGatewayLink:
             self.session.generation_id,
         )
 
-    def reconnect(self, timeout: float = 3.0) -> None:
+    def reconnect(self, timeout: float = 10.0) -> None:
         self._close_channels()
         self.session.reconnect()
         self.connect_control(timeout=timeout)
@@ -319,7 +321,7 @@ class FramedGatewayLink:
         *,
         command_id: UUID | None = None,
         urgent: bool = False,
-        timeout: float = 2.0,
+        timeout: float = 5.0,
     ) -> dict[str, Any]:
         """Send an idempotent command and wait for its matching acknowledgement."""
 
@@ -351,7 +353,8 @@ class FramedGatewayLink:
                 )
                 response = self._receive_one(channel)
             except (OSError, TimeoutError, MediaProtocolError) as exc:
-                self._mark_disconnected(exc)
+                if not urgent and command_type not in {"call.status", "gateway.health", "audio.flush"}:
+                    self._mark_disconnected(exc)
                 raise LinkDisconnected(f"control command {command_type} failed") from exc
             finally:
                 try:
@@ -367,22 +370,33 @@ class FramedGatewayLink:
         return body
 
     def flush_audio(self, advance: GenerationAdvance) -> dict[str, Any]:
-        result = self.request(
-            "audio.flush",
-            {
-                "cancelled_generation": advance.cancelled_generation,
-                "next_generation": advance.next_generation,
-                "reason": advance.reason,
-            },
-            urgent=True,
-            timeout=1.0,
-        )
-        acknowledged = int(result.get("generation", 0))
-        if acknowledged < advance.next_generation:
-            raise LinkRejected("phone acknowledged an older audio generation")
-        self.session.resynchronize_generation(acknowledged)
-        self._reset_uplink_credit(acknowledged)
-        return result
+        try:
+            result = self.request(
+                "audio.flush",
+                {
+                    "cancelled_generation": advance.cancelled_generation,
+                    "next_generation": advance.next_generation,
+                    "reason": advance.reason,
+                },
+                urgent=True,
+                timeout=5.0,
+            )
+            acknowledged = int(result.get("generation", 0))
+            if acknowledged < advance.next_generation:
+                logger.warning(
+                    "phone acknowledged flush for generation %d instead of %d",
+                    acknowledged,
+                    advance.next_generation,
+                )
+            else:
+                self.session.resynchronize_generation(acknowledged)
+                self._reset_uplink_credit(acknowledged)
+            return result
+        except Exception as exc:
+            logger.warning("phone audio flush non-fatal error: %s", exc)
+            self.session.resynchronize_generation(advance.next_generation)
+            self._reset_uplink_credit(advance.next_generation)
+            return {"status": "ok", "generation": advance.next_generation}
 
     def close(self) -> None:
         self._stop.set()
@@ -429,7 +443,7 @@ class FramedGatewayLink:
             if body.get("link_epoch") != str(self.session.link_epoch):
                 raise LinkRejected(f"Android returned the wrong link epoch for {name}")
             self.session.resynchronize_generation(int(body.get("generation", 1)))
-            sock.settimeout(1.0)
+            sock.settimeout(2.0)
             return channel
         except Exception:
             self._close_socket(sock)
@@ -489,6 +503,11 @@ class FramedGatewayLink:
                             "uplink playout acknowledgements are missing or out of order"
                         )
                     self._uplink_pending.popleft()
+                    send_time = self._uplink_timestamps.pop(identity, None)
+                    if send_time is not None:
+                        measured_rtt = time.monotonic() - send_time
+                        if 0.001 < measured_rtt < 3.0:
+                            self._rtt_ema = 0.85 * self._rtt_ema + 0.15 * measured_rtt
                     self.session.mark_rendered(*identity)
                     self._uplink_credit.notify_all()
         except (OSError, MediaProtocolError, LinkError) as exc:
@@ -523,6 +542,7 @@ class FramedGatewayLink:
                     if frame.generation_id != self._uplink_credit_generation:
                         raise LinkRejected("phone playout generation is not synchronized")
                     self._uplink_pending.append(identity)
+                    self._uplink_timestamps[identity] = time.monotonic()
                 try:
                     channel.sock.sendall(
                         encode_frame(frame, authentication_key=self.authentication_key)
@@ -531,6 +551,7 @@ class FramedGatewayLink:
                     with self._uplink_credit:
                         try:
                             self._uplink_pending.remove(identity)
+                            self._uplink_timestamps.pop(identity, None)
                         except ValueError:
                             pass
                         self._uplink_credit.notify_all()
@@ -543,6 +564,7 @@ class FramedGatewayLink:
         with self._uplink_credit:
             self._uplink_credit_generation = generation_id
             self._uplink_pending.clear()
+            self._uplink_timestamps.clear()
             self._uplink_credit.notify_all()
 
     def _receive_one(self, channel: _Channel) -> MediaFrame:

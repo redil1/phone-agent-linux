@@ -1,14 +1,21 @@
 # PhoneAgent Gateway
 
-PhoneAgent connects a rooted Android phone call to a Pipecat voice pipeline on the Mac. The
+PhoneAgent connects a rooted Android phone call to a Pipecat voice pipeline on Linux or macOS. The
 runtime combines speech recognition, an LLM, streaming speech synthesis, a configurable agent
 persona, task contracts, caller memory, deterministic permission checks, and per-turn evaluation.
 
-## Install on a new Mac
+## Get the complete source
 
 ```bash
-git clone https://github.com/redil1/PhoneAgent.git
-cd PhoneAgent
+git clone https://github.com/redil1/phone-agent-linux.git
+cd phone-agent-linux
+```
+
+The repository includes the Linux/macOS runtime, Android gateway APK source,
+privileged-permission allowlist, GSI build/flash tooling, and protocol tests.
+For a new Apple Silicon Mac, continue with:
+
+```bash
 ./tools/bootstrap_macos.sh
 ```
 
@@ -154,7 +161,7 @@ The installed LaunchAgent uses a self-contained runtime under
 the development checkout on Desktop. Installation is health-checked and automatically restores
 the previous snapshot if the new service cannot start.
 
-Building, installing and pairing the Android gateway APK is documented in
+Building, installing, qualifying and pairing the Android gateway APK is documented in
 [`docs/ANDROID_APP.md`](docs/ANDROID_APP.md).
 
 Security policy, consent-aware recordings, MCP trust boundaries, release signing/SBOM generation,

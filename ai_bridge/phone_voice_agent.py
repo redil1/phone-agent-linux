@@ -115,10 +115,12 @@ class PhoneVoiceAgent:
                         status = await asyncio.to_thread(runtime.client.get_status)
                         await self._handle_status(status)
                     except LinkError as exc:
-                        logger.warning("phone link disconnected: %s", exc)
-                        await self._recover_runtime_link(runtime)
+                        logger.warning("phone link status poll warning: %s", exc)
+                        if not runtime.client.link.media_connected:
+                            await self._recover_runtime_link(runtime)
                     if not self._stopping.is_set():
-                        await asyncio.sleep(0.1)
+                        poll_interval = 0.5 if runtime.session.is_active else 0.25
+                        await asyncio.sleep(poll_interval)
             finally:
                 if command_task is not None and not command_task.done():
                     command_task.cancel()
@@ -397,24 +399,39 @@ class PhoneVoiceAgent:
 
     async def _start_call(self, runtime: ActiveCallRuntime, status: CallStatus) -> None:
         logger.info("attaching authenticated full-duplex media")
+        # Allow 400ms for cellular baseband DSP routing to stabilize upon ACTIVE transition
+        await asyncio.sleep(0.4)
+
         try:
+            # One call gets one physical Telephony-TX route attempt. The MTK
+            # audio policy can orphan a restored INCALL_MUSIC track after a
+            # failed setPreferredDevice(), so retrying here consumes additional
+            # native mixer slots without making the route more likely to work.
             await asyncio.to_thread(runtime.client.connect_media)
-            # Only the cellular path has an Android Telephony route to wait for.
-            # Requiring it here failed a WhatsApp call over a phone it never uses.
             if self.config.call_channel != "whatsapp":
                 await self._require_live_injection_route(runtime)
         except Exception as exc:
-            # Without a modem uplink the agent would hold a complete conversation
-            # that the caller never hears. Fail the call loudly instead of
-            # discarding every spoken word into a dead socket.
-            message = f"Phone uplink unavailable; the caller would hear silence: {exc}"
+            android_error = ""
+            try:
+                report = await asyncio.to_thread(runtime.client.get_audio_status)
+                audio = report.get("audio", report)
+                android_error = str(audio.get("last_error", "")).strip()
+            except Exception:
+                pass
+            detail = f"{exc}"
+            if android_error:
+                detail = f"{detail}; Android: {android_error}"
+            message = f"Phone uplink unavailable; the caller would hear silence: {detail}"
             logger.error("%s", message)
             self._emit_event({"type": "call_error", "message": message})
             try:
                 await asyncio.to_thread(runtime.client.hangup)
             except Exception:
                 logger.warning("could not hang up after uplink failure", exc_info=True)
-            self._stopping.set()
+            if self._one_call_mode:
+                self._stopping.set()
+            else:
+                await self._replace_runtime()
             return
         runtime.media_attached = True
         runtime.session.set_phase(SessionPhase.ACTIVE)
@@ -638,7 +655,13 @@ class PhoneVoiceAgent:
         """Reconnect media in place so the pipeline, context, and call stage survive."""
 
         delay = 0.25
+        attempts = 0
+        # Re-opening media creates another physical Telephony-TX AudioTrack on
+        # Android. One bounded recovery attempt is safe; a retry loop can fill
+        # the vendor INCALL_MUSIC mixer with orphaned restored tracks.
+        max_attempts = 1
         while not self._stopping.is_set() and self._runtime is runtime:
+            attempts += 1
             try:
                 await asyncio.to_thread(runtime.client.reconnect)
                 logger.info(
@@ -648,7 +671,38 @@ class PhoneVoiceAgent:
                 )
                 return
             except Exception as exc:
-                logger.warning("phone media recovery failed; retrying in %.2fs: %s", delay, exc)
+                err_str = str(exc)
+                logger.warning("phone media recovery attempt %d/%d failed: %s", attempts, max_attempts, exc)
+
+                try:
+                    status = await asyncio.to_thread(runtime.client.get_status)
+                    if status.state in {CallState.IDLE, CallState.DISCONNECTED}:
+                        logger.info("phone call is %s; ending media recovery", status.state.value)
+                        await self._replace_runtime()
+                        return
+                except Exception:
+                    pass
+
+                if (
+                    attempts >= max_attempts
+                    or "Telecom reports IDLE" in err_str
+                    or "requires an ACTIVE call" in err_str
+                ):
+                    logger.info("phone media recovery stopping after %d attempts; resetting runtime", attempts)
+                    if runtime.session.is_active:
+                        try:
+                            await asyncio.to_thread(runtime.client.hangup)
+                        except Exception:
+                            logger.warning(
+                                "could not hang up after terminal media recovery failure",
+                                exc_info=True,
+                            )
+                    if self._one_call_mode:
+                        self._stopping.set()
+                    else:
+                        await self._replace_runtime()
+                    return
+
                 try:
                     await asyncio.wait_for(self._stopping.wait(), timeout=delay)
                 except TimeoutError:

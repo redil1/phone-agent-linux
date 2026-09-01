@@ -149,27 +149,70 @@ def _small_number_words(value: int, french: bool) -> str:
 
 
 def spoken_numbers(text: str, language: str) -> str:
-    """Convert digits a caller would hear read out into spoken words.
+    """Convert digits a caller would hear read out into spoken words."""
 
-    Long identifiers are left alone: reading a phone number as one huge number
-    is worse than reading the digits. Only values a person would naturally say
-    as words are converted.
-    """
+    return normalize_for_speech(text, language)
 
+
+def normalize_for_speech(text: str, language: str) -> str:
+    """Normalize text into natural conversational phonetics for TTS."""
+    if not text:
+        return ""
     french = language.lower().startswith("fr")
-    currency = "euros"
 
-    def money(match: re.Match[str]) -> str:
-        amount = int(match.group("amount"))
-        return f"{_small_number_words(amount, french)} {currency}"
+    def expand_currency(m: re.Match[str]) -> str:
+        amount_str = m.group("amount").replace(",", ".")
+        raw_match = m.group(0).upper()
+        curr = (m.group("curr") or "").upper()
+        if "€" in raw_match or "EURO" in curr or "EUR" in curr:
+            unit_name = "euros"
+        elif "$" in raw_match or "USD" in curr or "DOLLAR" in curr:
+            unit_name = "dollars"
+        elif "MAD" in curr or "DH" in curr or "DIRHAM" in curr:
+            unit_name = "dirhams"
+        elif "£" in raw_match or "GBP" in curr or "POUND" in curr:
+            unit_name = "livres" if french else "pounds"
+        else:
+            unit_name = "euros"
 
-    # "29€" / "29 euros" / "€29"
-    text = re.sub(r"(?P<amount>\d{1,2})\s*(?:€|euros?\b)", money, text)
-    text = re.sub(r"€\s*(?P<amount>\d{1,2})\b", money, text)
+        if "." in amount_str:
+            parts = amount_str.split(".", 1)
+            main_val = int(parts[0]) if parts[0].isdigit() else 0
+            cents_val = int(parts[1][:2]) if parts[1][:2].isdigit() else 0
+            if french:
+                main_w = _small_number_words(main_val, french=True)
+                cents_w = _small_number_words(cents_val, french=True)
+                if cents_val > 0:
+                    return f"{main_w} {unit_name} {cents_w}"
+                return f"{main_w} {unit_name}"
+            else:
+                main_w = _small_number_words(main_val, french=False)
+                cents_w = _small_number_words(cents_val, french=False)
+                if cents_val > 0:
+                    return f"{main_w} {unit_name} and {cents_w} cents"
+                return f"{main_w} {unit_name}"
+        else:
+            val = int(amount_str) if amount_str.isdigit() else 0
+            val_w = _small_number_words(val, french=french)
+            return f"{val_w} {unit_name}"
 
+    # Match currency patterns: 29.99€, 150 €, € 150, 50$, $50, 500 MAD, 500 DH
+    text = re.sub(
+        r"(?P<amount>\d+(?:[.,]\d{1,2})?)\s*(?P<curr>€|euros?\b|EUR\b|\$|USD\b|dollars?\b|MAD\b|DH\b|dirhams?\b|£|GBP\b)",
+        expand_currency,
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(?P<curr>€|\$|£)\s*(?P<amount>\d+(?:[.,]\d{1,2})?)\b",
+        expand_currency,
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # Expand small plain numbers if < 100
     def plain(match: re.Match[str]) -> str:
         digits = match.group(0)
-        # 5+ digits is an identifier, not a quantity; leave it for the model.
         if len(digits) > 4:
             return digits
         value = int(digits)
@@ -177,7 +220,39 @@ def spoken_numbers(text: str, language: str) -> str:
             return digits
         return _small_number_words(value, french)
 
-    return re.sub(r"\b\d+\b", plain, text)
+    text = re.sub(r"\b\d+\b", plain, text)
+
+    # Expand common technical/sales acronyms for natural phonetic pronunciation
+    acronym_map = {
+        r"\bIPTV\b": "I P T V",
+        r"\b4K\b": "4 K",
+        r"\bFHD\b": "F H D",
+        r"\bHD\b": "H D",
+        r"\bVOD\b": "V O D",
+        r"\bOTT\b": "O T T",
+        r"\bVPN\b": "V P N",
+        r"\bVIP\b": "V I P",
+        r"\bSMS\b": "S M S",
+        r"\bPDF\b": "P D F",
+        r"\bCRM\b": "C R M",
+        r"\bERP\b": "E R P",
+        r"\bWiFi\b": "Wi-Fi",
+        r"\bURL\b": "U R L",
+    }
+    for pattern, repl in acronym_map.items():
+        text = re.sub(pattern, repl, text, flags=re.IGNORECASE)
+
+    # Expand symbols
+    if french:
+        text = re.sub(r"(\d+)\s*%", r"\1 pour cent", text)
+        text = text.replace("&", " et ")
+        text = text.replace("+", " plus ")
+    else:
+        text = re.sub(r"(\d+)\s*%", r"\1 percent", text)
+        text = text.replace("&", " and ")
+        text = text.replace("+", " plus ")
+
+    return " ".join(text.split())
 
 
 # --------------------------------------------------------------------------

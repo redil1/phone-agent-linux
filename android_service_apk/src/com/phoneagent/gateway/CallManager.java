@@ -42,6 +42,7 @@ public class CallManager {
             callState = "IDLE";
             callStateCode = 0;
             Log.i(TAG, "Call removed, state reset to IDLE");
+            DigitalAudioBridge.onCellularCallEnded();
         }
     }
 
@@ -78,6 +79,7 @@ public class CallManager {
             case Call.STATE_DISCONNECTED:
             case Call.STATE_DISCONNECTING:
                 callState = "DISCONNECTED";
+                DigitalAudioBridge.onCellularCallEnded();
                 break;
             default:
                 callState = "UNKNOWN";

@@ -317,6 +317,54 @@ async def test_preconnected_realtime_pipeline_attaches_media_when_call_becomes_a
 
 
 @pytest.mark.asyncio
+async def test_failed_android_media_attach_is_attempted_only_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.attachments = 0
+            self.hangups = 0
+
+        def connect_media(self) -> None:
+            self.attachments += 1
+            raise RuntimeError("uplink peer closed")
+
+        def get_audio_status(self) -> dict[str, object]:
+            return {
+                "audio": {
+                    "last_error": "Telephony TX AudioTrack did not initialize",
+                }
+            }
+
+        def hangup(self) -> None:
+            self.hangups += 1
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    config = SimpleNamespace(
+        link_authentication_key=b"x" * 32,
+        call_channel="gsm",
+    )
+    agent = PhoneVoiceAgent(config, dial_number="0600000000")  # type: ignore[arg-type]
+    client = FakeClient()
+    runtime = SimpleNamespace(client=client)
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(voice_agent_module.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(agent, "_emit_event", emitted.append)
+
+    await agent._start_call(  # type: ignore[arg-type]
+        runtime,
+        CallStatus("ok", CallState.ACTIVE, 4, "0600000000"),
+    )
+
+    assert client.attachments == 1
+    assert client.hangups == 1
+    assert agent._stopping.is_set() is True
+    assert "Telephony TX AudioTrack did not initialize" in str(emitted[-1]["message"])
+
+
+@pytest.mark.asyncio
 async def test_ai_call_completion_callback_executes_one_channel_hangup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

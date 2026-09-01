@@ -15,17 +15,21 @@ the single thing most likely to waste an afternoon.
 ```
 
 Produces `android_service_apk/PhoneAgentGateway.apk`, signed with a debug
-keystore the script generates on first run.
+keystore the script generates on first run. The same command works on Linux and
+macOS; set `ANDROID_HOME` or `ANDROID_SDK_ROOT` when the SDK is not in the
+platform's default location.
 
-Omit `--build-only` and it also installs as a normal user app, which is useful
-for compile checking but **not** how the gateway is deployed: as a user app it
-has none of the privileged permissions and cannot touch call audio.
+Omit `--build-only` and it also runs `adb install -r -g`. This is a production
+update only when the same package is already baked into the system image as a
+privileged app; Android then keeps the system package's privileged identity and
+stores the newer APK as an updated-system-app. On a stock phone it is only a
+normal user app and cannot touch call audio.
 
 ### What the build needs
 
 | | |
 |---|---|
-| Android SDK | `~/Library/Android/sdk` |
+| Android SDK | `$ANDROID_HOME`, `$ANDROID_SDK_ROOT`, `~/Android/Sdk` (Linux), or `~/Library/Android/sdk` (macOS) |
 | Build tools | `34.0.0` (`aapt2`, `d8`, `zipalign`, `apksigner`) |
 | Platform | `android-34` (`android.jar`) |
 | JDK | any recent `javac` and `keytool` |
@@ -38,6 +42,26 @@ and are picked up automatically by both `javac` and `d8`; the QR decoder
 the APK is reproducible offline.
 
 Minimum API is 28.
+
+## Supported phones
+
+The source is portable; the cellular audio route is not universal. A usable
+GSM handset must provide all of the following:
+
+- a rooted or `userdebug` Android build where the APK can be installed as
+  `/system/priv-app` with the included privileged-permission allowlist;
+- the default-dialer role and the protected telephony/audio permissions listed
+  in `AndroidManifest.xml`;
+- an audio HAL/policy that exposes `AudioDeviceInfo.TYPE_TELEPHONY` for in-call
+  capture and injection;
+- a working `su` implementation. The verified MTK/GSI configuration uses
+  `phh-su`; the installer grants only the command-scoped
+  `killall audioserver` recovery capability.
+
+The current hardware-qualified target is Android 14 `userdebug` on the reviewed
+MTK/GSI phone. A different Android version, vendor audio HAL, or stock locked
+phone must be qualified before relying on it for calls. Installing the APK alone
+cannot add a telephony audio route that the vendor firmware does not expose.
 
 ### Tests that do not need a phone
 
@@ -89,6 +113,22 @@ Use it for a quick iteration you are about to replace. Be aware that the
 framework restart (`stop` / `start`) has been observed to leave `zygote` in a
 restart loop on this device; the only recovery is a reboot, which then discards
 the overlay. If that happens twice, use Route B instead of retrying.
+
+## Route A2 — update an already-baked privileged app (safe iteration)
+
+When PhoneAgent is already present in `/system/priv-app` and the new APK is
+signed with the same key, update it without modifying `/system` or restarting
+the framework:
+
+```bash
+./android_service_apk/build_and_install.sh
+```
+
+Verify that `dumpsys package com.phoneagent.gateway` still reports the
+`SYSTEM`/`PRIVILEGED` flags and protected permissions. This update survives a
+normal reboot, but Android's **Uninstall updates** action or a factory reset
+restores the APK baked into the image. Use Route B to make the new version the
+factory baseline.
 
 ## Route B — bake into the system image (durable, recommended)
 
@@ -181,6 +221,7 @@ once.
 |---|---|
 | Everything reports installed but behaviour is old | overlay discarded by a reboot — compare hashes |
 | `zygote` restarting, `system_server` absent after an overlay install | framework restart wedged; reboot, then use Route B |
+| Caller hears silence after repeated failed attaches | inspect `/audio/status`; the host and APK permit only one physical Telephony-TX attempt, and the APK restarts `audioserver` after call teardown on the qualified phh-su image |
 | `adb devices` shows `offline`, or `error: closed` | USB link; replug the cable, then `adb reconnect offline` |
 | Phone connects to the tunnel but dialling fails | key mismatch — re-pair by QR |
 | Tunnel never connects, phone retries forever | port blocked. **A timeout is a firewall; an instant close is authentication.** |

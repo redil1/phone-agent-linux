@@ -82,7 +82,7 @@ class PhoneAgentTransportParams(TransportParams):
     audio_out_end_silence_secs: int = 0
     frame_ms: int = DEFAULT_FRAME_MS
     input_queue_frames: int = Field(default=25, ge=2, le=50)
-    flush_timeout_secs: float = Field(default=1.0, gt=0.05, le=5.0)
+    flush_timeout_secs: float = Field(default=5.0, gt=0.05, le=10.0)
     require_active_call: bool = True
 
     @property
@@ -406,7 +406,7 @@ class PhoneAgentOutputTransport(BaseOutputTransport):
 
             try:
                 await _invoke_callback(self._tx_handler, chunk, generation_id, sequence)
-            except Exception:
+            except Exception as exc:
                 if generation_id != self._session.generation_id:
                     self._session.metrics.stale_output_frames += 1
                     logger.info(
@@ -415,7 +415,7 @@ class PhoneAgentOutputTransport(BaseOutputTransport):
                     )
                     return AudioWriteResult.CANCELLED
                 self._session.metrics.dropped_output_frames += 1
-                logger.exception("phone uplink write failed")
+                logger.warning("phone uplink write failed: %s", exc)
                 return AudioWriteResult.FAILED
 
             if not self._session.account_output(generation_id, sequence, len(chunk)):

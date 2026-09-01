@@ -100,6 +100,8 @@ if ! adb -s "$DEV_ID" shell "pm list packages --user 0 com.phoneagent.gateway" |
     exit 1
 fi
 
+"$DIR/provision_phh_su_audio_recovery.sh" "$DEV_ID"
+
 echo "[*] Granting runtime permissions and ROLE_DIALER..."
 for permission in \
     android.permission.CALL_PHONE \

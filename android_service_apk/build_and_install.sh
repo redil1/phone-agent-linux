@@ -104,6 +104,8 @@ if [ -n "$DEV_ID" ]; then
     echo "[*] Installing APK to device ($DEV_ID)..."
     adb -s "$DEV_ID" install -r -g "$FINAL_APK"
 
+    "$DIR/provision_phh_su_audio_recovery.sh" "$DEV_ID"
+
     # Installing force-stops the gateway. A SIGKILL never runs onDestroy, so any
     # telephony AudioTrack that was live at that moment stays registered inside
     # AudioFlinger and permanently consumes one of the telephony output's limited

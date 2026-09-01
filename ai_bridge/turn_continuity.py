@@ -55,15 +55,55 @@ def is_semantically_incomplete_fragment(text: str) -> bool:
     return False
 
 
+_CONCISE_TERMINAL = frozenset(
+    {
+        "yes",
+        "no",
+        "yeah",
+        "yep",
+        "nope",
+        "okay",
+        "ok",
+        "sure",
+        "fine",
+        "right",
+        "good",
+        "perfect",
+        "thanks",
+        "oui",
+        "non",
+        "ouais",
+        "d accord",
+        "bien",
+        "parfait",
+        "merci",
+        "exactement",
+        "voila",
+        "voilà",
+        "allô",
+        "allo",
+        "hello",
+        "hi",
+    }
+)
+
+
+def is_concise_terminal_turn(text: str) -> bool:
+    """Return true for brief, unambiguous confirmation/negation turns."""
+    tokens = _normalized_tokens(text)
+    if not tokens:
+        return False
+    if len(tokens) <= 2 and all(t in _CONCISE_TERMINAL for t in tokens):
+        return True
+    return False
+
+
 def looks_semantically_incomplete(text: str) -> bool:
     """Endpointing hint for fragments or sentences that clearly trail off."""
 
     normalized = " ".join(text.strip().casefold().split())
     if not normalized or normalized.endswith((".", "!", "?")):
         return False
-    # A clause left hanging on continuation punctuation is mid-sentence whatever
-    # word precedes it. "Hello," is the caller drawing breath, not a turn, and
-    # committing it made the agent answer a greeting fragment.
     if normalized.endswith((",", ";", ":", "-", "—")):
         return True
     if is_semantically_incomplete_fragment(normalized):
@@ -76,6 +116,17 @@ def looks_semantically_incomplete(text: str) -> bool:
             normalized,
         )
     )
+
+
+def dynamic_endpoint_delay_ms(partial_text: str, base_silence_ms: int = 700) -> int:
+    """Calculate the optimal silence patience based on clause semantics."""
+    if not partial_text:
+        return base_silence_ms
+    if is_concise_terminal_turn(partial_text):
+        return min(250, base_silence_ms)
+    if looks_semantically_incomplete(partial_text):
+        return max(1200, base_silence_ms + 500)
+    return base_silence_ms
 
 
 class SemanticTurnGuardProcessor(FrameProcessor):
