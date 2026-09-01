@@ -62,6 +62,13 @@ _NEED_SIGNAL = re.compile(
     r"films?|séries?|abonnement|télévision)\b",
     re.IGNORECASE,
 )
+_META_OR_REPORTED = re.compile(
+    r"\b(?:something like|for example|for instance|if (?:they|he|she|someone|"
+    r"the caller|the customer)|you (?:could|should|can) say|tell (?:them|him|her)|"
+    r"ask (?:them|him|her)|offer (?:them|him|her)|keep it|sales call|"
+    r"par exemple|quelque chose comme)\b",
+    re.IGNORECASE,
+)
 def normalize_direction(value: str | CallDirection) -> CallDirection:
     try:
         return CallDirection(str(value).strip().lower())
@@ -102,10 +109,19 @@ class CallContextPolicy:
         rendered = " ".join(str(text or "").strip().split())
         if self.direction is CallDirection.INBOUND:
             return False
-        if permission_state == "refused" or _NOT_INTERESTED.search(rendered):
+        reported_or_meta = bool(_META_OR_REPORTED.search(rendered))
+        direct_not_interested = bool(
+            len(rendered.split()) <= 16 and _NOT_INTERESTED.search(rendered)
+        )
+        direct_interest = bool(
+            not reported_or_meta
+            and len(rendered.split()) <= 20
+            and _EXPLICIT_INTEREST.search(rendered)
+        )
+        if permission_state == "refused" or direct_not_interested:
             self.interest = InterestState.NOT_INTERESTED
             self.phase = ProspectingPhase.CLOSE
-        elif _EXPLICIT_INTEREST.search(rendered):
+        elif direct_interest:
             self.interest = InterestState.INTERESTED
             self.phase = ProspectingPhase.PRODUCT_QUALIFICATION
         elif permission_state != "granted":
@@ -117,12 +133,15 @@ class CallContextPolicy:
             self.phase = ProspectingPhase.RELEVANCE_DISCOVERY
         else:
             self.substantive_turns += 1
-            if _NEED_SIGNAL.search(rendered):
+            if not reported_or_meta and _NEED_SIGNAL.search(rendered):
                 self.interest = InterestState.NEED_SIGNAL
-            if self.substantive_turns >= 2:
-                self.phase = ProspectingPhase.INTEREST_CHECK
-            else:
+            # Do not force a funnel stage merely because two turns elapsed.
+            # Until interest is explicit, the model gets only broad advisory
+            # context and remains free to answer the actual conversation.
+            if self.interest is InterestState.NEED_SIGNAL:
                 self.phase = ProspectingPhase.NEED_DEVELOPMENT
+            else:
+                self.phase = ProspectingPhase.RELEVANCE_DISCOVERY
         return before != (self.phase, self.interest, self.substantive_turns)
 
     def base_instructions(self) -> str:

@@ -56,7 +56,7 @@ class RuntimeControl(StrictControlModel):
     google_tts_scene: str = Field(default="", max_length=4_000)
     google_tts_sample_context: str = Field(default="", max_length=4_000)
     speculative_pipeline_enabled: bool = True
-    conversational_reflex_enabled: bool = True
+    conversational_reflex_enabled: bool = False
     auto_answer_enabled: bool = True
     whatsapp_country_code: str = Field(default="212", pattern=r"^[0-9]{1,4}$")
     chatgpt_realtime_voice: str = Field(default="marin", max_length=40)

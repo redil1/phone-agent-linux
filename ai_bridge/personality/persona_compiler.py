@@ -215,8 +215,11 @@ class PersonaCompiler:
     def _compile_human_conversation(self, language: str = "en-US") -> list[str]:
         """Compile the behaviour spec into the system instruction.
 
-        The prompt carries the behaviour; the code guards only catch what the
-        model provably cannot (unheard audio, exact repeats, language drift).
+        Compile principles, not a phrasebook. Small local models copied the
+        exact recovery and callback examples verbatim until one phrase became
+        a multi-turn loop. Authored wordings remain available to the Studio and
+        evaluators through :meth:`repair_phrases`, but are not attractive
+        completions in the live cascade prompt.
         """
 
         spec = self.human_conversation
@@ -233,16 +236,6 @@ class PersonaCompiler:
                 parts.append(str(repair["principle"]).strip())
             for rule in repair.get("rules", []):
                 parts.append(f"- {rule}")
-            for label, key in (
-                ("Ask again", "ask_again_first"),
-                ("If it happens again", "ask_again_second"),
-                ("After three tries", "give_up_politely"),
-                ("If asked to repeat yourself", "when_asked_to_repeat"),
-            ):
-                options = self._for_language(repair.get(key), language)
-                if options:
-                    rendered = " | ".join(f'"{item}"' for item in options)
-                    parts.append(f"- {label}, vary between: {rendered}")
 
         for title, key in (
             ("LISTENING", "listening"),
@@ -256,13 +249,6 @@ class PersonaCompiler:
                 parts.extend(f"- {entry}" for entry in entries)
 
         situations = spec.get("situations", {})
-        for label, key in (
-            ("If it is a bad moment, vary between", "not_a_good_time"),
-            ("If asked who you are, vary between", "asked_who_you_are"),
-        ):
-            options = self._for_language(situations.get(key), language)
-            if options:
-                parts.append(f"- {label}: " + " | ".join(f'"{item}"' for item in options))
         if situations.get("rules"):
             parts.extend(["", "# SITUATIONS"])
             parts.extend(f"- {rule}" for rule in situations["rules"])
@@ -271,17 +257,6 @@ class PersonaCompiler:
             parts.extend(["", "# NEVER DO THIS"])
             parts.extend(f"- {rule}" for rule in spec["never_do"])
 
-        examples = self._for_language(spec.get("examples"), language)
-        if examples:
-            parts.extend(["", "# CONTRAST EXAMPLES"])
-            for example in examples:
-                if not isinstance(example, dict):
-                    continue
-                parts.append(f"- Situation: {example.get('situation', '')}")
-                parts.append(f"  WRONG: {example.get('bad', '')}")
-                parts.append(f"  RIGHT: {example.get('good', '')}")
-                if example.get("why"):
-                    parts.append(f"  Why: {example['why']}")
         return parts
 
     def _load_examples(self) -> list[dict[str, Any]]:

@@ -35,7 +35,7 @@ def test_antigravity_gemini_is_zero_credential_default(monkeypatch: pytest.Monke
     assert config.llm_provider == "antigravity_gemini"
     assert config.llm_model == "gemini-3.1-flash-lite"
     assert config.speculative_pipeline_enabled is True
-    assert config.conversational_reflex_enabled is True
+    assert config.conversational_reflex_enabled is False
 
 
 def test_speculative_pipeline_has_one_safe_disable_flag(

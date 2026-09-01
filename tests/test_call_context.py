@@ -24,7 +24,7 @@ def test_outbound_permission_is_not_product_interest() -> None:
     assert "Ask one open, non-product question" in state
 
 
-def test_outbound_develops_need_then_checks_interest_before_qualification() -> None:
+def test_outbound_does_not_force_interest_from_elapsed_turn_count() -> None:
     context = CallContextPolicy("outbound")
     context.observe_caller_turn("Yes", permission_state="granted")
 
@@ -38,10 +38,21 @@ def test_outbound_develops_need_then_checks_interest_before_qualification() -> N
     context.observe_caller_turn(
         "It is expensive and I miss football matches.", permission_state="granted"
     )
-    assert context.phase is ProspectingPhase.INTEREST_CHECK
+    assert context.phase is ProspectingPhase.NEED_DEVELOPMENT
     move, question = context.steering("Which device do you use?")
-    assert "verified outcome" in move
+    assert "most like to improve" in move
     assert question == "Which device do you use?"
+
+
+def test_meta_sales_coaching_does_not_change_prospect_interest() -> None:
+    context = CallContextPolicy("outbound")
+    context.observe_caller_turn(
+        "For example, if they say sounds interesting, ask them what they need.",
+        permission_state="granted",
+    )
+
+    assert context.interest is InterestState.UNKNOWN
+    assert context.product_qualification_unlocked is False
 
     context.observe_caller_turn("Yes, that sounds useful.", permission_state="granted")
     assert context.phase is ProspectingPhase.PRODUCT_QUALIFICATION

@@ -44,6 +44,11 @@ def test_clauses_left_on_continuation_punctuation_wait_longer(text: str) -> None
     assert looks_semantically_incomplete(text)
 
 
+@pytest.mark.parametrize("text", ["The.", "It."])
+def test_stt_punctuation_cannot_turn_a_clipped_fragment_into_a_sentence(text: str) -> None:
+    assert looks_semantically_incomplete(text)
+
+
 @pytest.mark.parametrize("text", ["Yes.", "Oui.", "That works!", "Who is this?"])
 def test_terminated_sentences_still_endpoint_immediately(text: str) -> None:
     assert not looks_semantically_incomplete(text)

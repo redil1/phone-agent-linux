@@ -56,6 +56,8 @@ from phone_agent_gateway.ai_bridge.repair_processor import ConversationRepairPro
         # Wrong moment.
         ("Je conduis là", False, TurnQuality.NOT_NOW),
         ("I'm driving right now", False, TurnQuality.NOT_NOW),
+        ("Sorry, I can't talk right now", False, TurnQuality.NOT_NOW),
+        ("Please call me back tomorrow", False, TurnQuality.NOT_NOW),
         # Identity challenge.
         ("C'est qui ?", False, TurnQuality.IDENTITY_CHALLENGE),
         ("Who is this?", False, TurnQuality.IDENTITY_CHALLENGE),
@@ -73,6 +75,16 @@ def test_noise_detection_accepts_real_speech() -> None:
     assert looks_like_noise("   ") is True
     assert looks_like_noise("Je voudrais un abonnement") is False
     assert looks_like_noise("I want the sports package") is False
+
+
+def test_reported_callback_advice_is_not_the_callers_callback_intent() -> None:
+    """Regression for the 2026-09-01 call that poisoned every later turn."""
+
+    coaching = (
+        "Sounds like you're opening a sales call. Keep it simple and respectful. "
+        "If they hesitate, offer a text call back later."
+    )
+    assert classify_caller_turn(coaching) is TurnQuality.ACTIONABLE
 
 
 # ------------------------------------------------------------------- repair
@@ -152,8 +164,8 @@ def _runtime(tmp_path: Any) -> AgentPolicyRuntime:
     )
 
 
-def test_an_already_spoken_sentence_is_observed_but_not_rewritten(tmp_path: Any) -> None:
-    """Dialogue stays model-owned even when telemetry detects repetition."""
+def test_an_already_spoken_sentence_is_blocked_before_tts(tmp_path: Any) -> None:
+    """A retry stays model-owned, but a known duplicate must never be spoken."""
 
     runtime = _runtime(tmp_path)
     sentence = "Pour commencer, qu'est-ce que vous regardez le plus souvent ?"
@@ -161,18 +173,19 @@ def test_an_already_spoken_sentence_is_observed_but_not_rewritten(tmp_path: Any)
     assert spoken and stop is False
 
     repeated, stop_again = runtime.guard_sentence(sentence, is_first=True)
-    assert repeated == spoken
-    assert stop_again is False
+    assert repeated == ""
+    assert stop_again is True
+    assert runtime.consume_guard_rejection() == "repeat"
 
 
-def test_a_mid_turn_repeat_is_not_dropped_or_replaced(tmp_path: Any) -> None:
+def test_a_mid_turn_repeat_is_dropped_without_a_canned_replacement(tmp_path: Any) -> None:
 
     runtime = _runtime(tmp_path)
     sentence = "Pour commencer, qu'est-ce que vous regardez le plus souvent ?"
-    spoken, _ = runtime.guard_sentence(sentence, is_first=True)
+    _spoken, _ = runtime.guard_sentence(sentence, is_first=True)
     repeated, stop = runtime.guard_sentence(sentence, is_first=False)
-    assert repeated == spoken
-    assert stop is False
+    assert repeated == ""
+    assert stop is True
 
 
 def test_a_different_sentence_is_still_allowed(tmp_path: Any) -> None:
@@ -186,7 +199,7 @@ def test_a_different_sentence_is_still_allowed(tmp_path: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_repetition_is_flagged_after_speech_without_controlling_dialogue(
+async def test_nonstreamed_evaluation_still_flags_repetition(
     tmp_path: Any,
 ) -> None:
     runtime = _runtime(tmp_path)
@@ -286,7 +299,7 @@ def test_unclear_turn_reaches_the_model_with_repair_guidance(tmp_path: Any) -> N
     assert sink.forwarded() == ["Hello?"]
     assert sink.spoken() == []
     assert runtime._latest_turn_quality == "fragment"
-    assert "ask a brief context-aware clarification" in runtime._latest_turn_guidance
+    assert "if it truly remains incomplete, clarify briefly" in runtime._latest_turn_guidance
 
 
 def test_backchannel_is_ignored_entirely(tmp_path: Any) -> None:
@@ -426,11 +439,44 @@ def test_english_prompt_carries_no_french_examples(tmp_path: Any) -> None:
     compiler = _shipped_compiler(tmp_path)
     contract = TaskEngine().require_contract("iptv_subscription_sales")
     prompt = compiler.compile(task_contract=contract, language="en-US")
-    assert "Could you say it again?" in prompt
+    assert "If you did not clearly understand" in prompt
+    assert "Could you say it again?" not in prompt
     assert "Vous pouvez répéter" not in prompt
 
     french_prompt = compiler.compile(task_contract=contract, language="fr-FR")
-    assert "Vous pouvez répéter" in french_prompt
+    assert "Vous pouvez répéter" not in french_prompt
+
+
+@pytest.mark.asyncio
+async def test_long_meta_coaching_cannot_grant_or_refuse_permission(tmp_path: Any) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.note_opening_attempted()
+    coaching = (
+        "Keep it simple and say did I catch you at a good time, then if they hesitate "
+        "you can say call me back later."
+    )
+
+    await runtime.observe_transcription(coaching)
+
+    assert runtime._permission_state == "unknown"
+    assert runtime._latest_turn_quality == "actionable"
+    assert "permission_to_continue" not in runtime.task.state
+
+
+def test_permission_accepts_natural_direct_answers_but_not_quoted_examples(
+    tmp_path: Any,
+) -> None:
+    runtime = _runtime(tmp_path)
+
+    assert runtime._classify_permission("Yes, that's fine.") == "granted"
+    assert runtime._classify_permission("Sure, I have a minute.") == "granted"
+    assert runtime._classify_permission("Sorry, I can't talk right now.") == "refused"
+    assert (
+        runtime._classify_permission(
+            "For example, you can say: is this a good time, then wait."
+        )
+        == "unknown"
+    )
 
 
 def test_a_flat_override_does_not_erase_the_other_language(tmp_path: Any) -> None:
@@ -549,6 +595,122 @@ def test_a_reply_to_the_current_turn_is_still_spoken(tmp_path: Any) -> None:
 
     _asyncio.run(scenario())
     assert spoken == ["Great, what do you watch most?"]
+
+
+def test_streamed_duplicate_is_regenerated_before_any_tts(tmp_path: Any) -> None:
+    import asyncio as _asyncio
+
+    from pipecat.frames.frames import (
+        LLMFullResponseEndFrame,
+        LLMFullResponseStartFrame,
+        LLMTextFrame,
+    )
+
+    from phone_agent_gateway.ai_bridge.agent_policy import ResponsePolicyProcessor
+
+    runtime = _runtime(tmp_path)
+    repeated = "No problem, I've caught you at a bad time. When would suit you?"
+    runtime.guard_sentence(
+        "No problem, I've caught you at a bad time.", is_first=True
+    )
+    runtime.guard_sentence("When would suit you?", is_first=False)
+    processor = ResponsePolicyProcessor(runtime)
+    spoken: list[str] = []
+    retries: list[tuple[str, int]] = []
+    resolved: list[int] = []
+
+    async def capture(frame: Any, direction: Any = None) -> None:
+        if isinstance(frame, LLMTextFrame):
+            spoken.append(frame.text)
+
+    async def retry(text: str, epoch: int) -> bool:
+        retries.append((text, epoch))
+        return True
+
+    async def resolve(epoch: int) -> None:
+        resolved.append(epoch)
+
+    processor.push_frame = capture  # type: ignore[method-assign]
+    processor.bind_repetition_recovery(retry, resolve)
+
+    async def scenario() -> None:
+        await processor.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(LLMTextFrame(repeated), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+        assert spoken == []
+
+        await processor.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(
+            LLMTextFrame("You're right; that sounded scripted. What would you like me to change?"),
+            FrameDirection.DOWNSTREAM,
+        )
+        await processor.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+
+    _asyncio.run(scenario())
+
+    assert retries == [
+        ("No problem, I've caught you at a bad time.", runtime.turn_epoch)
+    ]
+    assert spoken == [
+        "You're right; that sounded scripted.",
+        "What would you like me to change?",
+    ]
+    assert resolved == [runtime.turn_epoch]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_retry_decontaminates_context_and_targets_latest_turn(
+    tmp_path: Any,
+) -> None:
+    from pipecat.frames.frames import LLMContextFrame
+    from pipecat.processors.aggregators.llm_context import LLMContext
+
+    from phone_agent_gateway.ai_bridge.production_pipeline import ProductionCallPipeline
+
+    class _Worker:
+        def __init__(self) -> None:
+            self.frames: list[Any] = []
+
+        async def queue_frame(self, frame: Any) -> None:
+            self.frames.append(frame)
+
+    runtime = _runtime(tmp_path)
+    await runtime.observe_transcription(
+        "No worries, if now is not good, tell me a rough time window."
+    )
+    old = "No problem, I've caught you at a bad time. When would suit you?"
+    context = LLMContext(
+        [
+            {"role": "system", "content": "Answer the caller naturally."},
+            {"role": "assistant", "content": old},
+            {"role": "user", "content": runtime.last_caller_text},
+        ]
+    )
+    pipeline = object.__new__(ProductionCallPipeline)
+    pipeline.policy = runtime
+    pipeline.context = context
+    pipeline.worker = _Worker()
+    pipeline._repeat_retry_epoch = -1
+    pipeline._repeat_retry_attempts = 0
+    pipeline._repeat_retry_message = None
+
+    scheduled = await pipeline._retry_repeated_response(
+        "No problem, I've caught you at a bad time.", runtime.turn_epoch
+    )
+
+    assert scheduled is True
+    assert len(pipeline.worker.frames) == 1
+    assert isinstance(pipeline.worker.frames[0], LLMContextFrame)
+    assert not any(
+        message.get("role") == "assistant" and "caught you at a bad time" in message["content"]
+        for message in context.messages
+    )
+    correction = pipeline._repeat_retry_message
+    assert correction is not None
+    assert runtime.last_caller_text in correction["content"]
+
+    await pipeline._resolve_repetition_retry(runtime.turn_epoch)
+    assert correction not in context.messages
 
 
 # ------------------------------------------------ regression: silent drops

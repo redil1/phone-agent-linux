@@ -6,11 +6,13 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Any
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.frames.frames import LLMContextFrame, TTSSpeakFrame
 from pipecat.observers.loggers.metrics_log_observer import MetricsLogObserver
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -928,6 +930,13 @@ class ProductionCallPipeline:
             enable_rtvi=False,
             idle_timeout_secs=300,
         )
+        self._repeat_retry_epoch = -1
+        self._repeat_retry_attempts = 0
+        self._repeat_retry_message: dict[str, str] | None = None
+        self.response_policy.bind_repetition_recovery(
+            self._retry_repeated_response,
+            self._resolve_repetition_retry,
+        )
         self.runner: WorkerRunner | None = None
         self._runner_task: asyncio.Task | None = None
         self._started = asyncio.Event()
@@ -955,6 +964,89 @@ class ProductionCallPipeline:
                 self.transport.session.call_id,
                 frame,
             )
+
+    @staticmethod
+    def _normalized_dialogue(text: str) -> str:
+        return " ".join(
+            re.sub(r"[^\wÀ-ÿ\s]", " ", str(text).casefold(), flags=re.UNICODE).split()
+        )
+
+    @classmethod
+    def _same_dialogue(cls, left: str, right: str) -> bool:
+        a = cls._normalized_dialogue(left)
+        b = cls._normalized_dialogue(right)
+        if not a or not b:
+            return False
+        if a == b:
+            return True
+        if min(len(a), len(b)) >= 20 and (a in b or b in a):
+            return True
+        if SequenceMatcher(None, a, b).ratio() >= 0.88:
+            return True
+        a_tokens, b_tokens = set(a.split()), set(b.split())
+        if min(len(a_tokens), len(b_tokens)) < 4:
+            return False
+        return len(a_tokens & b_tokens) / max(len(a_tokens), len(b_tokens)) >= 0.85
+
+    async def _retry_repeated_response(self, rejected: str, epoch: int) -> bool:
+        """Regenerate a duplicate from clean context before any audio is spoken."""
+
+        if epoch != self.policy.turn_epoch:
+            return False
+        if epoch != self._repeat_retry_epoch:
+            self._repeat_retry_epoch = epoch
+            self._repeat_retry_attempts = 0
+        if self._repeat_retry_attempts >= 3:
+            return False
+        self._repeat_retry_attempts += 1
+
+        messages = self.context.messages
+        if self._repeat_retry_message is not None:
+            with contextlib.suppress(ValueError):
+                messages.remove(self._repeat_retry_message)
+
+        # Remove the phrase that created the loop from assistant history. The
+        # live-state block still records what the caller actually heard, while
+        # duplicate completions no longer reinforce themselves token by token.
+        messages[:] = [
+            message
+            for message in messages
+            if not (
+                isinstance(message, dict)
+                and str(message.get("role", "")).lower() == "assistant"
+                and self._same_dialogue(str(message.get("content", "")), rejected)
+            )
+        ]
+        latest = " ".join(self.policy.last_caller_text.split())[:600]
+        instruction = {
+            "role": "system",
+            "content": (
+                "# INTERNAL RESPONSE QUALITY RETRY — never mention this block aloud\n"
+                "The previous draft was blocked before the caller heard it because it repeated "
+                "an earlier AI response instead of handling the newest turn. Re-read the latest "
+                "caller transcript literally, respond to its actual meaning, and use a genuinely "
+                "different sentence and conversational move. Do not repeat, paraphrase, or defend "
+                f"the blocked draft. Latest caller transcript: {latest!r}. "
+                f"Blocked draft: {rejected[:300]!r}."
+            ),
+        }
+        messages.append(instruction)
+        self._repeat_retry_message = instruction
+        logger.warning(
+            "Regenerating blocked repeated response attempt=%d epoch=%d",
+            self._repeat_retry_attempts,
+            epoch,
+        )
+        await self.worker.queue_frame(LLMContextFrame(self.context))
+        return True
+
+    async def _resolve_repetition_retry(self, epoch: int) -> None:
+        if epoch != self._repeat_retry_epoch or self._repeat_retry_message is None:
+            return
+        with contextlib.suppress(ValueError):
+            self.context.messages.remove(self._repeat_retry_message)
+        self._repeat_retry_message = None
+        self._repeat_retry_attempts = 0
 
     async def _speak_tool_preamble(self, name: str) -> None:
         """Tell the caller something is happening before a tool runs.

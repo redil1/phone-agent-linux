@@ -53,11 +53,26 @@ _SHORT_ANSWERS = frozenset(
 
 # Caller says now is not the time. Pressing on is what a machine does.
 _NOT_NOW = (
-    r"\b(?:je conduis|au volant|en voiture|je suis occup|pas le temps|"
-    r"en r[eé]union|au travail|je travaille|rappelez|rappeler plus tard|"
-    r"plus tard|pas maintenant)\b",
-    r"\b(?:i'?m driving|i am driving|i'?m busy|i am busy|no time|in a meeting|"
-    r"at work|call me back|call back later|not now|bad time)\b",
+    r"(?:je conduis|au volant|en voiture|je suis occup(?:e|ee)?|pas le temps|"
+    r"en r[eé]union|au travail|je travaille|rappelez(?:-moi)?|"
+    r"rappeler plus tard|pas maintenant|je (?:ne )?peux pas parler|"
+    r"ce n est pas le bon moment)",
+    r"(?:i'?m driving|i am driving|i'?m busy|i am busy|i have no time|"
+    r"in a meeting|i'?m at work|call me back(?: later)?|call back later|"
+    r"not now|this is a bad time|it'?s a bad time|now is not a good time|"
+    r"this is not a good time|i can'?t talk|i cannot talk)",
+)
+
+# These constructions discuss wording or another person's possible response.
+# A substring matcher previously read "If they hesitate, offer a text call back
+# later" as the caller personally requesting a callback and poisoned the live
+# state for the rest of the call.
+_REPORTED_OR_HYPOTHETICAL = re.compile(
+    r"\b(?:something like|for example|for instance|if (?:they|he|she|someone|"
+    r"the caller|the customer)|you (?:could|should|can) say|tell (?:them|him|her)|"
+    r"ask (?:them|him|her)|offer (?:them|him|her)|say(?:ing)? that|"
+    r"par exemple|quelque chose comme|s['\u2019]il|si (?:la personne|le client|elle))\b",
+    re.IGNORECASE,
 )
 
 # "Who is this?" / "How did you get my number?"
@@ -113,6 +128,38 @@ def _matches(patterns: tuple[str, ...], normalized: str) -> bool:
     return any(re.search(pattern, normalized) for pattern in patterns)
 
 
+def is_direct_not_now(text: str) -> bool:
+    """Return true only for a caller's own, direct bad-time statement.
+
+    Bad timing is important enough to stop selling, but it is not safe to infer
+    from one phrase embedded in coaching, quotation, or a hypothetical example.
+    The accepted form is deliberately a short standalone utterance; longer
+    turns remain fully available to the language model instead of being reduced
+    to one regex label.
+    """
+
+    normalized = normalize(text)
+    if not normalized or _REPORTED_OR_HYPOTHETICAL.search(normalized):
+        return False
+    tokens = words_of(normalized)
+    if len(tokens) > 18:
+        return False
+    wrappers = (
+        r"(?:sorry|please|actually|well|look|thanks|thank you|no thanks|"
+        r"desole|désolé|bon)?"
+    )
+    suffix = (
+        r"(?:right now|at the moment|today|tomorrow|later today|this afternoon|"
+        r"this evening|now|la|là|maintenant|demain|cet apres midi|please|thanks|thank you|"
+        r"could you call (?:me )?later|can you call (?:me )?later|"
+        r"rappelez moi plus tard|merci)?"
+    )
+    return any(
+        re.fullmatch(rf"{wrappers}\s*{pattern}\s*{suffix}", normalized)
+        for pattern in _NOT_NOW
+    )
+
+
 def classify_caller_turn(
     text: str,
     *,
@@ -148,7 +195,7 @@ def classify_caller_turn(
         return TurnQuality.REPEAT_REQUEST
     if _matches(_IDENTITY_CHALLENGE, normalized):
         return TurnQuality.IDENTITY_CHALLENGE
-    if _matches(_NOT_NOW, normalized):
+    if is_direct_not_now(text):
         return TurnQuality.NOT_NOW
 
     if normalized in _SHORT_ANSWERS:

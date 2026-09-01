@@ -151,7 +151,10 @@ class ProviderConfig:
     speculative_incomplete_endpoint_ms: int = 1100
     speculative_commit_wait_ms: int = 160
     conversation_repair_enabled: bool = True
-    conversational_reflex_enabled: bool = True
+    # Generic "I see" audio before every substantial reply sounds scripted and
+    # can contradict the model's real answer. Keep it opt-in for experiments;
+    # natural silence is preferable on the production cascade.
+    conversational_reflex_enabled: bool = False
     conversational_reflex_cooldown_ms: int = 8000
     llm_provider: str = "antigravity_gemini"
     llm_model: str = "gemini-3.1-flash-lite"
@@ -344,7 +347,7 @@ class ProviderConfig:
                 "PHONE_AGENT_SPECULATIVE_COMMIT_WAIT_MS", 160, 0, 500
             ),
             conversation_repair_enabled=_env_bool("PHONE_AGENT_CONVERSATION_REPAIR", True),
-            conversational_reflex_enabled=_env_bool("PHONE_AGENT_CONVERSATIONAL_REFLEX", True),
+            conversational_reflex_enabled=_env_bool("PHONE_AGENT_CONVERSATIONAL_REFLEX", False),
             conversational_reflex_cooldown_ms=_env_int(
                 "PHONE_AGENT_CONVERSATIONAL_REFLEX_COOLDOWN_MS", 8000, 0, 60000
             ),

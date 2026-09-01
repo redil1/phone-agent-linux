@@ -20,6 +20,7 @@ _STANDALONE_CONNECTORS = frozenset(
         "but",
         "or",
         "the",
+        "it",
         "to",
         "avec",
         "car",
@@ -109,11 +110,14 @@ def looks_semantically_incomplete(text: str) -> bool:
     # which split one caller thought into multiple model turns.
     if normalized.endswith("…") or re.search(r"\.{2,}$", normalized):
         return True
+    # Recognizers routinely punctuate even a clipped fragment. Semantic
+    # incompleteness must win over that synthesized period: "The." and "It."
+    # were previously committed as complete caller turns and sent to the LLM.
+    if is_semantically_incomplete_fragment(normalized):
+        return True
     if normalized.endswith((".", "!", "?")):
         return False
     if normalized.endswith((",", ";", ":", "-", "—")):
-        return True
-    if is_semantically_incomplete_fragment(normalized):
         return True
     return bool(
         re.search(

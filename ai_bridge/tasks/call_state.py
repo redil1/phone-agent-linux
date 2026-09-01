@@ -164,7 +164,12 @@ class TaskRuntime:
 
     # ------------------------------------------------------------- observing
 
-    def observe_caller_turn(self, text: str) -> TurnActions:
+    def observe_caller_turn(
+        self,
+        text: str,
+        *,
+        excluded_slots: set[str] | frozenset[str] | None = None,
+    ) -> TurnActions:
         """Fill whatever this turn answered and report the change."""
 
         self.turns += 1
@@ -173,7 +178,10 @@ class TaskRuntime:
             return TurnActions()
 
         delta: dict[str, Any] = {}
+        excluded = excluded_slots or set()
         for slot in self.slots:
+            if slot.id in excluded:
+                continue
             if slot.id in self.state:
                 continue
             captured = slot.match(cleaned)

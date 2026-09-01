@@ -162,9 +162,10 @@ def test_human_conversation_compiles_into_the_system_prompt() -> None:
     assert "# WHEN YOU DID NOT UNDERSTAND" in prompt
     assert "# NEVER REPEAT YOURSELF" in prompt
     assert "# NEVER DO THIS" in prompt
-    assert "# CONTRAST EXAMPLES" in prompt
-    # The repair wordings must reach the model, not only the guard.
-    assert "Vous pouvez répéter" in prompt
+    assert "# CONTRAST EXAMPLES" not in prompt
+    # Principles reach the model; exact phrasebook completions do not.
+    assert "If you did not clearly understand" in prompt
+    assert "Vous pouvez répéter" not in prompt
 
 
 def test_repair_wordings_are_sourced_from_the_persona() -> None:

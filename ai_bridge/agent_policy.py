@@ -9,7 +9,8 @@ import logging
 import re
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from difflib import SequenceMatcher
 from typing import Any
 
 from pipecat.frames.frames import (
@@ -146,6 +147,7 @@ class AgentPolicyRuntime:
         )
         self._last_ai_response = ""
         self._last_ai_delivery = "none"
+        self._last_guard_rejection = ""
         self._closed = False
 
     def recompile_system_prompt(self) -> str:
@@ -181,21 +183,40 @@ class AgentPolicyRuntime:
 
     def _classify_permission(self, text: str) -> str:
         normalized = self._normalized_intent_text(text)
+        if not normalized:
+            return "unknown"
+        # Permission is a high-impact state transition, so only accept a short
+        # direct answer. Substring searches used to grant/refuse permission
+        # from quoted examples such as "say: did I catch you at a good time?".
+        if len(normalized.split()) > 18:
+            return "unknown"
         positive = (
-            r"^(?:oui|yes|okay|ok|d accord|bien sur|certainement)$",
-            r"\b(?:vas y|allez y|go ahead|please continue|continuez|je vous ecoute)\b",
-            r"\b(?:bon moment|good time)\b",
-            r"\b(?:tell me more|sounds interesting|i am interested|je suis interesse|"
-            r"je suis intéressé|dites m en plus|ca m interesse|ça m intéresse)\b",
+            r"(?:oui|yes|yeah|yep|okay|ok|d accord|bien sur|certainement)",
+            r"(?:oui|yes|okay|ok)?\s*(?:vas y|allez y|go ahead|please continue|"
+            r"continuez|je vous ecoute)",
+            r"(?:yes|yeah|oui)\s+(?:i am|i m|je suis)\s+(?:available|free|disponible)",
+            r"(?:yes|yeah|sure|okay|ok|oui)\s+(?:(?:that|it) s?\s+)?"
+            r"(?:fine|okay|ok|good|bon|bien)",
+            r"(?:yes|yeah|sure|oui)\s+(?:you can|i have (?:a )?(?:minute|moment)|"
+            r"i can talk|vous pouvez)",
+            r"(?:yes|oui)?\s*(?:this is|it is|c est)?\s*(?:a )?(?:good time|bon moment)",
+            r"(?:tell me more|sounds interesting|i am interested|je suis interesse|"
+            r"je suis intéressé|dites m en plus|ca m interesse|ça m intéresse)",
         )
         negative = (
-            r"^(?:no|non|no thank you|non merci|stop|not interested|pas interesse|pas intéressé)$",
-            r"\b(?:non merci|pas interesse|pas intéressé|ne m appelez plus|mauvais moment)\b",
-            r"\b(?:no thanks|not interested|don t call|do not call|bad time)\b",
+            r"(?:no|non|no thank you|non merci|stop|not interested|pas interesse|pas intéressé)",
+            r"(?:no thanks|non merci)?\s*(?:i am|i m|je suis)?\s*"
+            r"(?:not interested|pas interesse|pas intéressé)",
+            r"(?:no|non)\s+(?:not interested|pas interesse|pas intéressé)",
+            r"(?:please )?(?:don t call|do not call|stop calling|ne m appelez plus)"
+            r"(?: me)?(?: again)?",
+            r"(?:sorry )?(?:this is|it is|c est)?\s*(?:a )?(?:bad time|mauvais moment)",
+            r"(?:no |sorry )?(?:i can t|i cannot)\s+talk(?: right now| now)?",
+            r"(?:no |sorry )?(?:now|this)\s+is\s+not\s+(?:a )?good time",
         )
-        if any(re.search(pattern, normalized) for pattern in negative):
+        if any(re.fullmatch(pattern, normalized) for pattern in negative):
             return "refused"
-        if any(re.search(pattern, normalized) for pattern in positive):
+        if any(re.fullmatch(pattern, normalized) for pattern in positive):
             return "granted"
         return "unknown"
 
@@ -273,8 +294,8 @@ class AgentPolicyRuntime:
             f"permission_to_continue: {self._permission_state}\n"
             f"current_conversation_stage: {self._conversation_stage}\n"
             f"latest_caller_intent: {self._last_caller_intent}\n"
-            f"latest_caller_turn_quality: {self._latest_turn_quality}\n"
-            f"latest_turn_guidance: {self._latest_turn_guidance}\n"
+            f"latest_caller_turn_quality_hint: {self._latest_turn_quality}\n"
+            f"latest_turn_guidance_hint: {self._latest_turn_guidance}\n"
             f"reply_language: {'French' if self._caller_language == 'fr' else 'English'}\n"
             f"last_ai_turn_delivery: {self._last_ai_delivery}\n"
             f"last_ai_turn_text: {last_response}\n"
@@ -282,6 +303,8 @@ class AgentPolicyRuntime:
             f"uncollected_context (discover only when natural): {missing_names}\n"
             f"optional_next_topic: {next_question}\n"
             f"strategy_hint (optional): {strategy_hint}\n"
+            "Quality and stage fields are fallible hints derived from audio and simple state; "
+            "never let a hint contradict or replace the caller's actual words. "
             "Natural conversation rules: Answer direct questions, corrections, confusion, and "
             "requests to explain before pursuing the objective. If the latest words may be "
             "garbled or incomplete, do not guess and do not advance task state; ask one brief, "
@@ -407,16 +430,16 @@ class AgentPolicyRuntime:
                 "more simply and answer any clarification; do not move to a new question."
             ),
             TurnQuality.NOT_NOW: (
-                "The caller says this is a bad time. Stop selling, acknowledge that naturally, "
-                "and offer a callback only if appropriate."
+                "The caller may be directly saying this is a bad time. Verify that meaning from "
+                "their actual sentence; quoted advice or a hypothetical callback is not a request."
             ),
             TurnQuality.IDENTITY_CHALLENGE: (
                 "The caller wants to know who you are or why you called. Answer plainly and "
                 "briefly before doing anything else."
             ),
             TurnQuality.FRAGMENT: (
-                "The recognizer may have captured only part of the caller's thought. Do not "
-                "guess or advance the task; ask a brief context-aware clarification."
+                "The recognizer may have captured only part of the caller's thought. Use the "
+                "actual transcript and context; if it truly remains incomplete, clarify briefly."
             ),
             TurnQuality.UNINTELLIGIBLE: (
                 "The caller's audio was not intelligible. Do not infer meaning; ask them "
@@ -464,6 +487,12 @@ class AgentPolicyRuntime:
         if len(tokens) < 4:
             return False
         for previous in self._spoken_sentences:
+            if len(normalized) >= 20 and (
+                normalized in previous or previous in normalized
+            ):
+                return True
+            if SequenceMatcher(None, normalized, previous).ratio() >= 0.88:
+                return True
             other = set(previous.split())
             if not other:
                 continue
@@ -518,7 +547,13 @@ class AgentPolicyRuntime:
             and turn_quality is TurnQuality.ACTIONABLE
             and not (is_goodbye or is_attention_check)
         ):
-            actions = self.task.observe_caller_turn(self.last_caller_text)
+            # Permission is interpreted by the conservative direct-intent
+            # classifier below. A loose task-slot regex must never grant it
+            # merely because a long sentence contains "okay" or "good time".
+            actions = self.task.observe_caller_turn(
+                self.last_caller_text,
+                excluded_slots={"permission_to_continue"},
+            )
             if actions.changed:
                 logger.info(
                     "task state task_id=%s filled=%s stage=%s->%s",
@@ -701,19 +736,20 @@ class AgentPolicyRuntime:
         letting the model continue from text the caller never heard.
         """
 
+        self._last_guard_rejection = ""
         spoken, violations = PermissionGate.enforce_spoken_response(
             sentence,
             language=self.reply_language,
             verified_actions=set(),
         )
         spoken = self._strip_self_name_vocative(spoken)
-        # Repetition is quality telemetry, not a dialogue generator. The old
-        # implementation replaced model text with a hard-coded stage question;
-        # that replacement repeated five times on a real call and prevented the
-        # model from answering "What improvements?". The model now owns the
-        # wording and the evaluator records any failure after the fact.
+        # Never let a known duplicate reach TTS. The response processor asks
+        # the model to regenerate from the latest caller meaning; it does not
+        # substitute a canned sales-stage sentence here.
         if self._is_repeat(spoken):
-            logger.warning("Model repeated previously spoken text: %r", spoken[:80])
+            self._last_guard_rejection = "repeat"
+            logger.warning("Blocked model text repeated previously: %r", spoken[:80])
+            return "", True
         if spoken:
             spoken = normalize_for_speech(spoken, self.reply_language)
             self._remember_spoken(spoken)
@@ -723,6 +759,13 @@ class AgentPolicyRuntime:
             # repeat has to contain what they actually heard.
             self._last_ai_response = spoken
         return spoken, bool(violations)
+
+    def consume_guard_rejection(self) -> str:
+        """Return and clear the reason the latest sentence was rejected."""
+
+        reason = self._last_guard_rejection
+        self._last_guard_rejection = ""
+        return reason
 
     async def finalize_streamed_response(
         self,
@@ -974,6 +1017,19 @@ class ResponsePolicyProcessor(FrameProcessor):
         self._stopped = False
         self._response_id: str | None = None
         self._epoch = -1
+        self._rejected_repeat = ""
+        self._repeat_retry: Callable[[str, int], Awaitable[bool]] | None = None
+        self._retry_resolved: Callable[[int], Awaitable[None]] | None = None
+
+    def bind_repetition_recovery(
+        self,
+        retry: Callable[[str, int], Awaitable[bool]],
+        resolved: Callable[[int], Awaitable[None]],
+    ) -> None:
+        """Attach pipeline callbacks after its worker has been constructed."""
+
+        self._repeat_retry = retry
+        self._retry_resolved = resolved
 
     def _take_sentence(self) -> str | None:
         """Pop one complete sentence, or an early clause/bounded chunk of a reply."""
@@ -1012,12 +1068,15 @@ class ResponsePolicyProcessor(FrameProcessor):
             self._pending = ""
             return
         spoken, stop = self.runtime.guard_sentence(sentence, is_first=not self._spoken)
+        rejection = self.runtime.consume_guard_rejection()
         if spoken:
             self._spoken.append(spoken)
             await self.push_frame(LLMTextFrame(spoken), direction)
+        elif rejection == "repeat" and not self._spoken:
+            self._rejected_repeat = sentence
         if stop:
-            # Only a hard safety substitution may stop the remaining model
-            # text; conversational quality checks are observational.
+            # A hard safety substitution or a blocked duplicate stops the
+            # remaining draft. A first-sentence duplicate is regenerated.
             self._stopped = True
             self._pending = ""
 
@@ -1028,6 +1087,7 @@ class ResponsePolicyProcessor(FrameProcessor):
         self._stopped = False
         self._response_id = None
         self._epoch = -1
+        self._rejected_repeat = ""
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -1072,16 +1132,37 @@ class ResponsePolicyProcessor(FrameProcessor):
             response_id = self._response_id
             spoken_text = " ".join(self._spoken).strip()
             stale = self.runtime.is_stale(self._epoch)
+            epoch = self._epoch
+            rejected_repeat = self._rejected_repeat
             self._reset()
             if stale and response_id is not None:
                 self.runtime.discard_pending_playback(response_id)
                 await self.push_frame(frame, direction)
+                return
+            if rejected_repeat and not spoken_text:
+                if response_id is not None:
+                    self.runtime.discard_pending_playback(response_id)
+                # Close the rejected response before queuing the regenerated
+                # one so frame lifecycles cannot overlap downstream.
+                await self.push_frame(frame, direction)
+                scheduled = False
+                if self._repeat_retry is not None:
+                    try:
+                        scheduled = await self._repeat_retry(rejected_repeat, epoch)
+                    except Exception:
+                        logger.exception("Could not schedule repetition recovery")
+                if not scheduled:
+                    logger.error(
+                        "Suppressed repeated response after recovery budget exhausted"
+                    )
                 return
             if response_id is not None:
                 if spoken_text:
                     await self.runtime.finalize_streamed_response(response_id, spoken_text)
                 else:
                     self.runtime.discard_pending_playback(response_id)
+            if spoken_text and self._retry_resolved is not None:
+                await self._retry_resolved(epoch)
             await self.push_frame(frame, direction)
             return
         await self.push_frame(frame, direction)
