@@ -42,6 +42,33 @@ def test_transcription_evidence_preserves_acoustic_trust() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mutable_live_state_moves_to_the_prompt_tail_for_cache_reuse(
+    tmp_path: Any,
+) -> None:
+    runtime = AgentPolicyRuntime(
+        caller_id="anonymous",
+        task_id="iptv_subscription_sales",
+        language="en-US",
+        memory_enabled=False,
+        memory_manager=LayeredMemoryManager(storage_path=tmp_path / "memory.json"),
+    )
+    context = LLMContext()
+    stable_system = {"role": "system", "content": runtime.system_prompt}
+    context.add_message(stable_system)
+    runtime.attach_context(context)
+    context.add_message({"role": "assistant", "content": "Previously spoken answer."})
+
+    await runtime.observe_transcription("Try the full sentence and I'll listen.")
+    live_state = runtime._live_state_message
+    assert context.messages[-1] is live_state
+    context.add_message({"role": "user", "content": runtime.last_caller_text})
+
+    assert context.messages[0] is stable_system
+    assert context.messages[-2] is live_state
+    assert context.messages[-1]["role"] == "user"
+
+
+@pytest.mark.asyncio
 async def test_policy_compiles_context_evaluates_and_remembers(tmp_path: Any) -> None:
     events: list[dict[str, Any]] = []
     memory = LayeredMemoryManager(storage_path=tmp_path / "memory.json")

@@ -55,6 +55,7 @@ from .telemetry import CallTelemetry, FluxTurnTimingTracker
 from .turn_continuity import SemanticTurnGuardProcessor
 
 logger = logging.getLogger("PhoneAgentPipeline")
+MAX_REPEAT_RECOVERY_ATTEMPTS = 1
 
 LOCAL_WHISPER_PROVIDERS = frozenset(
     {
@@ -811,6 +812,10 @@ class ProductionCallPipeline:
             memory_enabled=config.memory_enabled,
             event_sink=event_sink,
         )
+        for service in (self.services.llm, self.services.tts):
+            set_latency_sink = getattr(service, "set_latency_sink", None)
+            if callable(set_latency_sink):
+                set_latency_sink(event_sink)
         self.context = LLMContext()
         self.context.add_message({"role": "system", "content": self.policy.system_prompt})
         self.policy.attach_context(self.context)
@@ -1019,7 +1024,9 @@ class ProductionCallPipeline:
         if epoch != self._repeat_retry_epoch:
             self._repeat_retry_epoch = epoch
             self._repeat_retry_attempts = 0
-        if self._repeat_retry_attempts >= 3:
+        # One corrected generation is enough. The previous three-attempt loop
+        # multiplied a sub-second model response into 3-4 seconds of silence.
+        if self._repeat_retry_attempts >= MAX_REPEAT_RECOVERY_ATTEMPTS:
             return False
         self._repeat_retry_attempts += 1
 
@@ -1053,7 +1060,19 @@ class ProductionCallPipeline:
                 f"Blocked draft: {rejected[:300]!r}."
             ),
         }
-        messages.append(instruction)
+        # Keep the actual caller turn last. PhoneLLM follows a correction placed
+        # before that turn reliably; appending a system message after the user
+        # was ignored and temperature=0 reproduced the same blocked text.
+        latest_user_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if isinstance(messages[index], dict)
+                and str(messages[index].get("role", "")).lower() == "user"
+            ),
+            len(messages),
+        )
+        messages.insert(latest_user_index, instruction)
         self._repeat_retry_message = instruction
         logger.warning(
             "Regenerating blocked repeated response attempt=%d epoch=%d",

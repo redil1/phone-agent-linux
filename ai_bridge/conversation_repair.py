@@ -42,6 +42,25 @@ _REPEAT_REQUESTS = frozenset(
     }
 )
 
+# Longer turns can ask for an exact rehearsal while also giving useful coaching.
+# They must remain ACTIONABLE so the model hears all of the feedback, but the
+# output guard must know that repeating the requested line is intentional.
+_REHEARSAL_REQUEST = re.compile(
+    r"\b(?:"
+    r"(?:try|do|give|run|take|say|read|deliver)\s+"
+    r"(?:it\s+again|that\s+again|that\s+line\s+again|the\s+(?:full|whole)\s+"
+    r"(?:sentence|line|intro(?:duction)?)|another\s+(?:take|pass)|one\s+more\s+"
+    r"(?:take|pass|time))|"
+    r"(?:want|would\s+you\s+like)\s+to\s+(?:try|do|give)\s+"
+    r"(?:another|one\s+more)\s+(?:take|pass)|"
+    r"(?:another|one\s+more)\s+(?:take|pass)|"
+    r"(?:essayez|faites|dites|r[eé]p[eé]tez)\s+"
+    r"(?:encore|une\s+autre\s+fois|la\s+phrase\s+compl[eè]te)|"
+    r"encore\s+une\s+(?:fois|prise)"
+    r")\b",
+    re.IGNORECASE,
+)
+
 # Short answers that only mean something while a question is open.
 _SHORT_ANSWERS = frozenset(
     {
@@ -158,6 +177,22 @@ def is_direct_not_now(text: str) -> bool:
         re.fullmatch(rf"{wrappers}\s*{pattern}\s*{suffix}", normalized)
         for pattern in _NOT_NOW
     )
+
+
+def caller_authorizes_repetition(text: str) -> bool:
+    """Whether repeating prior wording is the caller's current request.
+
+    This stays separate from turn classification: a coaching turn such as
+    "smooth the rhythm, then try the full sentence" contains meaning beyond a
+    bare "say that again", yet both authorize a repeated rehearsal.
+    """
+
+    normalized = normalize(text)
+    if not normalized:
+        return False
+    if normalized in _REPEAT_REQUESTS:
+        return True
+    return bool(_REHEARSAL_REQUEST.search(normalized))
 
 
 def classify_caller_turn(

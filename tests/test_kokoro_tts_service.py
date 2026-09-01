@@ -80,6 +80,8 @@ async def test_service_emits_phone_ready_audio_frames() -> None:
 
     service = PhoneAgentKokoroTTSService(voice="af_heart", sample_rate=16_000)
     service._engine = _KokoroEngine(backend=_Pipeline(), executor=_Executor(), device="cpu")
+    latency: list[dict] = []
+    service.set_latency_sink(latency.append)
 
     frames = [frame async for frame in service.run_tts("Hello from Kokoro!", "ctx-1")]
 
@@ -89,6 +91,9 @@ async def test_service_emits_phone_ready_audio_frames() -> None:
     assert audio[0].num_channels == 1
     # 0.1 s at 24 kHz becomes 0.1 s at 16 kHz, two bytes a sample.
     assert len(audio[0].audio) == pytest.approx(3200, abs=64)
+    assert latency[0]["stage"] == "tts_ttfa"
+    assert latency[0]["provider"] == "kokoro"
+    assert latency[0]["text_chars"] == len("Hello from Kokoro!")
 
 
 @pytest.mark.asyncio

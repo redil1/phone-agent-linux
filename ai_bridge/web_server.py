@@ -337,6 +337,7 @@ class PhoneAgentWebServer:
         # environment. If they change during a call, keep that call alive and
         # replace the host as soon as it finishes.
         self._restart_voice_host_after_call = False
+        self._cleanup_ollama_after_call = False
         self._resident_host_environment_signature: tuple[tuple[str, str], ...] | None = None
         self._resident_host_ready = False
         self._resident_host_reported_config: dict[str, Any] = {}
@@ -1909,6 +1910,7 @@ class PhoneAgentWebServer:
             logger.warning("GPU Model Preloader warning: %s", exc)
 
     async def handle_post_config(self, request: web.Request) -> web.Response:
+        old_config = self.config
         old_host_environment = self._child_environment(
             auto_answer=self.auto_answer_enabled,
             call_channel="gsm",
@@ -1978,6 +1980,12 @@ class PhoneAgentWebServer:
             command_stdin=True,
         )
         voice_host_changed = old_host_environment != new_host_environment
+        ollama_selection_changed = (
+            old_config.llm_provider == "ollama" or candidate.llm_provider == "ollama"
+        ) and (
+            candidate.llm_provider != old_config.llm_provider
+            or candidate.llm_model != old_config.llm_model
+        )
         try:
             await asyncio.to_thread(self._persist_settings)
         except OSError as exc:
@@ -1991,9 +1999,16 @@ class PhoneAgentWebServer:
             # call; replace its host immediately afterwards instead.
             if self.call_state == "IDLE" and not self._warm_call_active:
                 await self._stop_inbound_monitor()
+                await self._release_inactive_ollama_models(
+                    force=ollama_selection_changed,
+                    reload_selected=ollama_selection_changed,
+                )
                 await self._start_inbound_monitor()
             else:
                 self._restart_voice_host_after_call = True
+                self._cleanup_ollama_after_call = (
+                    self._cleanup_ollama_after_call or ollama_selection_changed
+                )
         return web.json_response(
             {
                 "status": "ok",
@@ -3336,7 +3351,52 @@ class PhoneAgentWebServer:
         if self._restart_voice_host_after_call:
             self._restart_voice_host_after_call = False
             await self._stop_inbound_monitor()
+            await self._release_inactive_ollama_models(
+                force=self._cleanup_ollama_after_call,
+                reload_selected=self._cleanup_ollama_after_call,
+            )
+            self._cleanup_ollama_after_call = False
         await self._start_inbound_monitor()
+
+    async def _release_inactive_ollama_models(
+        self,
+        *,
+        force: bool = False,
+        reload_selected: bool = False,
+    ) -> tuple[str, ...]:
+        """Keep only the Studio-selected Ollama model resident in memory."""
+
+        if self.call_state != "IDLE" or self._warm_call_active:
+            return ()
+        if self.config.llm_provider != "ollama" and not force:
+            return ()
+        keep_model = (
+            self.config.llm_model
+            if self.config.llm_provider == "ollama" and not reload_selected
+            else None
+        )
+        try:
+            from .ollama_native import unload_inactive_ollama_models
+
+            unloaded = await unload_inactive_ollama_models(
+                base_url=self.config.ollama_base_url,
+                keep_model=keep_model,
+            )
+        except Exception as exc:
+            # Ollama may legitimately be disabled for a cloud-only setup. Do
+            # not prevent the voice host from starting in that configuration.
+            logger.info("Ollama residency cleanup skipped: %s", exc)
+            return ()
+        if unloaded:
+            logger.info("Unloaded inactive Ollama models: %s", ", ".join(unloaded))
+            await self.broadcast(
+                {
+                    "type": "gpu_models_released",
+                    "models": list(unloaded),
+                    "active_model": keep_model,
+                }
+            )
+        return unloaded
 
     def _note_warm_call_state(self, state: str) -> None:
         """Track a resident host's call through to its end."""
@@ -4039,6 +4099,10 @@ class PhoneAgentWebServer:
 
     async def _on_startup(self, app: web.Application) -> None:
         await self._start_remote_link()
+        # Reloading the selected model is intentional on process startup: model
+        # runner options such as num_ctx are fixed at load time, so merely
+        # keeping a prior runner would preserve the obsolete 65k allocation.
+        await self._release_inactive_ollama_models(reload_selected=True)
         await self._start_inbound_monitor()
         self._spawn_background_task(self._campaign_autopilot_loop())
         self._spawn_background_task(self._prewarm_gpu_models_task())

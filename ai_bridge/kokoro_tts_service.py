@@ -9,9 +9,11 @@ for the PhoneAgent telephony bridge.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import threading
-from collections.abc import AsyncGenerator
+import time
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,6 +38,7 @@ except ImportError:
         return value if value is not None else ""
 
 logger = logging.getLogger("KokoroTTS")
+LatencySink = Callable[[dict[str, Any]], Awaitable[None] | None]
 
 # Kokoro renders at 24 kHz; the phone link takes 16 kHz mono PCM16.
 KOKORO_SAMPLE_RATE = 24_000
@@ -237,6 +240,7 @@ class PhoneAgentKokoroTTSService(TTSService):
         settings = self.Settings(
             model=model,
             voice=resolved_voice,
+            language=None,
             lang=lang,
             speed=speed,
             device=device,
@@ -252,6 +256,20 @@ class PhoneAgentKokoroTTSService(TTSService):
         self._model = model
         self._device = device
         self._engine: _KokoroEngine | None = None
+        self._latency_sink: LatencySink | None = None
+
+    def set_latency_sink(self, sink: LatencySink | None) -> None:
+        self._latency_sink = sink
+
+    async def _emit_latency(self, event: dict[str, Any]) -> None:
+        if self._latency_sink is None:
+            return
+        try:
+            result = self._latency_sink(event)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.debug("could not publish Kokoro latency metric", exc_info=True)
 
     def _ensure_loaded(self) -> _KokoroEngine:
         if self._engine is None:
@@ -266,6 +284,7 @@ class PhoneAgentKokoroTTSService(TTSService):
         phrase = text.strip()
         if not phrase:
             return
+        started = time.perf_counter()
 
         lang_str = getattr(self._settings, "lang", "en-US") or "en-US"
         voice = _resolve_voice(assert_given(self._settings.voice) or DEFAULT_VOICE, lang_str)
@@ -300,6 +319,19 @@ class PhoneAgentKokoroTTSService(TTSService):
                 if kind == "chunk":
                     if first:
                         await self.stop_ttfb_metrics()
+                        await self._emit_latency(
+                            {
+                                "type": "latency_metric",
+                                "stage": "tts_ttfa",
+                                "provider": "kokoro",
+                                "model": self._model,
+                                "milliseconds": round(
+                                    (time.perf_counter() - started) * 1000,
+                                    1,
+                                ),
+                                "text_chars": len(phrase),
+                            }
+                        )
                         first = False
                     yield TTSAudioRawFrame(
                         audio=data,

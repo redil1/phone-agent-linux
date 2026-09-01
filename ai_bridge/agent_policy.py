@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
@@ -27,7 +28,12 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from .call_context import CallContextPolicy
-from .conversation_repair import RepairPolicy, TurnQuality, classify_caller_turn
+from .conversation_repair import (
+    RepairPolicy,
+    TurnQuality,
+    caller_authorizes_repetition,
+    classify_caller_turn,
+)
 from .guardrails.permission_gate import PermissionGate
 from .guardrails.personality_judge import PersonalityFidelityJudge, TurnEvaluationResult
 from .human_speech import (
@@ -148,6 +154,7 @@ class AgentPolicyRuntime:
         self._last_ai_response = ""
         self._last_ai_delivery = "none"
         self._last_guard_rejection = ""
+        self._repeat_authorized_epoch = -1
         self._closed = False
 
     def recompile_system_prompt(self) -> str:
@@ -318,6 +325,15 @@ class AgentPolicyRuntime:
         if self._live_state_message is None:
             return
         self._live_state_message["content"] = self.live_state_instructions()
+        # Keep changing state immediately before the newest caller turn instead
+        # of permanently at message index 1. Ollama can now reuse the stable
+        # persona and dialogue prefix; only this small state block and the new
+        # turn require prefill as a call grows.
+        messages = getattr(self._live_context, "messages", None)
+        if isinstance(messages, list):
+            with contextlib.suppress(ValueError):
+                messages.remove(self._live_state_message)
+            messages.append(self._live_state_message)
 
     def classify_turn(self, text: str) -> TurnQuality:
         """Decide whether this turn carries something to answer at all."""
@@ -476,6 +492,9 @@ class AgentPolicyRuntime:
     def _is_repeat(self, sentence: str) -> bool:
         """True when this sentence was already spoken in this call."""
 
+        if self._repeat_authorized_epoch == self._turn_epoch:
+            return False
+
         normalized = " ".join(
             re.sub(r"[^\wÀ-ÿ\s]", " ", sentence.casefold(), flags=re.UNICODE).split()
         )
@@ -527,6 +546,11 @@ class AgentPolicyRuntime:
     ) -> None:
         self._turn_epoch += 1
         self.last_caller_text = text.strip()
+        self._repeat_authorized_epoch = (
+            self._turn_epoch
+            if trusted_for_task and caller_authorizes_repetition(self.last_caller_text)
+            else -1
+        )
         self.last_caller_transcript_trusted = trusted_for_task
         self.last_caller_transcription_confidence = transcription_confidence
         self.recent_caller_turns.append((self.last_caller_text, trusted_for_task))
@@ -1019,7 +1043,6 @@ class TranscriptionPolicyProcessor(FrameProcessor):
 # special-cased: releasing one clause early is cheap, and the run-on guard below
 # bounds the damage if a model never punctuates.
 _SENTENCE_BOUNDARY = re.compile(r"[^.!?…]*[.!?…]+(?:\s+|$)", re.UNICODE)
-_EARLY_CLAUSE_BOUNDARY = re.compile(r"^([^,;:\n]{12,60}[,;:])(?:\s+|$)", re.UNICODE)
 _RUN_ON_CHARS = 160
 
 
@@ -1067,13 +1090,21 @@ class ResponsePolicyProcessor(FrameProcessor):
             self._pending = self._pending[len(sentence) :]
             return sentence.strip()
 
-        # If the sentence is not ready, allow an early clause for the first chunk.
+        # If the sentence is not ready, allow an early clause for the first
+        # chunk. Ignore a very short first comma ("I'm Adam,") and use the next
+        # natural boundary instead; the old anchored regex then buffered the
+        # entire introduction and serialized LLM generation with Kokoro.
         if not self._spoken:
-            clause_match = _EARLY_CLAUSE_BOUNDARY.match(self._pending)
-            if clause_match and clause_match.group(1).strip():
-                clause = clause_match.group(1)
-                self._pending = self._pending[len(clause) :].lstrip()
-                return clause.strip()
+            for boundary in re.finditer(r"[,;:]", self._pending):
+                end = boundary.end()
+                if end < 20:
+                    continue
+                if end > 72:
+                    break
+                if end == len(self._pending) or self._pending[end].isspace():
+                    clause = self._pending[:end]
+                    self._pending = self._pending[end:].lstrip()
+                    return clause.strip()
 
         if len(self._pending) >= _RUN_ON_CHARS:
             cut = self._pending.rfind(" ", 0, _RUN_ON_CHARS)
@@ -1099,11 +1130,21 @@ class ResponsePolicyProcessor(FrameProcessor):
         if spoken:
             self._spoken.append(spoken)
             await self.push_frame(LLMTextFrame(spoken), direction)
-        elif rejection == "repeat" and not self._spoken:
+        elif rejection == "repeat" and not self._spoken and not self._rejected_repeat:
+            # Remember the duplicate in case the *whole* draft contains
+            # nothing new.  Do not abandon the stream yet: smaller local
+            # models often prefix a useful answer with one stale sentence.
+            # Dropping only that sentence preserves the useful continuation
+            # and avoids paying for another generation.
             self._rejected_repeat = sentence
         if stop:
-            # A hard safety substitution or a blocked duplicate stops the
-            # remaining draft. A first-sentence duplicate is regenerated.
+            # Permission failures must abandon the remaining draft because it
+            # may depend on wording the caller never heard.  Repetition is
+            # different: skip that sentence and inspect later sentences for
+            # genuinely new content.  If none exists, end-of-response recovery
+            # schedules one clean regeneration.
+            if rejection == "repeat":
+                return
             self._stopped = True
             self._pending = ""
 

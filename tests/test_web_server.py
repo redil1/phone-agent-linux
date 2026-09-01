@@ -804,6 +804,106 @@ def test_studio_provider_selection_sets_matching_stt_model(tmp_path: Path) -> No
     asyncio.run(_test())
 
 
+def test_ollama_model_switch_releases_stale_runners_before_rewarming(
+    tmp_path: Path,
+) -> None:
+    async def _test() -> None:
+        config = ProviderConfig(
+            stt_provider="antigravity_live",
+            llm_provider="ollama",
+            llm_model="phi4:latest",
+            tts_provider="edge_tts",
+            tts_voice_id="en-US-AndrewMultilingualNeural",
+            stt_language="en-US",
+        )
+        server = PhoneAgentWebServer(config=config)
+        server.settings_path = tmp_path / "studio.json"
+        actions: list[object] = []
+
+        async def start() -> None:
+            actions.append("start")
+
+        async def stop() -> None:
+            actions.append("stop")
+
+        async def release(*, force: bool = False, reload_selected: bool = False):
+            actions.append(("release", force, reload_selected, server.config.llm_model))
+            return ("phi4:latest",)
+
+        server._start_inbound_monitor = start  # type: ignore[method-assign]
+        server._stop_inbound_monitor = stop  # type: ignore[method-assign]
+        server._release_inactive_ollama_models = release  # type: ignore[method-assign]
+        async with TestClient(TestServer(server.app)) as client:
+            actions.clear()
+            response = await client.post(
+                "/api/config",
+                json={
+                    "llm_provider": "ollama",
+                    "llm_model": "hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M",
+                },
+            )
+            assert response.status == 200
+            assert actions == [
+                "stop",
+                (
+                    "release",
+                    True,
+                    True,
+                    "hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M",
+                ),
+                "start",
+            ]
+
+    asyncio.run(_test())
+
+
+def test_switching_from_cloud_to_ollama_reloads_a_preexisting_runner(
+    tmp_path: Path,
+) -> None:
+    async def _test() -> None:
+        config = ProviderConfig(
+            stt_provider="antigravity_live",
+            llm_provider="antigravity_gemini",
+            llm_model="gemini-2.5-flash",
+            tts_provider="edge_tts",
+            tts_voice_id="en-US-AndrewMultilingualNeural",
+            stt_language="en-US",
+        )
+        server = PhoneAgentWebServer(config=config)
+        server.settings_path = tmp_path / "studio.json"
+        releases: list[tuple[bool, bool, str]] = []
+
+        async def no_op() -> None:
+            return None
+
+        async def release(*, force: bool = False, reload_selected: bool = False):
+            releases.append((force, reload_selected, server.config.llm_model))
+            return ()
+
+        server._start_inbound_monitor = no_op  # type: ignore[method-assign]
+        server._stop_inbound_monitor = no_op  # type: ignore[method-assign]
+        server._release_inactive_ollama_models = release  # type: ignore[method-assign]
+        async with TestClient(TestServer(server.app)) as client:
+            releases.clear()
+            response = await client.post(
+                "/api/config",
+                json={
+                    "llm_provider": "ollama",
+                    "llm_model": "hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M",
+                },
+            )
+            assert response.status == 200
+            assert releases == [
+                (
+                    True,
+                    True,
+                    "hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M",
+                )
+            ]
+
+    asyncio.run(_test())
+
+
 def test_provider_change_during_call_defers_voice_host_restart(tmp_path: Path) -> None:
     async def _test() -> None:
         server = _studio()

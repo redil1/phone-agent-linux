@@ -22,6 +22,7 @@ from phone_agent_gateway.ai_bridge.ollama_native import (
     OllamaPrewarmResult,
     OllamaStreamEvent,
     normalize_ollama_base_url,
+    unload_inactive_ollama_models,
 )
 
 
@@ -232,7 +233,14 @@ class FakeOllamaClient:
     async def stream_chat(self, **kwargs: Any) -> AsyncIterator[OllamaStreamEvent]:
         self.stream_arguments = kwargs
         yield OllamaStreamEvent(content="Hello")
-        yield OllamaStreamEvent(done=True, prompt_tokens=5, completion_tokens=1)
+        yield OllamaStreamEvent(
+            done=True,
+            prompt_tokens=5,
+            completion_tokens=1,
+            prompt_eval_ms=12.5,
+            eval_ms=8.0,
+            total_ms=25.0,
+        )
 
     async def cancel_active(self) -> None:
         self.cancelled = True
@@ -266,6 +274,8 @@ async def test_real_pipecat_worker_streams_native_ollama_text() -> None:
         keep_alive="-1",
         num_ctx=8192,
     )
+    latency_events: list[dict[str, Any]] = []
+    service.set_latency_sink(latency_events.append)
     sink = TextSink()
     worker = PipelineWorker(
         Pipeline([service, sink]),
@@ -301,6 +311,15 @@ async def test_real_pipecat_worker_streams_native_ollama_text() -> None:
         assert client.stream_arguments["think"] is False
         assert client.stream_arguments["keep_alive"] == "-1"
         assert client.stream_arguments["options"] == client.prewarm_options
+        assert [event["stage"] for event in latency_events] == [
+            "llm_started",
+            "llm_ttft",
+            "llm_completed",
+        ]
+        completed = latency_events[-1]
+        assert completed["prompt_eval_ms"] == 12.5
+        assert completed["decode_ms"] == 8.0
+        assert completed["prompt_tokens"] == 5
     finally:
         await worker.stop_when_done()
         await asyncio.wait_for(runner_task, timeout=3.0)
@@ -399,19 +418,62 @@ def test_a_model_documenting_required_settings_gets_them_over_the_defaults() -> 
     # Matched on the name, including a full Ollama/HuggingFace repo path.
     assert required_model_options("hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M") == {
         "temperature": 0.0,
-        "num_ctx": 65536,
     }
     assert required_model_options("phonellm-alpha-1") == {
         "temperature": 0.0,
-        "num_ctx": 65536,
     }
     assert required_model_options("phi4:latest") == {}
 
     phonellm = OllamaNativeLLMService(
-        model="hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M", temperature=0.7
+        model="hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M",
+        temperature=0.7,
+        num_ctx=8192,
     )
     assert phonellm._options()["temperature"] == 0.0
-    assert phonellm._options()["num_ctx"] == 65536
+    assert phonellm._options()["num_ctx"] == 8192
 
     other = OllamaNativeLLMService(model="phi4:latest", temperature=0.7)
     assert other._options()["temperature"] == 0.7
+
+
+@pytest.mark.asyncio
+async def test_residency_cleanup_unloads_every_model_except_the_selected_one() -> None:
+    unloaded: list[str] = []
+    app = web.Application()
+
+    async def running(_request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "models": [
+                    {"name": "phone-model"},
+                    {"name": "phi4:latest"},
+                    {"name": "old-model"},
+                ]
+            }
+        )
+
+    async def unload(request: web.Request) -> web.Response:
+        payload = await request.json()
+        assert payload["keep_alive"] == 0
+        assert payload["stream"] is False
+        unloaded.append(payload["model"])
+        return web.json_response({"done": True})
+
+    app.router.add_get("/api/ps", running)
+    app.router.add_post("/api/generate", unload)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    assert site._server is not None
+    port = site._server.sockets[0].getsockname()[1]
+    try:
+        result = await unload_inactive_ollama_models(
+            base_url=f"http://127.0.0.1:{port}",
+            keep_model="phone-model",
+        )
+    finally:
+        await runner.cleanup()
+
+    assert result == ("phi4:latest", "old-model")
+    assert unloaded == ["phi4:latest", "old-model"]

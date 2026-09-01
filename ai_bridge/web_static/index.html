@@ -1927,6 +1927,9 @@
     let callTimerInterval = null;
     let callStartTime = null;
     let configuredEdgeVoice = 'en-US-AndrewMultilingualNeural';
+    let pendingLlmLatency = null;
+    let pendingTtsLatency = null;
+    let awaitingAssistantTranscript = false;
 
     // Canvas audio visualizer
     const canvas = document.getElementById('waveform');
@@ -2062,11 +2065,27 @@
         frappeStatus(`Campaign autopilot paused this iteration: ${msg.message}`, true);
       } else if (String(msg.type || '').startsWith('identity_')) {
         loadIdentity();
+      } else if (msg.type === 'latency_metric') {
+        if (msg.stage === 'llm_started') {
+          pendingLlmLatency = null;
+          pendingTtsLatency = null;
+          awaitingAssistantTranscript = true;
+        } else if (msg.stage === 'llm_completed') {
+          pendingLlmLatency = msg;
+        } else if (msg.stage === 'tts_ttfa') {
+          if (awaitingAssistantTranscript) pendingTtsLatency = msg;
+          else updateLatestTtsLatency(msg);
+        }
+      } else if (msg.type === 'gpu_models_released') {
+        appendNotice(`Released inactive GPU model(s): ${(msg.models || []).join(', ')}`);
       } else if (msg.type === 'transcript') {
+        const transcriptMetrics = msg.role === 'user'
+          ? msg.metrics
+          : {...(msg.metrics || {}), ...(pendingLlmLatency || {})};
         appendTranscript(
           msg.role,
           msg.text,
-          msg.metrics,
+          transcriptMetrics,
           msg.response_id,
           msg.response_kind,
           {
@@ -2075,6 +2094,12 @@
             lowConfidence: msg.transcription_low_confidence,
           },
         );
+        if (msg.role !== 'user') {
+          pendingLlmLatency = null;
+          awaitingAssistantTranscript = false;
+          if (pendingTtsLatency) updateLatestTtsLatency(pendingTtsLatency);
+          pendingTtsLatency = null;
+        }
       } else if (msg.type === 'playback_status') {
         updatePlaybackStatus(msg.response_id, msg.status, msg.message);
       } else if (msg.type === 'evaluation') {
@@ -2212,9 +2237,18 @@
       if (metrics) {
         const metricLine = document.createElement('div');
         metricLine.className = 'msg-metrics';
-        metricLine.textContent = responseKind === 'greeting'
-          ? `Opening greeting • Fidelity: ${metrics.fidelity || 0}%`
-          : `Turn: ${metrics.turn_latency_ms || 0}ms • Fidelity: ${metrics.fidelity || 0}%`;
+        if (responseKind === 'greeting') {
+          metricLine.textContent = `Opening greeting • Fidelity: ${metrics.fidelity || 0}%`;
+        } else {
+          const details = [
+            `Response: ${metrics.turn_latency_ms || 0}ms`,
+            `Fidelity: ${metrics.fidelity || 0}%`,
+          ];
+          if (Number.isFinite(metrics.ttft_ms)) details.push(`LLM first token: ${metrics.ttft_ms}ms`);
+          if (Number.isFinite(metrics.wall_ms)) details.push(`LLM total: ${metrics.wall_ms}ms`);
+          if (Number.isFinite(metrics.prompt_eval_ms)) details.push(`prefill: ${metrics.prompt_eval_ms}ms`);
+          metricLine.textContent = details.join(' • ');
+        }
         bubble.appendChild(metricLine);
       }
       if (role === 'user' && transcription &&
@@ -2243,6 +2277,16 @@
 
       stream.appendChild(bubble);
       stream.scrollTop = stream.scrollHeight;
+    }
+
+    function updateLatestTtsLatency(metric) {
+      const bubbles = document.querySelectorAll('.msg-bubble.ai');
+      const bubble = bubbles.length ? bubbles[bubbles.length - 1] : null;
+      if (!bubble || bubble.dataset.ttsLatencyShown === 'true') return;
+      const metricLine = bubble.querySelector('.msg-metrics');
+      if (!metricLine || !Number.isFinite(metric.milliseconds)) return;
+      metricLine.textContent += ` • TTS first audio: ${metric.milliseconds}ms`;
+      bubble.dataset.ttsLatencyShown = 'true';
     }
 
     function updatePlaybackStatus(responseId, status, message) {

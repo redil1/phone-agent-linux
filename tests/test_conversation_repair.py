@@ -19,6 +19,7 @@ from phone_agent_gateway.ai_bridge.agent_policy import AgentPolicyRuntime
 from phone_agent_gateway.ai_bridge.conversation_repair import (
     RepairPolicy,
     TurnQuality,
+    caller_authorizes_repetition,
     classify_caller_turn,
     looks_like_noise,
 )
@@ -75,6 +76,24 @@ def test_noise_detection_accepts_real_speech() -> None:
     assert looks_like_noise("   ") is True
     assert looks_like_noise("Je voudrais un abonnement") is False
     assert looks_like_noise("I want the sports package") is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Want to try another take?",
+        "Try the full sentence and I'll just listen.",
+        "Take that line again, but keep it grounded.",
+        "Yes, smooth and clear. Want to do one more pass?",
+        "Essayez encore la phrase complète.",
+    ],
+)
+def test_rehearsal_language_authorizes_intentional_repetition(text: str) -> None:
+    assert caller_authorizes_repetition(text) is True
+
+
+def test_unrelated_coaching_does_not_disable_duplicate_protection() -> None:
+    assert caller_authorizes_repetition("Keep the next answer calm and concise.") is False
 
 
 def test_reported_callback_advice_is_not_the_callers_callback_intent() -> None:
@@ -176,6 +195,25 @@ def test_an_already_spoken_sentence_is_blocked_before_tts(tmp_path: Any) -> None
     assert repeated == ""
     assert stop_again is True
     assert runtime.consume_guard_rejection() == "repeat"
+
+
+@pytest.mark.asyncio
+async def test_exact_last_call_rehearsal_can_repeat_the_requested_intro(
+    tmp_path: Any,
+) -> None:
+    runtime = _runtime(tmp_path)
+    intro = "I'm Adam, sales manager at OXzoon, and I'm calling about our IPTV subscription."
+    first, stopped = runtime.guard_sentence(intro, is_first=True)
+    assert first and stopped is False
+
+    await runtime.observe_transcription(
+        "Yes, smooth and clear. Want to do one more pass?"
+    )
+    repeated, stopped = runtime.guard_sentence(intro, is_first=True)
+
+    assert repeated.startswith("I'm Adam, sales manager at OXzoon")
+    assert "I P T V subscription" in repeated
+    assert stopped is False
 
 
 def test_a_mid_turn_repeat_is_dropped_without_a_canned_replacement(tmp_path: Any) -> None:
@@ -658,6 +696,50 @@ def test_streamed_duplicate_is_regenerated_before_any_tts(tmp_path: Any) -> None
     assert resolved == [runtime.turn_epoch]
 
 
+def test_duplicate_lead_in_is_dropped_but_new_answer_is_spoken(tmp_path: Any) -> None:
+    import asyncio as _asyncio
+
+    from pipecat.frames.frames import (
+        LLMFullResponseEndFrame,
+        LLMFullResponseStartFrame,
+        LLMTextFrame,
+    )
+
+    from phone_agent_gateway.ai_bridge.agent_policy import ResponsePolicyProcessor
+
+    runtime = _runtime(tmp_path)
+    runtime.guard_sentence("Thanks for explaining that.", is_first=True)
+    processor = ResponsePolicyProcessor(runtime)
+    spoken: list[str] = []
+    retries: list[str] = []
+
+    async def capture(frame: Any, direction: Any = None) -> None:
+        if isinstance(frame, LLMTextFrame):
+            spoken.append(frame.text)
+
+    async def retry(text: str, epoch: int) -> bool:
+        retries.append(text)
+        return True
+
+    processor.push_frame = capture  # type: ignore[method-assign]
+    processor.bind_repetition_recovery(retry, lambda _epoch: _asyncio.sleep(0))
+
+    async def scenario() -> None:
+        await processor.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(
+            LLMTextFrame(
+                "Thanks for explaining that. I can send the details by text instead."
+            ),
+            FrameDirection.DOWNSTREAM,
+        )
+        await processor.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+
+    _asyncio.run(scenario())
+
+    assert spoken == ["I can send the details by text instead."]
+    assert retries == []
+
+
 @pytest.mark.asyncio
 async def test_pipeline_retry_decontaminates_context_and_targets_latest_turn(
     tmp_path: Any,
@@ -708,9 +790,34 @@ async def test_pipeline_retry_decontaminates_context_and_targets_latest_turn(
     correction = pipeline._repeat_retry_message
     assert correction is not None
     assert runtime.last_caller_text in correction["content"]
+    correction_index = context.messages.index(correction)
+    latest_user_index = max(
+        index
+        for index, message in enumerate(context.messages)
+        if message.get("role") == "user"
+    )
+    assert correction_index == latest_user_index - 1
+
+    # One correction is the whole latency budget. A deterministic model that
+    # ignores it must not trigger three more full generations.
+    assert await pipeline._retry_repeated_response(
+        "No problem, I've caught you at a bad time.", runtime.turn_epoch
+    ) is False
 
     await pipeline._resolve_repetition_retry(runtime.turn_epoch)
     assert correction not in context.messages
+
+
+def test_long_intro_streams_at_second_natural_comma(tmp_path: Any) -> None:
+    from phone_agent_gateway.ai_bridge.agent_policy import ResponsePolicyProcessor
+
+    processor = ResponsePolicyProcessor(_runtime(tmp_path))
+    # This is the buffer state while tokens are still arriving, before the
+    # sentence-final punctuation exists.
+    processor._pending = "I'm Adam, sales manager at OXzoon, and I'm calling"
+
+    assert processor._take_sentence() == "I'm Adam, sales manager at OXzoon,"
+    assert processor._pending.startswith("and I'm calling")
 
 
 # ------------------------------------------------ regression: silent drops

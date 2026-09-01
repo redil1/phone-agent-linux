@@ -9,9 +9,10 @@ text reaches TTS as soon as it is generated.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -36,6 +37,7 @@ logger = logging.getLogger("PhoneAgentOllamaNative")
 
 MAX_ERROR_BYTES = 8_192
 MAX_STREAM_LINE_BYTES = 1_048_576
+LatencySink = Callable[[dict[str, Any]], Awaitable[None] | None]
 
 
 class OllamaNativeError(RuntimeError):
@@ -50,6 +52,10 @@ class OllamaStreamEvent:
     done: bool = False
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    load_ms: float = 0.0
+    prompt_eval_ms: float = 0.0
+    eval_ms: float = 0.0
+    total_ms: float = 0.0
     # Ollama returns structured calls rather than text. They are normalized into
     # the cascade's tool block downstream so one processor serves every model.
     tool_calls: tuple[dict[str, Any], ...] = ()
@@ -98,7 +104,11 @@ def ollama_keep_alive_value(value: str) -> str | int:
 # 0.7 gave a TTFT p50 of 2782 ms with spikes past 3 s; temperature 0 gave 235 ms.
 # Thinking is already disabled by default for every Ollama model here.
 REQUIRED_MODEL_OPTIONS: dict[str, dict[str, Any]] = {
-    "phonellm-alpha-1": {"temperature": 0.0, "num_ctx": 65536},
+    # PhoneLLM documents deterministic sampling and no thinking. Its 65k
+    # maximum context is a capability, not a required allocation; forcing it
+    # ignored the operator's num_ctx setting and consumed scarce VRAM alongside
+    # Whisper and Kokoro.
+    "phonellm-alpha-1": {"temperature": 0.0},
 }
 
 
@@ -197,6 +207,36 @@ class OllamaNativeClient:
             done_reason=str(body.get("done_reason") or ""),
         )
 
+    async def list_running_models(self) -> tuple[str, ...]:
+        """Return models currently holding Ollama CPU/GPU memory."""
+
+        await self.start()
+        session = self._require_session()
+        async with session.get(f"{self.base_url}/api/ps") as response:
+            body = await self._read_json_response(response)
+        models = body.get("models") or []
+        if not isinstance(models, list):
+            raise OllamaNativeError("Ollama /api/ps returned an invalid model list")
+        return tuple(
+            name
+            for item in models
+            if isinstance(item, dict)
+            and (name := str(item.get("name") or item.get("model") or "").strip())
+        )
+
+    async def unload(self, model: str) -> None:
+        """Release one resident model through Ollama's keep_alive=0 contract."""
+
+        name = str(model or "").strip()
+        if not name:
+            return
+        await self.start()
+        session = self._require_session()
+        payload = {"model": name, "stream": False, "keep_alive": 0}
+        async with self._request_lock:
+            async with session.post(f"{self.base_url}/api/generate", json=payload) as response:
+                await self._read_json_response(response)
+
     async def stream_chat(
         self,
         *,
@@ -267,6 +307,12 @@ class OllamaNativeClient:
                         done=done,
                         prompt_tokens=int(event.get("prompt_eval_count") or 0),
                         completion_tokens=int(event.get("eval_count") or 0),
+                        load_ms=float(event.get("load_duration") or 0) / 1_000_000,
+                        prompt_eval_ms=(
+                            float(event.get("prompt_eval_duration") or 0) / 1_000_000
+                        ),
+                        eval_ms=float(event.get("eval_duration") or 0) / 1_000_000,
+                        total_ms=float(event.get("total_duration") or 0) / 1_000_000,
                         tool_calls=tuple(message.get("tool_calls") or ()),
                     )
                 if not completed:
@@ -319,6 +365,28 @@ class OllamaNativeClient:
         raw = await response.content.read(MAX_ERROR_BYTES)
         detail = raw.decode(errors="replace").strip()[:2000]
         raise OllamaNativeError(f"Ollama HTTP {response.status}: {detail or 'no detail'}")
+
+
+async def unload_inactive_ollama_models(
+    *,
+    base_url: str,
+    keep_model: str | None,
+) -> tuple[str, ...]:
+    """Unload every resident Ollama model except the selected active model."""
+
+    client = OllamaNativeClient(base_url=base_url, turn_timeout_secs=15.0)
+    unloaded: list[str] = []
+    try:
+        running = await client.list_running_models()
+        keep = str(keep_model or "").strip()
+        for model in running:
+            if keep and model == keep:
+                continue
+            await client.unload(model)
+            unloaded.append(model)
+    finally:
+        await client.close()
+    return tuple(unloaded)
 
 
 def _render_tool_call(call: dict[str, Any]) -> str:
@@ -390,9 +458,24 @@ class OllamaNativeLLMService(LLMService):
         self._think = think
         self._keep_alive = keep_alive
         self._prewarm_on_start = prewarm_on_start
+        self._latency_sink: LatencySink | None = None
+        self._generation_sequence = 0
         # Populated per call from the cascade tool catalog. Empty means this
         # model is asked nothing about tools, exactly as before.
         self._tool_definitions: list[dict[str, Any]] = []
+
+    def set_latency_sink(self, sink: LatencySink | None) -> None:
+        self._latency_sink = sink
+
+    async def _emit_latency(self, event: dict[str, Any]) -> None:
+        if self._latency_sink is None:
+            return
+        try:
+            result = self._latency_sink(event)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.debug("could not publish Ollama latency metric", exc_info=True)
 
     async def start(self, frame: StartFrame) -> None:
         await super().start(frame)
@@ -444,6 +527,21 @@ class OllamaNativeLLMService(LLMService):
             await self.push_frame(frame, direction)
             return
 
+        self._generation_sequence += 1
+        generation = self._generation_sequence
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        ttft_ms: float | None = None
+        completed_event: OllamaStreamEvent | None = None
+        await self._emit_latency(
+            {
+                "type": "latency_metric",
+                "stage": "llm_started",
+                "provider": "ollama",
+                "model": str(self._settings.model),
+                "generation": generation,
+            }
+        )
         await self.push_frame(LLMFullResponseStartFrame())
         await self.start_processing_metrics()
         await self.start_ttfb_metrics()
@@ -453,6 +551,17 @@ class OllamaNativeLLMService(LLMService):
                 if event.content:
                     if first:
                         await self.stop_ttfb_metrics()
+                        ttft_ms = (loop.time() - started) * 1000
+                        await self._emit_latency(
+                            {
+                                "type": "latency_metric",
+                                "stage": "llm_ttft",
+                                "provider": "ollama",
+                                "model": str(self._settings.model),
+                                "generation": generation,
+                                "milliseconds": round(ttft_ms, 1),
+                            }
+                        )
                         first = False
                     await self._push_llm_text(event.content)
                 if event.tool_calls:
@@ -462,10 +571,22 @@ class OllamaNativeLLMService(LLMService):
                     # tool path that could drift from the guarded one.
                     if first:
                         await self.stop_ttfb_metrics()
+                        ttft_ms = (loop.time() - started) * 1000
+                        await self._emit_latency(
+                            {
+                                "type": "latency_metric",
+                                "stage": "llm_ttft",
+                                "provider": "ollama",
+                                "model": str(self._settings.model),
+                                "generation": generation,
+                                "milliseconds": round(ttft_ms, 1),
+                            }
+                        )
                         first = False
                     for call in event.tool_calls:
                         await self._push_llm_text(_render_tool_call(call))
                 if event.done:
+                    completed_event = event
                     await self.start_llm_usage_metrics(
                         LLMTokenUsage(
                             prompt_tokens=event.prompt_tokens,
@@ -485,6 +606,24 @@ class OllamaNativeLLMService(LLMService):
         finally:
             await self.stop_ttfb_metrics()
             await self.stop_processing_metrics()
+            if completed_event is not None:
+                await self._emit_latency(
+                    {
+                        "type": "latency_metric",
+                        "stage": "llm_completed",
+                        "provider": "ollama",
+                        "model": str(self._settings.model),
+                        "generation": generation,
+                        "ttft_ms": round(ttft_ms or 0.0, 1),
+                        "wall_ms": round((loop.time() - started) * 1000, 1),
+                        "load_ms": round(completed_event.load_ms, 1),
+                        "prompt_eval_ms": round(completed_event.prompt_eval_ms, 1),
+                        "decode_ms": round(completed_event.eval_ms, 1),
+                        "ollama_total_ms": round(completed_event.total_ms, 1),
+                        "prompt_tokens": completed_event.prompt_tokens,
+                        "completion_tokens": completed_event.completion_tokens,
+                    }
+                )
             await self.push_frame(LLMFullResponseEndFrame())
 
     async def run_inference(
