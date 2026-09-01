@@ -121,6 +121,43 @@ def test_stage_advances_only_when_its_requirements_are_met() -> None:
     assert runtime.stage == "DISCOVER"
 
 
+def test_structured_stages_exclude_labelled_policy_rules() -> None:
+    contract = dict(CONTRACT)
+    contract["conversation_strategy"] = [
+        {"name": "OPEN", "instruction": "Ask permission.", "requires": ["permission"]},
+        "CALLER PRIORITY: Answer the caller first.",
+        {"name": "DISCOVER", "instruction": "Learn content.", "requires": ["content"]},
+        "OBJECTIONS: Answer the actual concern.",
+        {"name": "RECOMMEND", "instruction": "Recommend a fit."},
+    ]
+
+    runtime = TaskRuntime(contract)
+
+    assert [stage.name for stage in runtime.stages] == ["OPEN", "DISCOVER", "RECOMMEND"]
+    runtime.observe_caller_turn("Yes, go ahead.")
+    assert runtime.stage == "DISCOVER"
+    runtime.observe_caller_turn("I watch football.")
+    assert runtime.stage == "RECOMMEND"
+
+
+def test_structured_stages_survive_studio_validation() -> None:
+    contract = dict(CONTRACT)
+    contract["conversation_strategy"] = [
+        {"name": "OPEN", "instruction": "Ask permission.", "requires": ["permission"]},
+        "CALLER PRIORITY: Answer the caller first.",
+        {"name": "DISCOVER", "instruction": "Learn content.", "requires": ["content"]},
+    ]
+
+    validated = TaskEngine.validate_contract(contract)
+
+    assert validated["conversation_strategy"][0] == {
+        "name": "OPEN",
+        "instruction": "Ask permission.",
+        "requires": ["permission"],
+    }
+    assert validated["conversation_strategy"][1].startswith("CALLER PRIORITY")
+
+
 def test_a_tool_can_write_state_directly() -> None:
     """The ADK pattern: a tool records what it learned, as a returned delta."""
 
@@ -212,3 +249,15 @@ def test_shipped_iptv_contract_declares_slots_and_facts() -> None:
     assert runtime.knowledge, "the agent must be able to answer 'how much?'"
     # A real caller sentence fills a real slot.
     assert runtime.observe_caller_turn("Je regarde surtout le sport.").state_delta
+
+
+def test_shipped_iptv_contract_recognizes_real_call_answers() -> None:
+    runtime = TaskRuntime(TaskEngine().require_contract("iptv_subscription_sales"))
+
+    runtime.record("permission_to_continue", "granted")
+    viewing = runtime.observe_caller_turn("I mostly use Netflix and YouTube.")
+    budget = runtime.observe_caller_turn("I want to stay under 20.")
+
+    assert viewing.state_delta["viewing_preferences"] == "Netflix"
+    assert budget.state_delta["budget_or_purchase_priority"] == "under 20"
+    assert runtime.stage == "RECOMMEND"

@@ -40,7 +40,8 @@ _PERMISSION_ONLY = re.compile(
     re.IGNORECASE,
 )
 _NOT_INTERESTED = re.compile(
-    r"\b(?:not interested|no interest|don't want|do not want|stop calling|"
+    r"\b(?:not interested|no interest|stop calling|"
+    r"(?:don't|do not) want (?:it|this|that|the (?:offer|service|subscription|plan|package))|"
     r"pas intéressé|pas interessee|pas intéressée|ça ne m'intéresse pas|"
     r"cela ne m'intéresse pas|ne m'appelez plus)\b",
     re.IGNORECASE,
@@ -48,14 +49,18 @@ _NOT_INTERESTED = re.compile(
 _EXPLICIT_INTEREST = re.compile(
     r"\b(?:i(?:'m| am) interested|tell me more|sounds (?:good|useful|interesting)|"
     r"that (?:could|would) help|(?:that|it) is interesting|would be interesting|worth exploring|"
-    r"i(?:'d| would) like to know more|what do you offer|how much|what(?:'s| is) the price|"
+    r"i(?:'d| would) like to know more|i(?:'m| am) open|what do you offer|how much|"
+    r"what(?:'s| is) the price|price range|what(?:'s| is) (?:in|included in)|"
+    r"what does (?:the )?(?:basic|starter|essential|family|premium)?\s*"
+    r"(?:plan|package|subscription) include|(?:basic|starter) (?:plan|package)|"
+    r"month[- ]to[- ]month|no contract|"
     r"i need (?:that|this|something)|whatsapp|send (?:me )?(?:the )?(?:offer|details|info|message)|"
     r"je suis intéressé|ça m'intéresse|envoyez(?:-moi)?|"
     r"dites-m'en plus|combien|quel est le prix|qu'est-ce que vous proposez)\b",
     re.IGNORECASE,
 )
 _NEED_SIGNAL = re.compile(
-    r"\b(?:buffer|freez|slow|expensive|cost|price|limited|missing|problem|issue|"
+    r"\b(?:buffer|freez|slow|expensive|cost|price|budget|bill|monthly|limited|missing|problem|issue|"
     r"channels?|sports?|football|movies?|series|streaming|subscription|tv|television|"
     r"cable|firestick|"
     r"smart tv|mobile|phone|freeze|cher|coût|prix|lent|problème|chaînes?|sport|"
@@ -69,6 +74,8 @@ _META_OR_REPORTED = re.compile(
     r"par exemple|quelque chose comme)\b",
     re.IGNORECASE,
 )
+
+
 def normalize_direction(value: str | CallDirection) -> CallDirection:
     try:
         return CallDirection(str(value).strip().lower())
@@ -115,7 +122,7 @@ class CallContextPolicy:
         )
         direct_interest = bool(
             not reported_or_meta
-            and len(rendered.split()) <= 20
+            and len(rendered.split()) <= 60
             and _EXPLICIT_INTEREST.search(rendered)
         )
         if permission_state == "refused" or direct_not_interested:
@@ -133,7 +140,11 @@ class CallContextPolicy:
             self.phase = ProspectingPhase.RELEVANCE_DISCOVERY
         else:
             self.substantive_turns += 1
-            if not reported_or_meta and _NEED_SIGNAL.search(rendered):
+            if (
+                self.interest is not InterestState.INTERESTED
+                and not reported_or_meta
+                and _NEED_SIGNAL.search(rendered)
+            ):
                 self.interest = InterestState.NEED_SIGNAL
             # Do not force a funnel stage merely because two turns elapsed.
             # Until interest is explicit, the model gets only broad advisory
@@ -190,7 +201,8 @@ class CallContextPolicy:
             )
         if self.phase is ProspectingPhase.NEED_DEVELOPMENT:
             return (
-                "Reflect their situation, then ask what they would most like to improve or avoid.",
+                "Use their situation to offer one relevant verified value, then ask only what "
+                "is genuinely needed to move forward.",
                 task_question,
             )
         if self.phase is ProspectingPhase.INTEREST_CHECK:

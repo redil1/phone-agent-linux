@@ -15,6 +15,23 @@ from .permission_gate import PermissionGate
 
 logger = logging.getLogger(__name__)
 
+_EMPTY_ACK = re.compile(
+    r"^(?:i hear you|i understand|i see|got it|that makes sense)\b",
+    re.IGNORECASE,
+)
+_PRODUCT_QUESTION = re.compile(
+    r"\b(?:how much|price|cost|what(?:'s| is) (?:in|included)|"
+    r"what does .{0,30}(?:plan|package|subscription) include|"
+    r"(?:starter|basic|essential|family|premium) (?:plan|package)|"
+    r"trial|month[- ]to[- ]month|contract)\b",
+    re.IGNORECASE,
+)
+_EVASIVE_FUTURE_ACTION = re.compile(
+    r"\b(?:let me (?:pull up|look up|check|find)|i(?:'ll| will) (?:check|find)|"
+    r"i can (?:certainly )?help you with that)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class TurnEvaluationResult:
@@ -44,6 +61,7 @@ class PersonalityFidelityJudge:
         task_contract: dict[str, Any] | None = None,
         policy_violations: list[str] | None = None,
         recent_ai_responses: tuple[str, ...] = (),
+        call_direction: str = "",
     ) -> TurnEvaluationResult:
         """Score a speech turn across 4 key dimensions."""
         feedback: list[str] = []
@@ -59,13 +77,33 @@ class PersonalityFidelityJudge:
             feedback.append("Contained markdown formatting characters")
         normalized_response = self._normalize(ai_response)
         repeated_turn = any(
-            normalized_response
-            and normalized_response == self._normalize(previous)
+            normalized_response and normalized_response == self._normalize(previous)
             for previous in recent_ai_responses
         )
         if repeated_turn:
             style_score = max(0.0, style_score - 15.0)
             feedback.append("Repeated an earlier AI turn verbatim")
+        mirror_only = bool(
+            _EMPTY_ACK.search(ai_response.strip())
+            and "?" not in ai_response
+            and not re.search(
+                r"\b(?:essential|family|premium|trial|screens?|euros?|dollars?|"
+                r"works on|includes?|recommend|option|i(?:'ll| will| can)|we (?:can|will)|"
+                r"let's|next step|call back|send|schedule|confirm|means|you can)\b|\d",
+                ai_response,
+                re.IGNORECASE,
+            )
+        )
+        if mirror_only:
+            style_score = max(0.0, style_score - 15.0)
+            feedback.append("Mirrored the caller without adding an answer or useful value")
+        outbound_role_reset = bool(
+            str(call_direction).lower() == "outbound"
+            and re.search(r"\bhow can i help you today\b", ai_response, re.IGNORECASE)
+        )
+        if outbound_role_reset:
+            style_score = max(0.0, style_score - 10.0)
+            feedback.append("Used an inbound support greeting during an outbound call")
 
         # 2. Deterministic boundary compliance (35 points)
         compliant, violations = PermissionGate.check_compliance(ai_response)
@@ -77,9 +115,8 @@ class PersonalityFidelityJudge:
         value_score = 20.0
         normalized_response = ai_response.lower()
         repeated_apology = (
-            ("sorry" in normalized_response and "apologize" in normalized_response)
-            or ("désolé" in normalized_response and "excuse" in normalized_response)
-        )
+            "sorry" in normalized_response and "apologize" in normalized_response
+        ) or ("désolé" in normalized_response and "excuse" in normalized_response)
         if repeated_apology:
             value_score -= 5.0
             feedback.append("Repeated unnecessary apologies")
@@ -98,6 +135,17 @@ class PersonalityFidelityJudge:
         if self._caller_requests_clarification(caller_input) and repeated_turn:
             task_score = 0.0
             feedback.append("Repeated instead of answering the caller's clarification")
+        direct_product_question = bool(_PRODUCT_QUESTION.search(caller_input))
+        evaded_product_question = bool(
+            direct_product_question and _EVASIVE_FUTURE_ACTION.search(ai_response)
+        )
+        if evaded_product_question:
+            task_score = 0.0
+            feedback.append("Promised to look up an available product fact instead of answering")
+        if mirror_only:
+            task_score = min(task_score, 5.0)
+        if outbound_role_reset:
+            task_score = min(task_score, 5.0)
 
         total = decision_score + value_score + style_score + task_score
         passed = total >= self.min_pass_score and compliant and not violations

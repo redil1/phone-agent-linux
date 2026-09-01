@@ -427,7 +427,9 @@ def create_llm_service(config: ProviderConfig) -> Any:
             turn_timeout_secs=config.gemini_cli_turn_timeout_secs,
         )
     if config.llm_provider == "ollama":
-        if "phonellm" in (config.llm_model or "").lower() and _is_service_reachable(config.vllm_base_url):
+        if "phonellm" in (config.llm_model or "").lower() and _is_service_reachable(
+            config.vllm_base_url
+        ):
             logger.info(
                 "Auto-routing %s to high-throughput vLLM engine at %s for low-latency inference",
                 config.llm_model,
@@ -483,7 +485,8 @@ def create_llm_service(config: ProviderConfig) -> Any:
     if config.llm_provider == "vllm":
         if not _is_service_reachable(config.vllm_base_url):
             logger.warning(
-                "vLLM server at %s is unreachable; auto-falling back to Antigravity Gemini / Ollama",
+                "vLLM server at %s is unreachable; auto-falling back to "
+                "Antigravity Gemini / Ollama",
                 config.vllm_base_url,
             )
             from .antigravity_gemini_llm import AntigravityGeminiLLMService
@@ -555,19 +558,17 @@ async def prewarm_speech_models(config: ProviderConfig) -> dict[str, float]:
     """Load lazy local speech weights before the first caller utterance."""
 
     timings: dict[str, float] = {}
-    sensevoice_language_fallback = (
-        config.stt_provider in {"sensevoice", "sensevoice_small"}
-        and not config.stt_language.lower().startswith("en")
-    )
+    sensevoice_language_fallback = config.stt_provider in {
+        "sensevoice",
+        "sensevoice_small",
+    } and not config.stt_language.lower().startswith("en")
     if config.stt_provider in LOCAL_WHISPER_PROVIDERS or sensevoice_language_fallback:
         try:
             from .parakeet_local_stt import prewarm_parakeet
 
             timings["whisper_ms"] = await asyncio.to_thread(
                 prewarm_parakeet,
-                "large-v3-turbo"
-                if sensevoice_language_fallback
-                else _local_whisper_model(config),
+                "large-v3-turbo" if sensevoice_language_fallback else _local_whisper_model(config),
             )
         except Exception as exc:
             logger.warning("Whisper CUDA prewarm notice: %s", exc)
@@ -578,7 +579,9 @@ async def prewarm_speech_models(config: ProviderConfig) -> dict[str, float]:
     ):
         from .sensevoice_stt_service import prewarm_sensevoice
 
-        timings["sensevoice_ms"] = await asyncio.to_thread(prewarm_sensevoice, "iic/SenseVoiceSmall")
+        timings["sensevoice_ms"] = await asyncio.to_thread(
+            prewarm_sensevoice, "iic/SenseVoiceSmall"
+        )
     if config.stt_provider == "parakeet_local":
         from .parakeet_local_stt import prewarm_parakeet
 
@@ -856,9 +859,7 @@ class ProductionCallPipeline:
                     speculative_turn.consider,
                     speculative_turn.cancel,
                 )
-                logger.info(
-                    "speculative turn pipeline enabled stt=%s", stt_provider
-                )
+                logger.info("speculative turn pipeline enabled stt=%s", stt_provider)
             elif not drives_speculation and stt_provider in SPECULATION_CAPABLE_STT_PROVIDERS:
                 # Naming the provider matters. The old message was identical for
                 # "this backend cannot speculate" and "this backend was supposed
@@ -924,20 +925,20 @@ class ProductionCallPipeline:
             [
                 element
                 for element in (
-                transport.input(),
-                self.services.stt,
-                self.semantic_turn_guard,
-                self.transcription_policy,
-                self.conversation_repair,
-                self.user_aggregator,
-                self.conversational_reflex,
-                self.services.llm,
-                self.tool_processor,
-                self.response_policy,
-                self.services.tts,
-                transport.output(),
-                self.playback_events,
-                self.assistant_aggregator,
+                    transport.input(),
+                    self.services.stt,
+                    self.semantic_turn_guard,
+                    self.transcription_policy,
+                    self.conversation_repair,
+                    self.user_aggregator,
+                    self.conversational_reflex,
+                    self.services.llm,
+                    self.tool_processor,
+                    self.response_policy,
+                    self.services.tts,
+                    transport.output(),
+                    self.playback_events,
+                    self.assistant_aggregator,
                 )
                 if element is not None
             ]
@@ -995,9 +996,7 @@ class ProductionCallPipeline:
 
     @staticmethod
     def _normalized_dialogue(text: str) -> str:
-        return " ".join(
-            re.sub(r"[^\wÀ-ÿ\s]", " ", str(text).casefold(), flags=re.UNICODE).split()
-        )
+        return " ".join(re.sub(r"[^\wÀ-ÿ\s]", " ", str(text).casefold(), flags=re.UNICODE).split())
 
     @classmethod
     def _same_dialogue(cls, left: str, right: str) -> bool:
@@ -1017,7 +1016,7 @@ class ProductionCallPipeline:
         return len(a_tokens & b_tokens) / max(len(a_tokens), len(b_tokens)) >= 0.85
 
     async def _retry_repeated_response(self, rejected: str, epoch: int) -> bool:
-        """Regenerate a duplicate from clean context before any audio is spoken."""
+        """Regenerate a duplicate or mirror-only draft before audio is spoken."""
 
         if epoch != self.policy.turn_epoch:
             return False
@@ -1053,9 +1052,11 @@ class ProductionCallPipeline:
             "content": (
                 "# INTERNAL RESPONSE QUALITY RETRY — never mention this block aloud\n"
                 "The previous draft was blocked before the caller heard it because it repeated "
-                "an earlier AI response instead of handling the newest turn. Re-read the latest "
-                "caller transcript literally, respond to its actual meaning, and use a genuinely "
-                "different sentence and conversational move. Do not repeat, paraphrase, or defend "
+                "old wording or merely mirrored the caller without adding value. Re-read the "
+                "latest caller transcript literally. If it asks about the product, answer now "
+                "from the verified facts in the system context. Otherwise add one useful value "
+                "connection or one necessary unanswered question. Do not repeat, paraphrase, "
+                "or defend "
                 f"the blocked draft. Latest caller transcript: {latest!r}. "
                 f"Blocked draft: {rejected[:300]!r}."
             ),
@@ -1141,9 +1142,7 @@ class ProductionCallPipeline:
         instructions = emitted_tool_instructions(self.tools)
         if instructions:
             self.context.add_message({"role": "system", "content": instructions})
-        logger.info(
-            "exposed %d cascade tools through the emitted protocol", len(catalog)
-        )
+        logger.info("exposed %d cascade tools through the emitted protocol", len(catalog))
 
     async def start(self, timeout_secs: float = 20.0) -> None:
         if self._runner_task is not None:

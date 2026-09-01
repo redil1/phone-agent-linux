@@ -168,7 +168,11 @@ class ProviderConfig:
     ollama_min_p: float = 0.0
     ollama_presence_penalty: float = 0.0
     ollama_num_predict: int = 192
-    ollama_num_ctx: int = 8192
+    # The production sales prompt plus native tool schemas starts near 6k
+    # tokens. 8k left too little room for a real multi-turn call and there is
+    # no lossy in-call summarizer in the cascade. 16k fits comfortably on the
+    # 48 GB A6000 while preserving exact recent dialogue.
+    ollama_num_ctx: int = 16384
     ollama_turn_timeout_secs: int = 30
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     vllm_base_url: str = "http://127.0.0.1:8000/v1"
@@ -365,7 +369,7 @@ class ProviderConfig:
                 "PHONE_AGENT_OLLAMA_PRESENCE_PENALTY", 0.0, -2.0, 2.0
             ),
             ollama_num_predict=_env_int("PHONE_AGENT_OLLAMA_NUM_PREDICT", 192, 16, 4096),
-            ollama_num_ctx=_env_int("PHONE_AGENT_OLLAMA_NUM_CTX", 8192, 2048, 131072),
+            ollama_num_ctx=_env_int("PHONE_AGENT_OLLAMA_NUM_CTX", 16384, 2048, 131072),
             ollama_turn_timeout_secs=_env_int("PHONE_AGENT_OLLAMA_TURN_TIMEOUT_SECS", 30, 2, 300),
             openrouter_base_url=os.getenv(
                 "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
@@ -439,14 +443,10 @@ class ProviderConfig:
             pipeline_mode=os.getenv("PHONE_AGENT_PIPELINE_MODE", "cascade").strip().lower(),
             call_channel=os.getenv("PHONE_AGENT_CALL_CHANNEL", "gsm").strip().lower(),
             whatsapp_country_code=os.getenv("PHONE_AGENT_WHATSAPP_COUNTRY", "212").strip(),
-            whatsapp_max_duration_secs=_env_int(
-                "PHONE_AGENT_WHATSAPP_MAX_SECS", 900, 30, 3600
-            ),
+            whatsapp_max_duration_secs=_env_int("PHONE_AGENT_WHATSAPP_MAX_SECS", 900, 30, 3600),
             chatgpt_realtime_voice=os.getenv("PHONE_AGENT_CHATGPT_VOICE", "marin").strip().lower(),
             chatgpt_realtime_model=os.getenv("PHONE_AGENT_CHATGPT_MODEL", "auto").strip().lower(),
-            chatgpt_realtime_transport=os.getenv(
-                "PHONE_AGENT_CHATGPT_TRANSPORT", "websocket"
-            )
+            chatgpt_realtime_transport=os.getenv("PHONE_AGENT_CHATGPT_TRANSPORT", "websocket")
             .strip()
             .lower(),
             chatgpt_realtime_reasoning_effort=os.getenv(
@@ -465,9 +465,7 @@ class ProviderConfig:
             chatgpt_realtime_noise_reduction=os.getenv("PHONE_AGENT_CHATGPT_NOISE_REDUCTION", "off")
             .strip()
             .lower(),
-            chatgpt_realtime_vad_mode=os.getenv(
-                "PHONE_AGENT_CHATGPT_VAD_MODE", "server_vad"
-            )
+            chatgpt_realtime_vad_mode=os.getenv("PHONE_AGENT_CHATGPT_VAD_MODE", "server_vad")
             .strip()
             .lower(),
             chatgpt_realtime_vad_eagerness=os.getenv("PHONE_AGENT_CHATGPT_VAD_EAGERNESS", "medium")
@@ -587,9 +585,7 @@ class ProviderConfig:
                     "PHONE_AGENT_CHATGPT_IDLE_TIMEOUT_MS must be 0 or at least 5000"
                 )
             if not 0.8 <= self.chatgpt_realtime_speed <= 2.0:
-                raise ConfigurationError(
-                    "PHONE_AGENT_CHATGPT_SPEED must be between 0.8 and 2.0"
-                )
+                raise ConfigurationError("PHONE_AGENT_CHATGPT_SPEED must be between 0.8 and 2.0")
             return
         supported = {
             "stt": (
@@ -683,7 +679,9 @@ class ProviderConfig:
                 "kokoro-4bit",
                 "kokoro-v1.0",
             }
-            if self.tts_model not in valid_kokoro_models and not self.tts_model.startswith("hexgrad/"):
+            if self.tts_model not in valid_kokoro_models and not self.tts_model.startswith(
+                "hexgrad/"
+            ):
                 raise ConfigurationError(
                     "PHONE_AGENT_TTS_MODEL for kokoro must be hexgrad/Kokoro-82M or kokoro-82m"
                 )

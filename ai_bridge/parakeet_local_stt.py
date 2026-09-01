@@ -43,6 +43,7 @@ from pipecat.frames.frames import (
     UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection
+from pipecat.services.settings import STTSettings
 from pipecat.services.stt_service import STTService
 
 from .turn_continuity import looks_semantically_incomplete
@@ -58,6 +59,10 @@ _TAIL_PADDING_MS = 120
 # No single agent utterance runs longer than this. Past it, a missing
 # bot-stopped-speaking frame is assumed rather than trusted.
 _BOT_SPEAKING_MAX_SECS = 30.0
+_WHISPER_HOTWORDS = (
+    "OXzoon IPTV subscription Essential Family Premium starter plan basic plan "
+    "package price range month to month no contract Netflix YouTube Firestick smart TV"
+)
 
 SpeculationCandidateHandler = Callable[[str], Awaitable[None] | None]
 SpeculationCancelHandler = Callable[[str], Awaitable[None] | None]
@@ -100,9 +105,7 @@ def _inference_executor() -> ThreadPoolExecutor:
     global _EXECUTOR
     with _EXECUTOR_LOCK:
         if _EXECUTOR is None:
-            _EXECUTOR = ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="phoneagent-parakeet"
-            )
+            _EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="phoneagent-parakeet")
         return _EXECUTOR
 
 
@@ -114,8 +117,7 @@ def load_model(model_id: str = DEFAULT_MODEL) -> Any:
         if cached is not None:
             return cached
         wants_whisper = any(
-            marker in model_id.casefold()
-            for marker in ("whisper", "large-v3", "distil-large")
+            marker in model_id.casefold() for marker in ("whisper", "large-v3", "distil-large")
         )
         try:
             if wants_whisper:
@@ -170,6 +172,7 @@ def _decode_whisper(
         condition_on_previous_text=False,
         no_speech_threshold=0.6,
         temperature=0.0,
+        hotwords=_WHISPER_HOTWORDS,
     )
     segments = list(segments_iter)
     usable = [s for s in segments if float(getattr(s, "no_speech_prob", 0.0)) < 0.75]
@@ -183,16 +186,15 @@ def _decode_whisper(
     ]
     total_duration = sum(durations)
     if usable:
-        avg_logprob = sum(
-            float(getattr(s, "avg_logprob", -1.5)) * duration
-            for s, duration in zip(usable, durations, strict=True)
-        ) / total_duration
-        no_speech_prob = max(
-            float(getattr(s, "no_speech_prob", 0.0)) for s in usable
+        avg_logprob = (
+            sum(
+                float(getattr(s, "avg_logprob", -1.5)) * duration
+                for s, duration in zip(usable, durations, strict=True)
+            )
+            / total_duration
         )
-        compression_ratio = max(
-            float(getattr(s, "compression_ratio", 0.0)) for s in usable
-        )
+        no_speech_prob = max(float(getattr(s, "no_speech_prob", 0.0)) for s in usable)
+        compression_ratio = max(float(getattr(s, "compression_ratio", 0.0)) for s in usable)
         confidence = max(0.0, min(1.0, math.exp(avg_logprob)))
     else:
         avg_logprob = -10.0
@@ -225,10 +227,7 @@ def _decode_whisper(
         confidence = 0.0
 
     trusted = bool(
-        text
-        and avg_logprob >= -1.0
-        and no_speech_prob <= 0.70
-        and compression_ratio <= 2.6
+        text and avg_logprob >= -1.0 and no_speech_prob <= 0.70 and compression_ratio <= 2.6
     )
     return STTHypothesis(
         text=text,
@@ -373,7 +372,12 @@ class ParakeetLocalSTTService(STTService):
     ) -> None:
         # audio_passthrough=False keeps caller audio out of the output
         # transport, so nothing the caller says can echo back down the uplink.
-        super().__init__(audio_passthrough=False, sample_rate=sample_rate, **kwargs)
+        super().__init__(
+            audio_passthrough=False,
+            sample_rate=sample_rate,
+            settings=STTSettings(model=model, language=language),
+            **kwargs,
+        )
         if not language.lower().startswith(("en", "fr")):
             raise ValueError("ParakeetLocalSTTService supports English and French only")
         self._model_id = model
@@ -390,9 +394,7 @@ class ParakeetLocalSTTService(STTService):
         # the bar rather than muting keeps genuine barge-in working.
         self._echo_guard_db = echo_guard_db
         self._min_chars_per_second = min_chars_per_second
-        self._hallucination_audio_bytes = (
-            16_000 * SAMPLE_WIDTH * hallucination_audio_ms // 1000
-        )
+        self._hallucination_audio_bytes = 16_000 * SAMPLE_WIDTH * hallucination_audio_ms // 1000
         self._bot_speaking = False
         self._bot_speaking_since = 0.0
         self._speculative_pipeline_enabled = speculative_pipeline_enabled
@@ -549,9 +551,7 @@ class ParakeetLocalSTTService(STTService):
                     # Never await inference here. Blocking this loop would delay
                     # the endpoint decision by a whole model pass, which is the
                     # exact latency this service exists to remove.
-                    self._prefetch_task = asyncio.create_task(
-                        self._run_prefetch(speech_bytes)
-                    )
+                    self._prefetch_task = asyncio.create_task(self._run_prefetch(speech_bytes))
 
                 # A trailing conjunction means the caller is mid-thought; give
                 # them longer before taking the turn away from them.

@@ -212,6 +212,21 @@ class PersonaCompiler:
                     lines.extend(PersonaCompiler._render_rules("", nested))
         return [f"# {title}", *lines] if title and lines else lines
 
+    @staticmethod
+    def _strategy_lines(strategy: Any) -> list[str]:
+        """Render both legacy prose rules and structured runtime stages."""
+
+        rendered: list[str] = []
+        for entry in strategy or []:
+            if isinstance(entry, dict):
+                name = str(entry.get("name", "")).strip()
+                instruction = str(entry.get("instruction", "")).strip()
+                if name and instruction:
+                    rendered.append(f"{name}: {instruction}")
+            elif str(entry).strip():
+                rendered.append(str(entry).strip())
+        return rendered
+
     def _compile_human_conversation(self, language: str = "en-US") -> list[str]:
         """Compile the behaviour spec into the system instruction.
 
@@ -290,8 +305,7 @@ class PersonaCompiler:
         priority_order = " > ".join(priorities) if priorities else "Accuracy > Action"
 
         current_number = self._verified_current_call_number(
-            caller_id
-            or (str(caller_memory.get("phone_number")) if caller_memory else "")
+            caller_id or (str(caller_memory.get("phone_number")) if caller_memory else "")
         )
         kernel_context = self.identity_kernel.compile_context(
             task_id=str((task_contract or {}).get("id") or "general"),
@@ -363,8 +377,7 @@ class PersonaCompiler:
             research_tools = [
                 name
                 for name in connected_tools
-                if name == "web_research"
-                or name.endswith(("_search", "_lookup", "_research"))
+                if name == "web_research" or name.endswith(("_search", "_lookup", "_research"))
             ]
             unavailable_tools = sorted(allowed_tools - set(connected_tools))
             # Required inputs may be bare names or declared slots. Render the
@@ -377,6 +390,13 @@ class PersonaCompiler:
             strategy = task_contract.get("conversation_strategy", [])
             natural_rules = task_contract.get("natural_conversation_rules", [])
             ground_truth = task_contract.get("ground_truth_policy", [])
+            knowledge = task_contract.get("knowledge", {})
+            verified_facts = (
+                "\n".join(f"- {key}: {value}" for key, value in knowledge.items())
+                if isinstance(knowledge, dict)
+                else ""
+            )
+            rendered_strategy = self._strategy_lines(strategy)
             approvals = task_contract.get("approval_required", [])
             stop_conditions = task_contract.get("stop_conditions", [])
             parts.extend(
@@ -388,13 +408,24 @@ class PersonaCompiler:
                     "- Information to discover naturally: " + ", ".join(inputs) if inputs else "",
                     "",
                     "# SALES CONVERSATION PLAYBOOK",
-                    "\n".join(f"- {rule}" for rule in strategy) if strategy else "",
+                    "\n".join(f"- {rule}" for rule in rendered_strategy)
+                    if rendered_strategy
+                    else "",
                     "",
                     "# HUMAN CONVERSATION RULES",
                     "\n".join(f"- {rule}" for rule in natural_rules) if natural_rules else "",
                     "",
                     "# PRODUCT GROUND TRUTH",
+                    verified_facts,
                     "\n".join(f"- {rule}" for rule in ground_truth) if ground_truth else "",
+                    (
+                        "- These verified facts are already available now. Answer a caller's "
+                        "plan, price, device, trial, duration, or package question immediately "
+                        "from them. Never say you will look up, pull up, or check a fact that is "
+                        "already listed here, and never replace a direct answer with discovery."
+                        if verified_facts
+                        else ""
+                    ),
                     "- Actions requiring approval: " + ", ".join(approvals) if approvals else "",
                     "- Stop immediately when: " + ", ".join(stop_conditions)
                     if stop_conditions
@@ -551,6 +582,8 @@ class PersonaCompiler:
                 f"- {str(value).strip()}" for value in values or [] if str(value).strip()
             )
 
+        strategy_lines = self._strategy_lines(contract.get("conversation_strategy"))
+
         knowledge = contract.get("knowledge", {})
         ground_truth = contract.get("ground_truth_policy", [])
         if isinstance(knowledge, dict) and knowledge:
@@ -581,9 +614,7 @@ class PersonaCompiler:
         actions = [
             name
             for name in connected
-            if name not in retrieval
-            and name != "end_call"
-            and not name.startswith("business_")
+            if name not in retrieval and name != "end_call" and not name.startswith("business_")
         ]
         if not connected:
             tools_section = (
@@ -656,7 +687,7 @@ class PersonaCompiler:
                     "unless a later verified tool result says so."
                 )
             rules.append(
-                '- NEVER announce or narrate a tool by name, and never use vague fillers such as '
+                "- NEVER announce or narrate a tool by name, and never use vague fillers such as "
                 '"let me think" or "one moment". Announce only a genuine internet wait or '
                 "operator-approval wait with one precise, natural sentence."
             )
@@ -799,8 +830,8 @@ Never infer or mention account identity, ChatGPT memories, hidden history, or pr
   told you: "Samsung, that's the easy one." Then continue.
 - A turn that ends in a statement is a good turn. Say one useful thing and stop;
   let them fill the silence.
-- Use their own words back. If they said "matches", say matches, not "content
-  preferences". If they said "expensive", say expensive, not "budget concerns".
+- Reuse their terminology when it makes an answer clearer, but never echo their whole
+  statement. Turn what they said into a relevant fact, recommendation, or next step.
 - Vary the shape between turns: sometimes a reaction alone, sometimes a fact,
   sometimes a fact then a question. Never the same rhythm twice running.
 - Never ask a question whose answer they already gave you, in any wording.
@@ -880,7 +911,7 @@ or stage directions.
 
 ## DISCOVER / QUALIFY / RECOMMEND
 - Apply this task playbook only after permission is granted:
-{lines(contract.get("conversation_strategy"))}
+{lines(strategy_lines)}
 
 ## CLOSE
 - On refusal or goodbye, stop selling and close politely with no question.

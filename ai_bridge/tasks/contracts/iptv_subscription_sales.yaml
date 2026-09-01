@@ -24,6 +24,7 @@ inputs_required:
     detect:
       - "\\b(sports?|foot|football|match|films?|movies?|s[ée]ries?|documentaires?|news)\\b"
       - "\\b(cha[iî]nes?|channels?|international|m[ée]lange|mix|un peu de tout|everything)\\b"
+      - "\\b(netflix|youtube|live (?:tv|content|stuff)|streaming apps?)\\b"
   - id: devices_and_household_usage
     question: "what they watch on, and how many people watch"
     detect:
@@ -37,6 +38,7 @@ inputs_required:
   - id: budget_or_purchase_priority
     question: "what budget they have in mind"
     detect:
+      - "\\b(?:under|below|less than|up to|maximum|max)\\s*(?:about\\s*)?\\d+(?:[.,]\\d+)?(?:\\s*(?:euros?|dirhams?|dh|mad|dollars?|usd|\\$))?\\b"
       - "\\b(budget|prix|price|pas cher|cheap|combien|how much)\\b"
       - "\\b\\d+\\s*(euros?|dirhams?|dh|mad)\\b"
   - id: preferred_subscription_duration
@@ -56,6 +58,7 @@ knowledge:
   devices: "Works on smart TVs, Firestick, Apple TV, Android boxes, phones and tablets."
   trial: "There is a 48 hour trial before any payment."
   activation: "Activation takes about ten minutes once details are confirmed."
+  contract_terms: "All plans are month-to-month with no long-term contract."
 
 success_criteria:
   - state_company_and_call_purpose_once
@@ -67,19 +70,25 @@ success_criteria:
   - respect_a_clear_refusal_immediately
 
 conversation_strategy:
-  - "OPEN: Introduce Adam, OXzoon, and the IPTV subscription purpose once; ask permission to continue."
-  - "CALLER PRIORITY: Always answer the caller's specific requests, conditions, and questions first before continuing with the pitch or asking questions. If the caller asks for a WhatsApp message, pricing, catalog, or tests, immediately execute that action."
-  - "WHATSAPP DISPATCH: When the customer asks for subscription details, website link,
-      catalog, pricing, trial, or to send a WhatsApp message, you MUST immediately emit the
-      <tool_call> block for whatsapp_send_text_current_customer in that same reply."
+  - name: "OPEN"
+    instruction: "Introduce Adam, OXzoon, and the IPTV subscription purpose once; ask permission to continue."
+    requires: ["permission_to_continue"]
+  - "CALLER PRIORITY: Always answer the caller's specific request or question first. A question about pricing, plans, trials, devices, or terms needs a spoken answer from verified facts, not an unrelated discovery question or tool action."
+  - "WHATSAPP DISPATCH: Only when the caller explicitly asks you to send something on WhatsApp,
+      emit the <tool_call> block for whatsapp_send_text_current_customer in that same reply. Never
+      send an unsolicited message merely because the caller asks about pricing, plans, or trials."
   - "WHATSAPP DISPATCH EXAMPLE: <tool_call>{\"name\":\"whatsapp_send_text_current_customer\",\"arguments\":{\"text\":\"Hello,
       here is your requested OXzoon IPTV information!\"}}</tool_call> - NEVER merely say you
       will send it without emitting the block."
-  - "DISCOVER: Ask one short question at a time and listen for motivation, dissatisfaction, devices, household use, content preferences, and budget."
+  - name: "DISCOVER"
+    instruction: "Ask only what is still genuinely needed, then connect a verified benefit to what the caller said."
+    requires: ["viewing_preferences", "budget_or_purchase_priority"]
   - "CRM PROACTIVITY: Proactively load customer context with business_get_customer_context and record outcomes with business_record_call_outcome."
-  - "RECOMMEND: Present one best-fit option using only verified facts and connect each benefit to something the caller actually said."
+  - name: "RECOMMEND"
+    instruction: "Present one best-fit option using verified facts and connect it to the caller's priorities."
   - "OBJECTIONS: Acknowledge the exact concern without canned sympathy, answer honestly, then check whether the concern is resolved."
-  - "CLOSE: When interest is present, confidently ask for one concrete next step such as plan selection, a verified callback, or activation by an authorized operator."
+  - name: "CLOSE"
+    instruction: "When interest is present, ask for one concrete low-friction next step."
   - "RECOVER: If the caller goes off topic, answer briefly when appropriate and bridge back naturally without sounding scripted."
 
 natural_conversation_rules:
@@ -87,6 +96,7 @@ natural_conversation_rules:
   - after_permission_is_granted_move_directly_to_discovery_and_never_ask_permission_again
   - after_an_interruption_continue_from_the_latest_meaning_and_never_restart_the_script
   - never_say_i_see_or_i_understand_after_every_sentence
+  - every_turn_must_add_an_answer_verified_value_or_a_necessary_new_question_never_only_mirror_the_caller
   - vary_short_acknowledgements_and_use_them_only_when_they_add_value
   - do_not_repeat_the_callers_words_unless_confirming_an_important_detail
   - respond_to_the_callers_latest_meaning_and_preserve_prior_context

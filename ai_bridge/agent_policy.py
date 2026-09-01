@@ -53,6 +53,29 @@ from .turn_continuity import looks_semantically_incomplete
 EventSink = Callable[[dict[str, Any]], Any]
 logger = logging.getLogger("PhoneAgentPolicy")
 
+_DIRECT_PRODUCT_QUESTION = re.compile(
+    r"\b(?:"
+    r"what(?:'s| is) (?:in|included in|the price|the cost)|"
+    r"what does .{0,30}(?:plan|package|subscription) include|"
+    r"how much|price range|(?:basic|starter|essential|family|premium) "
+    r"(?:plan|package)|month[- ]to[- ]month|no contract|contract terms|"
+    r"trial|devices? (?:does|do|can)|what do you offer"
+    r")\b",
+    re.IGNORECASE,
+)
+_LOW_VALUE_ACKNOWLEDGEMENT = re.compile(
+    r"^(?:i (?:hear you|understand|see|appreciate that)|got it|that makes sense|"
+    r"right|okay|i'm glad you're still with me)\b",
+    re.IGNORECASE,
+)
+_VERIFIED_VALUE_CUE = re.compile(
+    r"\b(?:essential|family|premium|trial|screens?|smart tv|firestick|apple tv|"
+    r"android|two months free|ten euros|fifteen euros|twenty euros|activation|"
+    r"i(?:'ll| will| can)|we (?:can|will)|let's|next step|call back|send|schedule|"
+    r"confirm|recommend|option|means|so you|that gives|you can|works?)\b",
+    re.IGNORECASE,
+)
+
 
 class AgentPolicyRuntime:
     """One call's persona, task, caller memory, evaluation, and persistence."""
@@ -148,9 +171,7 @@ class AgentPolicyRuntime:
         self._conversation_stage = "OPEN"
         self._last_caller_intent = "unknown"
         self._latest_turn_quality = "unknown"
-        self._latest_turn_guidance = (
-            "Listen to the caller's latest meaning and answer it directly."
-        )
+        self._latest_turn_guidance = "Listen to the caller's latest meaning and answer it directly."
         self._last_ai_response = ""
         self._last_ai_delivery = "none"
         self._last_guard_rejection = ""
@@ -292,6 +313,24 @@ class AgentPolicyRuntime:
             nxt = missing[0]
             next_question = nxt.question or f"what their {nxt.id.replace('_', ' ')} is"
         strategy_hint, _permitted_question = self.call_context.steering(next_question)
+        verified_facts = (
+            "; ".join(f"{key}={value}" for key, value in self.task.knowledge.items()) or "none"
+        )
+        if self._last_caller_intent == "direct_product_question":
+            required_move = (
+                "ANSWER NOW from verified_product_facts. Give the requested essentials first; "
+                "do not ask discovery, ask what they mean, or announce a future lookup."
+            )
+        elif self._last_caller_intent == "attention_check":
+            required_move = (
+                "Confirm you are present in a few words, then continue the unfinished outbound "
+                "sales point. Never ask 'how can I help you today?' because you called them."
+            )
+        else:
+            required_move = (
+                "Add one useful thing: a direct answer, a verified value connection, or one "
+                "necessary unanswered question. An acknowledgement or paraphrase alone is invalid."
+            )
         return (
             "# INTERNAL LIVE CALL CONTEXT — never read or mention this block aloud\n"
             "This is advisory context, not a script. The caller's latest meaning always outranks "
@@ -307,16 +346,19 @@ class AgentPolicyRuntime:
             f"last_ai_turn_delivery: {self._last_ai_delivery}\n"
             f"last_ai_turn_text: {last_response}\n"
             f"facts_already_collected: {known}\n"
+            f"verified_product_facts: {verified_facts}\n"
             f"uncollected_context (discover only when natural): {missing_names}\n"
             f"optional_next_topic: {next_question}\n"
             f"strategy_hint (optional): {strategy_hint}\n"
+            f"required_next_move: {required_move}\n"
             "Quality and stage fields are fallible hints derived from audio and simple state; "
             "never let a hint contradict or replace the caller's actual words. "
             "Natural conversation rules: Answer direct questions, corrections, confusion, and "
             "requests to explain before pursuing the objective. If the latest words may be "
             "garbled or incomplete, do not guess and do not advance task state; ask one brief, "
             "context-aware clarification. Never use a generic fallback question. Never repeat "
-            "the last AI sentence; rephrase or respond to what changed. Missing task fields are "
+            "the last AI sentence. Never begin with 'I hear you', 'I understand', or 'I see' and "
+            "then merely repeat the caller's words. Missing task fields are "
             "notes for later, never reasons to ignore the caller. If latest_caller_intent is "
             "goodbye or permission_refused, close briefly with no sales question."
         )
@@ -506,9 +548,7 @@ class AgentPolicyRuntime:
         if len(tokens) < 4:
             return False
         for previous in self._spoken_sentences:
-            if len(normalized) >= 20 and (
-                normalized in previous or previous in normalized
-            ):
+            if len(normalized) >= 20 and (normalized in previous or previous in normalized):
                 return True
             if SequenceMatcher(None, normalized, previous).ratio() >= 0.88:
                 return True
@@ -519,6 +559,29 @@ class AgentPolicyRuntime:
             if overlap >= 0.85:
                 return True
         return False
+
+    def _is_low_value_acknowledgement(self, sentence: str) -> bool:
+        """Reject a short acknowledgement that contributes no new information.
+
+        The model often generated ``acknowledge + stale question``. Once the
+        duplicate question was correctly removed, only a robotic mirror reached
+        the caller. This narrow check drops that empty first sentence while
+        allowing any following fact, answer, or genuinely new question through.
+        """
+
+        rendered = " ".join(sentence.strip().split())
+        if not rendered or "?" in rendered or len(rendered.split()) > 24:
+            return False
+        if not _LOW_VALUE_ACKNOWLEDGEMENT.search(rendered):
+            return False
+        if _VERIFIED_VALUE_CUE.search(rendered) or re.search(r"\d", rendered):
+            return False
+        return True
+
+    @staticmethod
+    def _is_direct_product_question(text: str) -> bool:
+        rendered = " ".join(str(text or "").split())
+        return bool(_DIRECT_PRODUCT_QUESTION.search(rendered))
 
     def _remember_spoken(self, sentence: str) -> None:
         normalized = " ".join(
@@ -609,7 +672,11 @@ class AgentPolicyRuntime:
                 self._last_caller_intent = f"permission_{permission}"
                 self._conversation_stage = "DISCOVER" if permission == "granted" else "CLOSE"
             else:
-                self._last_caller_intent = "new_information_or_question"
+                self._last_caller_intent = (
+                    "direct_product_question"
+                    if self._is_direct_product_question(self.last_caller_text)
+                    else "new_information_or_question"
+                )
             if self._permission_state == "granted" and self.task.stage not in {"", "OPEN"}:
                 self._conversation_stage = self.task.stage
         context_changed = False
@@ -683,6 +750,7 @@ class AgentPolicyRuntime:
             task_contract=self.task_contract,
             policy_violations=policy_violations,
             recent_ai_responses=tuple(self._completed_ai_turns),
+            call_direction=self.call_context.direction.value,
         )
         if spoken_text:
             self._completed_ai_turns.append(spoken_text)
@@ -774,6 +842,10 @@ class AgentPolicyRuntime:
             self._last_guard_rejection = "repeat"
             logger.warning("Blocked model text repeated previously: %r", spoken[:80])
             return "", True
+        if self._is_low_value_acknowledgement(spoken):
+            self._last_guard_rejection = "low_value_acknowledgement"
+            logger.warning("Blocked mirror-only model sentence: %r", spoken[:80])
+            return "", True
         if spoken:
             spoken = normalize_for_speech(spoken, self.reply_language)
             self._remember_spoken(spoken)
@@ -817,6 +889,7 @@ class AgentPolicyRuntime:
             task_contract=self.task_contract,
             policy_violations=[],
             recent_ai_responses=tuple(self._completed_ai_turns),
+            call_direction=self.call_context.direction.value,
         )
         if spoken_text:
             self._completed_ai_turns.append(spoken_text)
@@ -1008,11 +1081,7 @@ def transcription_evidence(
         metadata = {}
     trusted = metadata.get("trusted_for_task", True) is not False
     raw_confidence = metadata.get("confidence")
-    confidence = (
-        float(raw_confidence)
-        if isinstance(raw_confidence, (int, float))
-        else None
-    )
+    confidence = float(raw_confidence) if isinstance(raw_confidence, (int, float)) else None
     raw_language = metadata.get("language")
     language = str(raw_language).strip() if raw_language else None
     return trusted, confidence, language
@@ -1130,7 +1199,11 @@ class ResponsePolicyProcessor(FrameProcessor):
         if spoken:
             self._spoken.append(spoken)
             await self.push_frame(LLMTextFrame(spoken), direction)
-        elif rejection == "repeat" and not self._spoken and not self._rejected_repeat:
+        elif (
+            rejection in {"repeat", "low_value_acknowledgement"}
+            and not self._spoken
+            and not self._rejected_repeat
+        ):
             # Remember the duplicate in case the *whole* draft contains
             # nothing new.  Do not abandon the stream yet: smaller local
             # models often prefix a useful answer with one stale sentence.
@@ -1143,7 +1216,7 @@ class ResponsePolicyProcessor(FrameProcessor):
             # different: skip that sentence and inspect later sentences for
             # genuinely new content.  If none exists, end-of-response recovery
             # schedules one clean regeneration.
-            if rejection == "repeat":
+            if rejection in {"repeat", "low_value_acknowledgement"}:
                 return
             self._stopped = True
             self._pending = ""
@@ -1220,9 +1293,7 @@ class ResponsePolicyProcessor(FrameProcessor):
                     except Exception:
                         logger.exception("Could not schedule repetition recovery")
                 if not scheduled:
-                    logger.error(
-                        "Suppressed repeated response after recovery budget exhausted"
-                    )
+                    logger.error("Suppressed repeated response after recovery budget exhausted")
                 return
             if response_id is not None:
                 if spoken_text:

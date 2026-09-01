@@ -40,8 +40,33 @@ def test_outbound_does_not_force_interest_from_elapsed_turn_count() -> None:
     )
     assert context.phase is ProspectingPhase.NEED_DEVELOPMENT
     move, question = context.steering("Which device do you use?")
-    assert "most like to improve" in move
+    assert "relevant verified value" in move
     assert question == "Which device do you use?"
+
+
+def test_price_sensitivity_is_not_misclassified_as_product_refusal() -> None:
+    context = CallContextPolicy("outbound")
+    context.observe_caller_turn("Yes.", permission_state="granted")
+
+    context.observe_caller_turn(
+        "I just don't want a huge monthly bill.", permission_state="granted"
+    )
+
+    assert context.interest is InterestState.NEED_SIGNAL
+    assert context.phase is ProspectingPhase.NEED_DEVELOPMENT
+
+
+def test_direct_plan_question_unlocks_interest_and_cannot_be_downgraded() -> None:
+    context = CallContextPolicy("outbound")
+    context.observe_caller_turn(
+        "What's in the starter package: price range, month to month, no contract?",
+        permission_state="granted",
+    )
+    assert context.interest is InterestState.INTERESTED
+    assert context.product_qualification_unlocked is True
+
+    context.observe_caller_turn("Price still matters to me.", permission_state="granted")
+    assert context.interest is InterestState.INTERESTED
 
 
 def test_meta_sales_coaching_does_not_change_prospect_interest() -> None:

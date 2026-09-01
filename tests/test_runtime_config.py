@@ -109,6 +109,7 @@ def test_ollama_provider_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.ollama_top_k == 20
     assert config.ollama_min_p == 0.0
     assert config.ollama_presence_penalty == 0.0
+    assert config.ollama_num_ctx == 16384
 
 
 def test_each_hosted_provider_requires_only_its_selected_llm_key() -> None:

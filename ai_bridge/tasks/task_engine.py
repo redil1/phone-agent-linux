@@ -32,7 +32,6 @@ class TaskEngine:
     TEXT_FIELDS: ClassVar[tuple[str, ...]] = ("id", "title", "objective")
     LIST_FIELDS: ClassVar[tuple[str, ...]] = (
         "success_criteria",
-        "conversation_strategy",
         "natural_conversation_rules",
         "ground_truth_policy",
         "allowed_tools",
@@ -40,6 +39,7 @@ class TaskEngine:
         "stop_conditions",
     )
     SLOT_FIELD = "inputs_required"
+    STRATEGY_FIELD = "conversation_strategy"
     KNOWLEDGE_FIELD = "knowledge"
     # How this product is actually sold: the delivery the model imitates, and
     # the objections this market really raises. Facts say what is true; these
@@ -161,6 +161,59 @@ class TaskEngine:
         return rendered
 
     @classmethod
+    def _validate_strategy(cls, value: Any, *, valid_slots: set[str]) -> list[Any]:
+        """Validate prose policies and structured stage objects without flattening them.
+
+        Studio round-trips used to reject stage objects, so a contract that
+        worked from disk failed as soon as it was saved in the Web UI. Keeping
+        the structure is also what lets the runtime distinguish OPEN/DISCOVER
+        stages from labelled prose such as CALLER PRIORITY and OBJECTIONS.
+        """
+
+        if not isinstance(value, list):
+            raise ValueError("conversation_strategy must be a list")
+        if len(value) > cls.MAX_ENTRIES_PER_FIELD:
+            raise ValueError("conversation_strategy holds too many entries")
+        rendered: list[Any] = []
+        stage_names: set[str] = set()
+        for entry in value:
+            if not isinstance(entry, dict):
+                text = str(entry).strip()
+                if len(text) > cls.MAX_ENTRY_CHARS:
+                    raise ValueError("conversation_strategy has a line that is too long")
+                if text:
+                    rendered.append(text)
+                continue
+            unknown = set(entry) - {"name", "instruction", "requires"}
+            if unknown:
+                raise ValueError(f"unsupported conversation stage keys: {sorted(unknown)}")
+            name = str(entry.get("name", "")).strip().upper()
+            instruction = str(entry.get("instruction", "")).strip()
+            if not re.fullmatch(r"[A-Z][A-Z0-9 _-]{1,30}", name):
+                raise ValueError("a conversation stage needs a short uppercase name")
+            if name in stage_names:
+                raise ValueError(f"duplicate conversation stage: {name!r}")
+            if not instruction:
+                raise ValueError(f"conversation stage {name!r} needs an instruction")
+            if len(instruction) > cls.MAX_ENTRY_CHARS:
+                raise ValueError(f"conversation stage {name!r} instruction is too long")
+            raw_requires = entry.get("requires", []) or []
+            if not isinstance(raw_requires, list):
+                raise ValueError(f"conversation stage {name!r} requires must be a list")
+            requires = [str(item).strip() for item in raw_requires if str(item).strip()]
+            missing = set(requires) - valid_slots
+            if missing:
+                raise ValueError(
+                    f"conversation stage {name!r} requires unknown inputs: {sorted(missing)}"
+                )
+            stage = {"name": name, "instruction": instruction}
+            if requires:
+                stage["requires"] = requires
+            rendered.append(stage)
+            stage_names.add(name)
+        return rendered
+
+    @classmethod
     def _validate_phrases(cls, value: Any) -> dict[str, dict[str, str]]:
         """Spoken examples, keyed by situation then language.
 
@@ -260,6 +313,7 @@ class TaskEngine:
             | {
                 "opening_greeting",
                 cls.SLOT_FIELD,
+                cls.STRATEGY_FIELD,
                 cls.KNOWLEDGE_FIELD,
                 cls.PHRASE_FIELD,
                 cls.OBJECTION_FIELD,
@@ -319,6 +373,14 @@ class TaskEngine:
 
         if cls.SLOT_FIELD in data:
             contract[cls.SLOT_FIELD] = cls._validate_slots(data[cls.SLOT_FIELD])
+        if cls.STRATEGY_FIELD in data:
+            slots = {
+                str(entry.get("id", "")).strip() if isinstance(entry, dict) else str(entry).strip()
+                for entry in contract.get(cls.SLOT_FIELD, [])
+            }
+            contract[cls.STRATEGY_FIELD] = cls._validate_strategy(
+                data[cls.STRATEGY_FIELD], valid_slots=slots
+            )
         if cls.KNOWLEDGE_FIELD in data:
             contract[cls.KNOWLEDGE_FIELD] = cls._validate_knowledge(data[cls.KNOWLEDGE_FIELD])
         if cls.PHRASE_FIELD in data:

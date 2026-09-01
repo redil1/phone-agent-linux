@@ -277,7 +277,8 @@ class OllamaNativeClient:
                     detail = raw.decode(errors="replace").strip()
                     if "does not support tools" in detail.lower():
                         logger.warning(
-                            "Ollama model %s does not support native tools; falling back to text stream",
+                            "Ollama model %s does not support native tools; "
+                            "falling back to text stream",
                             model,
                         )
                         payload.pop("tools", None)
@@ -308,9 +309,7 @@ class OllamaNativeClient:
                         prompt_tokens=int(event.get("prompt_eval_count") or 0),
                         completion_tokens=int(event.get("eval_count") or 0),
                         load_ms=float(event.get("load_duration") or 0) / 1_000_000,
-                        prompt_eval_ms=(
-                            float(event.get("prompt_eval_duration") or 0) / 1_000_000
-                        ),
+                        prompt_eval_ms=(float(event.get("prompt_eval_duration") or 0) / 1_000_000),
                         eval_ms=float(event.get("eval_duration") or 0) / 1_000_000,
                         total_ms=float(event.get("total_duration") or 0) / 1_000_000,
                         tool_calls=tuple(message.get("tool_calls") or ()),
@@ -400,9 +399,7 @@ def _render_tool_call(call: dict[str, Any]) -> str:
             arguments = json.loads(arguments)
         except json.JSONDecodeError:
             arguments = {}
-    payload = json.dumps(
-        {"name": name, "arguments": arguments or {}}, ensure_ascii=False
-    )
+    payload = json.dumps({"name": name, "arguments": arguments or {}}, ensure_ascii=False)
     return f"<tool_call>{payload}</tool_call>"
 
 
@@ -421,7 +418,7 @@ class OllamaNativeLLMService(LLMService):
         min_p: float = 0.0,
         presence_penalty: float = 0.0,
         num_predict: int = 192,
-        num_ctx: int = 8192,
+        num_ctx: int = 16384,
         think: bool = False,
         keep_alive: str = "-1",
         turn_timeout_secs: float = 30.0,
@@ -703,7 +700,81 @@ class OllamaNativeLLMService(LLMService):
                 messages.append({"role": role, "content": content})
         if not any(message["role"] == "user" for message in messages):
             raise OllamaNativeError("Ollama context contains no user message")
-        return messages
+        return self._bounded_context_messages(messages)
+
+    def _bounded_context_messages(self, messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        """Keep the stable instructions and newest dialogue inside the model window.
+
+        Ollama otherwise truncates the oldest tokens itself. On a long call that
+        can discard the system prompt while retaining low-value early dialogue,
+        which explains quality falling as the call grew. Tool schemas and the
+        completion also consume context, so reserve space for both and compact
+        only after a generous dialogue window has actually been exceeded.
+
+        Live structured task state is a system message and is always retained;
+        it carries collected slots and verified facts across the compacted gap.
+        """
+
+        # English phone prompts average about three UTF-8 characters per token.
+        # Reserve 4k tokens for native tool schemas plus the requested output.
+        input_char_budget = max(
+            12_000,
+            (self._num_ctx - self._num_predict - 4_096) * 3,
+        )
+        if sum(len(message["content"]) for message in messages) <= input_char_budget:
+            return messages
+
+        required = {index for index, message in enumerate(messages) if message["role"] == "system"}
+        used = sum(len(messages[index]["content"]) for index in required)
+        retained = set(required)
+        # Keep the latest caller turn even if a custom system prompt alone is
+        # larger than the safe budget. Newest complete dialogue wins thereafter.
+        latest_user = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index]["role"] == "user"
+            ),
+            None,
+        )
+        if latest_user is not None:
+            retained.add(latest_user)
+            used += len(messages[latest_user]["content"])
+        for index in range(len(messages) - 1, -1, -1):
+            if index in retained:
+                continue
+            size = len(messages[index]["content"])
+            if used + size > input_char_budget:
+                continue
+            retained.add(index)
+            used += size
+
+        compacted: list[dict[str, str]] = []
+        marker_added = False
+        for index, message in enumerate(messages):
+            if index in retained:
+                compacted.append(message)
+            elif not marker_added:
+                compacted.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "Earlier dialogue was compacted to protect this long call's "
+                            "instructions and latency. Preserve continuity from the structured "
+                            "live call state and the retained recent turns; do not invent "
+                            "omitted facts."
+                        ),
+                    }
+                )
+                marker_added = True
+        logger.info(
+            "compacted Ollama call context messages=%d->%d chars=%d budget=%d",
+            len(messages),
+            len(compacted),
+            sum(len(message["content"]) for message in messages),
+            input_char_budget,
+        )
+        return compacted
 
     @staticmethod
     def _content_text(content: Any) -> str:

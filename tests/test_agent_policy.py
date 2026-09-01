@@ -146,14 +146,77 @@ async def test_cold_outbound_yes_builds_relevance_before_product_slots(tmp_path:
     assert "Ask one open, non-product question" in state
     assert "This is advisory context, not a script" in state
     assert any(
-        event.get("type") == "call_context"
-        and event.get("phase") == "relevance_discovery"
+        event.get("type") == "call_context" and event.get("phase") == "relevance_discovery"
         for event in events
     )
     model_reply = "Great. What device do you plan to watch on first, like a Smart TV or Firestick?"
     spoken, stop = runtime.guard_sentence(model_reply, is_first=True)
     assert spoken == model_reply
     assert stop is False
+
+
+@pytest.mark.asyncio
+async def test_failed_sales_call_replay_advances_and_answers_from_facts(tmp_path: Any) -> None:
+    """Regression for the 5/10 call that mirrored and ignored a buying question."""
+
+    runtime = AgentPolicyRuntime(
+        caller_id="anonymous",
+        task_id="iptv_subscription_sales",
+        language="en-US",
+        call_direction="outbound",
+        memory_enabled=False,
+        memory_manager=LayeredMemoryManager(storage_path=tmp_path / "memory.json"),
+    )
+    await runtime.finalize_response(
+        "Hello, this is Adam from OXzoon. Is this a good time for a quick conversation?",
+        response_kind="greeting",
+    )
+    for caller_turn in (
+        "Yes, go ahead.",
+        "I mostly watch Netflix and YouTube.",
+        "I just don't want a huge monthly bill.",
+        "Under 20.",
+        "I'm open if there is clear value and no hassle.",
+        "What's in the starter package: price range, month to month, no contract?",
+    ):
+        await runtime.observe_transcription(caller_turn)
+
+    state = runtime.live_state_instructions()
+    assert runtime.task.stage == "RECOMMEND"
+    assert runtime.call_context.interest.value == "interested"
+    assert "viewing_preferences=Netflix" in state
+    assert "budget_or_purchase_priority=Under 20" in state
+    assert "latest_caller_intent: direct_product_question" in state
+    assert "ANSWER NOW from verified_product_facts" in state
+    assert "Essential is 10 euros a month, one screen" in state
+    assert "month-to-month with no long-term contract" in state
+    assert "viewing_preferences" not in state.split("uncollected_context", 1)[1].splitlines()[0]
+
+
+def test_mirror_only_sentence_is_blocked_but_verified_answer_is_allowed() -> None:
+    runtime = AgentPolicyRuntime(
+        caller_id="anonymous",
+        task_id="iptv_subscription_sales",
+        language="en-US",
+        memory_enabled=False,
+    )
+
+    mirror, stopped = runtime.guard_sentence("I hear you, clear value is important.", is_first=True)
+    reason = runtime.consume_guard_rejection()
+    answer, answer_stopped = runtime.guard_sentence(
+        "The Essential plan is ten euros a month on one screen.", is_first=True
+    )
+    progression, progression_stopped = runtime.guard_sentence(
+        "I understand; I'll call you tomorrow.", is_first=True
+    )
+
+    assert mirror == ""
+    assert stopped is True
+    assert reason == "low_value_acknowledgement"
+    assert answer
+    assert answer_stopped is False
+    assert progression
+    assert progression_stopped is False
 
 
 def test_inbound_intent_does_not_block_relevant_product_qualification() -> None:

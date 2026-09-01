@@ -36,6 +36,7 @@ from pipecat.frames.frames import (
     UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection
+from pipecat.services.settings import STTSettings
 from pipecat.services.stt_service import STTService
 
 from .turn_continuity import looks_semantically_incomplete
@@ -110,6 +111,8 @@ _FRENCH_LANGUAGE_MARKERS = frozenset(
         "votre",
     }
 )
+
+
 def _calc_dbfs(audio: bytes) -> float:
     """Calculate RMS dBFS of 16-bit mono PCM."""
     if len(audio) < 2:
@@ -242,7 +245,12 @@ class AntigravityLiveSTTService(STTService):
         **kwargs: Any,
     ) -> None:
         # Crucial: audio_passthrough=False ensures caller voice NEVER echoes into output transport
-        super().__init__(audio_passthrough=False, sample_rate=sample_rate, **kwargs)
+        super().__init__(
+            audio_passthrough=False,
+            sample_rate=sample_rate,
+            settings=STTSettings(model=None, language=language),
+            **kwargs,
+        )
         self._target_sample_rate = sample_rate
         self._language = language
         self._chunk_bytes = max(640, int(sample_rate * 2 * (chunk_duration_ms / 1000.0)))

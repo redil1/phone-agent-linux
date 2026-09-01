@@ -42,10 +42,7 @@ async def start_server(
 
 
 def test_normalize_ollama_base_url_accepts_legacy_v1() -> None:
-    assert (
-        normalize_ollama_base_url("http://127.0.0.1:11434/v1/")
-        == "http://127.0.0.1:11434"
-    )
+    assert normalize_ollama_base_url("http://127.0.0.1:11434/v1/") == "http://127.0.0.1:11434"
 
 
 @pytest.mark.asyncio
@@ -207,6 +204,38 @@ def test_context_conversion_preserves_multiturn_text_without_reasoning_prompt() 
         {"role": "assistant", "content": "Hello."},
         {"role": "user", "content": "Can you help?"},
     ]
+
+
+def test_long_context_keeps_system_state_and_latest_dialogue() -> None:
+    service = OllamaNativeLLMService(
+        model="test-model",
+        system_instruction="stable system",
+        prewarm_on_start=False,
+        num_ctx=5000,
+        num_predict=192,
+    )
+    turns: list[dict[str, str]] = []
+    for index in range(30):
+        turns.extend(
+            [
+                {"role": "user", "content": f"old caller {index} " + "x" * 500},
+                {"role": "assistant", "content": f"old answer {index} " + "y" * 500},
+            ]
+        )
+    turns.extend(
+        [
+            {"role": "system", "content": "verified_product_facts: Essential ten euros"},
+            {"role": "user", "content": "What is in the starter package?"},
+        ]
+    )
+
+    compacted = service._context_messages(LLMContext(turns))
+
+    assert compacted[0] == {"role": "system", "content": "stable system"}
+    assert any("Earlier dialogue was compacted" in item["content"] for item in compacted)
+    assert any("verified_product_facts" in item["content"] for item in compacted)
+    assert compacted[-1]["content"] == "What is in the starter package?"
+    assert not any("old caller 0" in item["content"] for item in compacted)
 
 
 class FakeOllamaClient:

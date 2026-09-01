@@ -144,11 +144,16 @@ class TaskRuntime:
         self.slots: tuple[SlotSpec, ...] = tuple(
             SlotSpec.parse(entry) for entry in contract.get("inputs_required", []) or []
         )
+        strategy = contract.get("conversation_strategy", []) or []
+        # A strategy also contains labelled policies such as "CALLER PRIORITY"
+        # and "OBJECTIONS". They are prompt rules, not runtime stages. A
+        # contract with explicit stage objects therefore uses only those
+        # objects; legacy all-string contracts keep their old parsing behavior.
+        explicit_stages = [entry for entry in strategy if isinstance(entry, dict)]
+        stage_entries = explicit_stages or strategy
         self.stages: tuple[StageSpec, ...] = tuple(
             stage
-            for stage in (
-                StageSpec.parse(entry) for entry in contract.get("conversation_strategy", []) or []
-            )
+            for stage in (StageSpec.parse(entry) for entry in stage_entries)
             if stage is not None
         )
         self.stop_conditions: tuple[str, ...] = tuple(

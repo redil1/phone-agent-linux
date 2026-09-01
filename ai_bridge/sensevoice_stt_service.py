@@ -32,6 +32,7 @@ from pipecat.frames.frames import (
     UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection
+from pipecat.services.settings import STTSettings
 from pipecat.services.stt_service import STTService
 
 from .turn_continuity import looks_semantically_incomplete
@@ -173,10 +174,10 @@ def prewarm_sensevoice(model_id: str = DEFAULT_MODEL, device: str | None = None)
     started = time.perf_counter()
     load_sensevoice_model(model_id, device=device)
     # Generate 0.5s of synthetic test audio to trigger first-pass CUDA kernel compilation
-    synthetic_pcm = (np.sin(np.linspace(0, 440 * 2 * np.pi * 0.5, 8000)) * 12000).astype(np.int16).tobytes()
-    _inference_executor().submit(
-        transcribe_pcm, synthetic_pcm, model_id, "auto", device
-    ).result()
+    synthetic_pcm = (
+        (np.sin(np.linspace(0, 440 * 2 * np.pi * 0.5, 8000)) * 12000).astype(np.int16).tobytes()
+    )
+    _inference_executor().submit(transcribe_pcm, synthetic_pcm, model_id, "auto", device).result()
     return (time.perf_counter() - started) * 1000
 
 
@@ -201,7 +202,12 @@ class SenseVoiceSTTService(STTService):
         speculative_pipeline_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
-        super().__init__(audio_passthrough=False, sample_rate=sample_rate, **kwargs)
+        super().__init__(
+            audio_passthrough=False,
+            sample_rate=sample_rate,
+            settings=STTSettings(model=model, language=language),
+            **kwargs,
+        )
         self._sample_rate = sample_rate
         self._model_id = model
         self._language = language
@@ -214,7 +220,9 @@ class SenseVoiceSTTService(STTService):
         self._tail_padding_bytes = int(sample_rate * SAMPLE_WIDTH * (_TAIL_PADDING_MS / 1000.0))
         self._echo_guard_db = echo_guard_db
         self._min_chars_per_second = min_chars_per_second
-        self._hallucination_audio_bytes = int(sample_rate * SAMPLE_WIDTH * (hallucination_audio_ms / 1000.0))
+        self._hallucination_audio_bytes = int(
+            sample_rate * SAMPLE_WIDTH * (hallucination_audio_ms / 1000.0)
+        )
         self._speculative_pipeline_enabled = speculative_pipeline_enabled
 
         self._buffer = bytearray()
@@ -360,9 +368,7 @@ class SenseVoiceSTTService(STTService):
                     and speech_bytes != self._prefetch_bytes
                     and (self._prefetch_task is None or self._prefetch_task.done())
                 ):
-                    self._prefetch_task = asyncio.create_task(
-                        self._run_prefetch(speech_bytes)
-                    )
+                    self._prefetch_task = asyncio.create_task(self._run_prefetch(speech_bytes))
 
                 required = self._endpoint_sec
                 if self._prefetch_text and looks_semantically_incomplete(self._prefetch_text):
@@ -425,9 +431,7 @@ class SenseVoiceSTTService(STTService):
                 len(snapshot) // (16 * SAMPLE_WIDTH),
                 text[:60],
             )
-            await self._invoke(
-                self._speculation_cancel_handler, "hallucinated_transcript"
-            )
+            await self._invoke(self._speculation_cancel_handler, "hallucinated_transcript")
             await self._end_speaking()
             return
         if not text:

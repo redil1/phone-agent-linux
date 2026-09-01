@@ -115,6 +115,33 @@ def test_personality_fidelity_judge_scoring() -> None:
     assert res.communication_style_score == 20.0
 
 
+def test_judge_fails_observed_mirroring_role_reset_and_product_evasion() -> None:
+    judge = PersonalityFidelityJudge()
+
+    mirrored = judge.evaluate_turn(
+        caller_input="Clear value is important.",
+        ai_response="I hear you, clear value is important.",
+        call_direction="outbound",
+    )
+    role_reset = judge.evaluate_turn(
+        caller_input="Hello?",
+        ai_response="Hello, how can I help you today?",
+        call_direction="outbound",
+    )
+    evasion = judge.evaluate_turn(
+        caller_input="What's in the starter package and how much is it?",
+        ai_response="Let me pull up the details for you.",
+        call_direction="outbound",
+    )
+
+    assert mirrored.passed is False
+    assert any("Mirrored" in item for item in mirrored.feedback)
+    assert role_reset.passed is False
+    assert any("inbound support" in item for item in role_reset.feedback)
+    assert evasion.passed is False
+    assert evasion.task_performance_score == 0.0
+
+
 def test_task_engine_contracts() -> None:
     engine = TaskEngine()
     contracts = engine.get_all_contracts()
@@ -145,8 +172,22 @@ def test_iptv_sales_contract_compiles_a_focused_human_playbook() -> None:
     assert "SALES CONVERSATION PLAYBOOK" in prompt
     assert "never_repeat_the_opening" in prompt
     assert "PRODUCT GROUND TRUTH" in prompt
+    assert "Essential is 10 euros a month" in prompt
+    assert "month-to-month with no long-term contract" in prompt
+    assert "Never say you will look up" in prompt
     assert "maximum 38 words" in prompt
     assert contract["opening_greeting"]["en"].startswith("Hello, this is Adam")
+
+
+def test_realtime_prompt_renders_structured_stages_as_instructions() -> None:
+    contract = TaskEngine().require_contract("iptv_subscription_sales")
+    prompt = PersonaCompiler(persona_path=DEFAULT_PERSONA_PATH).compile_realtime(
+        task_contract=contract,
+        language="en-US",
+    )
+
+    assert "- OPEN: Introduce Adam" in prompt
+    assert "{'name': 'OPEN'" not in prompt
 
 
 def test_human_conversation_compiles_into_the_system_prompt() -> None:
