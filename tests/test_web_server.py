@@ -740,6 +740,70 @@ def test_auto_answer_setting_starts_and_stops_receptionist(tmp_path: Path) -> No
     asyncio.run(_test())
 
 
+def test_provider_change_restarts_idle_resident_voice_host(tmp_path: Path) -> None:
+    async def _test() -> None:
+        server = _studio()
+        server.settings_path = tmp_path / "studio.json"
+        actions: list[str] = []
+
+        async def start() -> None:
+            actions.append("start")
+
+        async def stop() -> None:
+            actions.append("stop")
+
+        server._start_inbound_monitor = start  # type: ignore[method-assign]
+        server._stop_inbound_monitor = stop  # type: ignore[method-assign]
+        async with TestClient(TestServer(server.app)) as client:
+            actions.clear()
+            response = await client.post(
+                "/api/config",
+                json={"stt_provider": "sensevoice", "stt_model": "iic/SenseVoiceSmall"},
+            )
+            payload = await response.json()
+            assert actions == ["stop", "start"]
+
+        assert response.status == 200
+        assert payload["config"]["stt_provider"] == "sensevoice"
+        assert "warming" in payload["message"].lower()
+
+    asyncio.run(_test())
+
+
+def test_provider_change_during_call_defers_voice_host_restart(tmp_path: Path) -> None:
+    async def _test() -> None:
+        server = _studio()
+        server.settings_path = tmp_path / "studio.json"
+        server.call_state = "ACTIVE"
+        server._warm_call_active = True
+        actions: list[str] = []
+
+        async def start() -> None:
+            actions.append("start")
+
+        async def stop() -> None:
+            actions.append("stop")
+
+        server._start_inbound_monitor = start  # type: ignore[method-assign]
+        server._stop_inbound_monitor = stop  # type: ignore[method-assign]
+        async with TestClient(TestServer(server.app)) as client:
+            actions.clear()
+            response = await client.post(
+                "/api/config",
+                json={"stt_provider": "sensevoice", "stt_model": "iic/SenseVoiceSmall"},
+            )
+            payload = await response.json()
+            assert actions == []
+            assert server._restart_voice_host_after_call is True
+            assert "after the current call" in payload["message"].lower()
+
+            await server._finish_call_bookkeeping()
+            assert actions == ["stop", "start"]
+            assert server._restart_voice_host_after_call is False
+
+    asyncio.run(_test())
+
+
 def test_inbound_supervisor_reports_listening_and_uses_no_dial_argument(monkeypatch) -> None:
     class FakeStdout:
         def __init__(self) -> None:

@@ -333,6 +333,10 @@ class PhoneAgentWebServer:
         # learned from its published state transitions instead.
         self._warm_call_active = False
         self._warm_call_finished = asyncio.Event()
+        # Provider/task settings are baked into the resident voice host's
+        # environment. If they change during a call, keep that call alive and
+        # replace the host as soon as it finishes.
+        self._restart_voice_host_after_call = False
         self._receptionist_task: asyncio.Task[None] | None = None
         self._shutting_down = False
         self.receptionist_state = "disabled"
@@ -1893,6 +1897,11 @@ class PhoneAgentWebServer:
             logger.warning("GPU Model Preloader warning: %s", exc)
 
     async def handle_post_config(self, request: web.Request) -> web.Response:
+        old_host_environment = self._child_environment(
+            auto_answer=self.auto_answer_enabled,
+            call_channel="gsm",
+            command_stdin=True,
+        )
         try:
             data = await request.json()
             if not isinstance(data, dict):
@@ -1925,23 +1934,37 @@ class PhoneAgentWebServer:
         self.config = candidate
         self.task_id = task_id
         self.system_prompt = system_prompt
-        auto_answer_changed = auto_answer_enabled != self.auto_answer_enabled
         self.auto_answer_enabled = auto_answer_enabled
+        new_host_environment = self._child_environment(
+            auto_answer=self.auto_answer_enabled,
+            call_channel="gsm",
+            command_stdin=True,
+        )
+        voice_host_changed = old_host_environment != new_host_environment
         try:
             await asyncio.to_thread(self._persist_settings)
         except OSError as exc:
             return web.json_response({"status": "error", "message": str(exc)}, status=500)
         await self.broadcast({"type": "config_updated", "config": self._public_config()})
-        if auto_answer_changed:
-            # Restart rather than stop: the child's auto_answer is baked into its
-            # environment, and turning answering off must not throw away a warm
-            # host that the next outbound dial would have reused.
-            await self._stop_inbound_monitor()
-            await self._start_inbound_monitor()
+        if voice_host_changed:
+            # Every provider/task setting is baked into the resident child's
+            # environment, not only auto-answer. Reusing a host after changing
+            # STT previously made the Studio show SenseVoice while the next
+            # call still ran the old Whisper process. Never terminate an active
+            # call; replace its host immediately afterwards instead.
+            if self.call_state == "IDLE" and not self._warm_call_active:
+                await self._stop_inbound_monitor()
+                await self._start_inbound_monitor()
+            else:
+                self._restart_voice_host_after_call = True
         return web.json_response(
             {
                 "status": "ok",
-                "message": "Settings saved. They will apply to the next call.",
+                "message": (
+                    "Settings saved. The voice host will restart after the current call."
+                    if self._restart_voice_host_after_call
+                    else "Settings applied. The voice host is warming for the next call."
+                ),
                 "config": self._public_config(),
             }
         )
@@ -3213,6 +3236,9 @@ class PhoneAgentWebServer:
         await self.set_call_state("IDLE")
         if self._active_campaign_member_id:
             self._restore_campaign_settings()
+        if self._restart_voice_host_after_call:
+            self._restart_voice_host_after_call = False
+            await self._stop_inbound_monitor()
         await self._start_inbound_monitor()
 
     def _note_warm_call_state(self, state: str) -> None:
