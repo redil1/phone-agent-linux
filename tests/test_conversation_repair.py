@@ -152,15 +152,8 @@ def _runtime(tmp_path: Any) -> AgentPolicyRuntime:
     )
 
 
-def test_an_already_spoken_sentence_is_blocked(tmp_path: Any) -> None:
-    """The real call said the identical sentence twice.
-
-    The invariant is that the caller never hears it twice. Asserting the guard
-    returned exactly "" encoded one particular way of achieving that, and
-    returning "" as the first sentence of a turn leaves dead silence on a live
-    call. The guard now substitutes a forward-moving question instead, so this
-    asserts the property rather than the old mechanism.
-    """
+def test_an_already_spoken_sentence_is_observed_but_not_rewritten(tmp_path: Any) -> None:
+    """Dialogue stays model-owned even when telemetry detects repetition."""
 
     runtime = _runtime(tmp_path)
     sentence = "Pour commencer, qu'est-ce que vous regardez le plus souvent ?"
@@ -168,34 +161,84 @@ def test_an_already_spoken_sentence_is_blocked(tmp_path: Any) -> None:
     assert spoken and stop is False
 
     repeated, stop_again = runtime.guard_sentence(sentence, is_first=True)
-    assert repeated != sentence, "the caller must not hear the same sentence twice"
-    assert repeated != "", "and must not hear dead silence in its place"
-    assert stop_again is True
+    assert repeated == spoken
+    assert stop_again is False
 
 
-def test_a_mid_turn_repeat_is_dropped_outright(tmp_path: Any) -> None:
-    """Mid-turn there is nothing to cover, so the repeat is simply dropped."""
+def test_a_mid_turn_repeat_is_not_dropped_or_replaced(tmp_path: Any) -> None:
 
     runtime = _runtime(tmp_path)
     sentence = "Pour commencer, qu'est-ce que vous regardez le plus souvent ?"
-    runtime.guard_sentence(sentence, is_first=True)
+    spoken, _ = runtime.guard_sentence(sentence, is_first=True)
     repeated, stop = runtime.guard_sentence(sentence, is_first=False)
-    assert repeated == ""
-    assert stop is True
+    assert repeated == spoken
+    assert stop is False
 
 
 def test_a_different_sentence_is_still_allowed(tmp_path: Any) -> None:
-    """Only repeats are blocked. A second *statement* still passes.
-
-    A second question would now be dropped by the one-question-per-turn rule,
-    which is a different guard with its own tests.
-    """
+    """Dialogue policy observes content but does not suppress model output."""
 
     runtime = _runtime(tmp_path)
     runtime.guard_sentence("Vous regardez surtout le sport, d'accord.", is_first=True)
     spoken, stop = runtime.guard_sentence("Je note cela pour la suite.", is_first=False)
     assert spoken
     assert stop is False
+
+
+@pytest.mark.asyncio
+async def test_repetition_is_flagged_after_speech_without_controlling_dialogue(
+    tmp_path: Any,
+) -> None:
+    runtime = _runtime(tmp_path)
+    sentence = "Would that kind of improvement be worth exploring for you?"
+
+    first, first_evaluation = await runtime.finalize_response(sentence)
+    repeated, repeated_evaluation = await runtime.finalize_response(sentence)
+
+    assert first == repeated == sentence
+    assert first_evaluation.passed is True
+    assert repeated_evaluation.passed is False
+    assert "Repeated an earlier AI turn verbatim" in repeated_evaluation.feedback
+
+
+@pytest.mark.asyncio
+async def test_clarification_question_cannot_be_replaced_by_sales_stage_logic(
+    tmp_path: Any,
+) -> None:
+    runtime = _runtime(tmp_path)
+    await runtime.finalize_response(
+        "Would that kind of improvement be worth exploring for you?"
+    )
+    await runtime.observe_transcription("What improvements?")
+
+    explanation = (
+        "I mean using one service instead of several separate subscriptions, "
+        "with the channels you actually watch in one place."
+    )
+    spoken, evaluation = await runtime.finalize_response(explanation)
+
+    assert spoken == explanation
+    assert evaluation.passed is True
+    assert runtime._latest_turn_quality == "actionable"
+    assert "Respond to the caller's actual meaning directly" in runtime._latest_turn_guidance
+
+
+@pytest.mark.asyncio
+async def test_fragment_does_not_advance_task_or_prospecting_stage(tmp_path: Any) -> None:
+    runtime = _runtime(tmp_path)
+    await runtime.finalize_response(
+        "Hello, this is Adam. Is now a good time for one question?",
+        response_kind="greeting",
+    )
+    await runtime.observe_transcription("Yes.")
+    phase_before = runtime.call_context.phase
+    task_before = dict(runtime.task.state)
+
+    await runtime.observe_transcription("What's...")
+
+    assert runtime.call_context.phase is phase_before
+    assert runtime.task.state == task_before
+    assert runtime._latest_turn_quality == "fragment"
 
 
 def test_question_state_tracks_whether_an_answer_is_expected(tmp_path: Any) -> None:
@@ -233,15 +276,17 @@ def _run(processor: Any, text: str) -> None:
     )
 
 
-def test_unclear_turn_is_repaired_and_never_reaches_the_model(tmp_path: Any) -> None:
+def test_unclear_turn_reaches_the_model_with_repair_guidance(tmp_path: Any) -> None:
     runtime = _runtime(tmp_path)
     processor = ConversationRepairProcessor(runtime)
     sink = _Sink(processor)
 
     _run(processor, "Hello?")
 
-    assert sink.forwarded() == [], "an unclear turn must not reach the model"
-    assert len(sink.spoken()) == 1, "the caller must hear a repair instead"
+    assert sink.forwarded() == ["Hello?"]
+    assert sink.spoken() == []
+    assert runtime._latest_turn_quality == "fragment"
+    assert "ask a brief context-aware clarification" in runtime._latest_turn_guidance
 
 
 def test_backchannel_is_ignored_entirely(tmp_path: Any) -> None:
@@ -277,8 +322,7 @@ def test_real_turn_passes_through_untouched(tmp_path: Any) -> None:
     assert sink.spoken() == []
 
 
-def test_repeat_request_repeats_our_own_last_turn(tmp_path: Any) -> None:
-    """They did not hear us; moving to new content ignores that."""
+def test_repeat_request_is_delegated_to_the_model_with_context(tmp_path: Any) -> None:
 
     runtime = _runtime(tmp_path)
     runtime.guard_sentence("Vous regardez surtout le sport ?", is_first=True)
@@ -287,9 +331,10 @@ def test_repeat_request_repeats_our_own_last_turn(tmp_path: Any) -> None:
 
     _run(processor, "Hein ?")
 
-    spoken = sink.spoken()
-    assert len(spoken) == 1
-    assert "sport" in spoken[0], "the repeat must contain what was actually said"
+    assert sink.forwarded() == ["Hein ?"]
+    assert sink.spoken() == []
+    assert runtime._latest_turn_quality == "repeat_request"
+    assert "Rephrase it more simply" in runtime._latest_turn_guidance
 
 
 def test_repair_can_be_disabled_for_a_controlled_comparison(tmp_path: Any) -> None:
@@ -328,6 +373,13 @@ def test_greeting_question_keeps_the_answer_actionable(tmp_path: Any) -> None:
     )
     for answer in ("Yeah.", "Yes.", "Yes, I'm available."):
         assert runtime.classify_turn(answer) is TurnQuality.ACTIONABLE, answer
+
+
+def test_clear_refusal_outranks_short_backchannel_heuristic(tmp_path: Any) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.note_opening_attempted()
+
+    assert runtime.classify_turn("No.") is TurnQuality.ACTIONABLE
 
 
 def test_a_short_wrong_language_reply_is_blocked() -> None:

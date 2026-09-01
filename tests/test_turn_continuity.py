@@ -34,7 +34,10 @@ def test_endpointing_recognizes_trailing_fragments_without_suppressing_real_ques
     assert not is_semantically_incomplete_fragment("why")
 
 
-@pytest.mark.parametrize("text", ["Hello,", "Bonjour,", "So the thing is:", "I mean -"])
+@pytest.mark.parametrize(
+    "text",
+    ["Hello,", "Bonjour,", "So the thing is:", "I mean -", "What's...", "Alors…"],
+)
 def test_clauses_left_on_continuation_punctuation_wait_longer(text: str) -> None:
     # A comma is the caller drawing breath. Endpointing on it committed
     # "Hello," as a whole turn and the agent answered a greeting fragment.
@@ -47,7 +50,7 @@ def test_terminated_sentences_still_endpoint_immediately(text: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_incomplete_fragment_cannot_trigger_a_model_turn() -> None:
+async def test_incomplete_fragment_reaches_model_for_natural_clarification() -> None:
     processor = SemanticTurnGuardProcessor()
     pushed: list[Any] = []
 
@@ -61,7 +64,7 @@ async def test_incomplete_fragment_cannot_trigger_a_model_turn() -> None:
     )
     await processor.process_frame(UserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
 
-    assert not any(isinstance(frame, TranscriptionFrame) for frame, _direction in pushed)
+    assert any(isinstance(frame, TranscriptionFrame) for frame, _direction in pushed)
     assert any(isinstance(frame, UserStoppedSpeakingFrame) for frame, _direction in pushed)
 
 

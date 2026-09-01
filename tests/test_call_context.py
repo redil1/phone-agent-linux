@@ -19,9 +19,9 @@ def test_outbound_permission_is_not_product_interest() -> None:
     assert context.interest is InterestState.UNKNOWN
     assert context.product_qualification_unlocked is False
     state = context.state_block("Which device do you use?")
-    assert "product_qualification_unlocked: no" in state
-    assert "locked_until_explicit_interest" in state
-    assert "current" in state
+    assert "explicit_product_interest_observed: no" in state
+    assert "Which device do you use?" in state
+    assert "Ask one open, non-product question" in state
 
 
 def test_outbound_develops_need_then_checks_interest_before_qualification() -> None:
@@ -41,7 +41,7 @@ def test_outbound_develops_need_then_checks_interest_before_qualification() -> N
     assert context.phase is ProspectingPhase.INTEREST_CHECK
     move, question = context.steering("Which device do you use?")
     assert "verified outcome" in move
-    assert question == "locked_until_explicit_interest"
+    assert question == "Which device do you use?"
 
     context.observe_caller_turn("Yes, that sounds useful.", permission_state="granted")
     assert context.phase is ProspectingPhase.PRODUCT_QUALIFICATION
@@ -75,7 +75,7 @@ def test_outbound_refusal_closes_without_another_sales_question() -> None:
     assert context.interest is InterestState.NOT_INTERESTED
     move, question = context.steering("Which package do you want?")
     assert "Close politely" in move
-    assert question == "locked"
+    assert question == "Which package do you want?"
 
 
 def test_inbound_call_starts_with_caller_intent_and_direct_discovery() -> None:

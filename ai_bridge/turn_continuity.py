@@ -102,7 +102,14 @@ def looks_semantically_incomplete(text: str) -> bool:
     """Endpointing hint for fragments or sentences that clearly trail off."""
 
     normalized = " ".join(text.strip().casefold().split())
-    if not normalized or normalized.endswith((".", "!", "?")):
+    if not normalized:
+        return False
+    # An ellipsis is continuation punctuation, not a completed sentence. The
+    # previous terminal-punctuation shortcut classified "What's..." as final,
+    # which split one caller thought into multiple model turns.
+    if normalized.endswith("…") or re.search(r"\.{2,}$", normalized):
+        return True
+    if normalized.endswith((".", "!", "?")):
         return False
     if normalized.endswith((",", ";", ":", "-", "—")):
         return True
@@ -130,18 +137,23 @@ def dynamic_endpoint_delay_ms(partial_text: str, base_silence_ms: int = 700) -> 
 
 
 class SemanticTurnGuardProcessor(FrameProcessor):
-    """Prevent incomplete final transcripts from becoming artificial LLM turns."""
+    """Observe incomplete turns while allowing model-led clarification.
+
+    STT backends use :func:`looks_semantically_incomplete` to wait longer
+    before committing a turn. If a fragment is still final after that wait, it
+    must reach the model: suppressing it produces dead silence, while the model
+    can naturally ask what the caller meant using the live turn-quality hint.
+    """
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if (
             direction is FrameDirection.DOWNSTREAM
             and isinstance(frame, TranscriptionFrame)
-            and is_semantically_incomplete_fragment(frame.text)
+            and looks_semantically_incomplete(frame.text)
         ):
-            logger.warning(
-                "Suppressed semantically incomplete caller fragment chars=%d",
+            logger.info(
+                "Forwarded incomplete caller turn for model-led clarification chars=%d",
                 len(frame.text.strip()),
             )
-            return
         await self.push_frame(frame, direction)

@@ -1,8 +1,8 @@
-"""Direction-aware conversation strategy above product task qualification.
+"""Direction-aware advisory context for natural model-led conversation.
 
 Permission to continue a cold outbound call is not product interest.  This
-small state machine keeps that distinction explicit and provider-independent,
-so both cascade and Realtime calls receive the same prospecting strategy.
+small state tracker keeps that distinction visible to the model without
+rewriting, rejecting, or substituting anything the model says.
 """
 
 from __future__ import annotations
@@ -62,15 +62,6 @@ _NEED_SIGNAL = re.compile(
     r"films?|séries?|abonnement|télévision)\b",
     re.IGNORECASE,
 )
-_PRODUCT_QUALIFICATION_QUESTION = re.compile(
-    r"\b(?:which|what|quel|quelle|quels|quelles)\b.{0,45}\b(?:device|appareil|"
-    r"smart tv|firestick|package|plan|forfait|budget|channels?|chaînes?)\b|"
-    r"\b(?:monthly|yearly|three months|six months|twelve months|mensuel|annuel|"
-    r"trois mois|six mois|douze mois)\b",
-    re.IGNORECASE,
-)
-
-
 def normalize_direction(value: str | CallDirection) -> CallDirection:
     try:
         return CallDirection(str(value).strip().lower())
@@ -142,21 +133,25 @@ class CallContextPolicy:
 - Do not force a cold-sales permission script onto an inbound caller.
 - Still verify facts, listen first, and never assume the exact product or action they want."""
         return """# CALL DIRECTION — OUTBOUND COLD PROSPECTING
-- You initiated this call to the prospect. Never ask 'What made you decide to call today?' or 'Why did you call?' because YOU are the one who dialed them.
+- You initiated this call to the prospect. Never ask why they called or what made them decide
+  to call, because YOU are the one who dialed them.
 - Permission to continue means only “you may speak”; it NEVER means interest, need,
   or buying intent.
-- After permission, do not jump to device, package, price, plan, trial, payment, or setup questions.
-- First establish relevance with one open question about how they currently handle the subject.
+- Treat the sequence below as ethical strategy, not as a script or a reason to dodge the caller.
+- Answer direct questions, corrections, and requests for clarification before returning naturally
+  to discovery.
+- Usually establish relevance before asking about device, package, price, plan, trial, payment,
+  or setup.
 - Discover a real frustration, limitation, desired result, cost, risk, or missed opportunity.
 - Create demand ethically: reflect their own situation, connect it to one verified useful outcome,
   and let them decide whether that outcome is worth exploring.
-- Test interest explicitly before product qualification. Only after a genuine interest signal may
-  you ask fit questions such as device, package, budget, channels, or setup.
+- Prefer to establish genuine interest before fit questions such as device, package, budget,
+  channels, or setup, unless the caller asks about one of those topics first.
 - Never manufacture a problem, use fake urgency, pressure, or treat politeness as consent.
 - A clear lack of interest ends selling immediately and respectfully."""
 
     def steering(self, task_question: str) -> tuple[str, str]:
-        """Return the allowed next move and gated task question."""
+        """Return an optional strategy hint and an optional task topic."""
 
         if self.direction is CallDirection.INBOUND:
             return (
@@ -164,89 +159,43 @@ class CallContextPolicy:
                 task_question,
             )
         if self.phase is ProspectingPhase.AWAIT_PERMISSION:
-            return ("Wait for a clear answer to the opening permission question.", "locked")
+            return (
+                "Listen for the answer to the opening permission question, while still "
+                "answering anything the caller asks.",
+                task_question,
+            )
         if self.phase is ProspectingPhase.RELEVANCE_DISCOVERY:
             return (
                 "Ask one open, non-product question about how they currently handle this area.",
-                "locked_until_explicit_interest",
+                task_question,
             )
         if self.phase is ProspectingPhase.NEED_DEVELOPMENT:
             return (
                 "Reflect their situation, then ask what they would most like to improve or avoid.",
-                "locked_until_explicit_interest",
+                task_question,
             )
         if self.phase is ProspectingPhase.INTEREST_CHECK:
             return (
                 "Connect their stated need to one verified outcome, then ask whether "
                 "it is worth exploring.",
-                "locked_until_explicit_interest",
+                task_question,
             )
         if self.phase is ProspectingPhase.CLOSE:
-            return ("Close politely with no further sales question.", "locked")
+            return ("Close politely with no further sales question.", task_question)
         return ("Interest is explicit; continue with task qualification.", task_question)
 
     def state_block(self, task_question: str) -> str:
-        move, permitted_question = self.steering(task_question)
+        move, suggested_question = self.steering(task_question)
         return (
             f"call_direction: {self.direction.value}\n"
             f"conversation_mode: {self.mode}\n"
             f"prospecting_phase: {self.phase.value}\n"
             f"prospect_interest: {self.interest.value}\n"
-            f"product_qualification_unlocked: "
+            f"explicit_product_interest_observed: "
             f"{'yes' if self.product_qualification_unlocked else 'no'}\n"
-            f"required_next_move: {move}\n"
-            f"task_product_question: {permitted_question}"
+            f"conversation_strategy_hint: {move}\n"
+            f"optional_task_topic: {suggested_question}"
         )
-
-    def is_premature_product_qualification(self, text: str) -> bool:
-        return bool(
-            self.direction is CallDirection.OUTBOUND
-            and not self.product_qualification_unlocked
-            and "?" in str(text)
-            and _PRODUCT_QUALIFICATION_QUESTION.search(str(text))
-        )
-
-    def safe_replacement_question(
-        self,
-        language: str,
-        spoken_history: set[str] | None = None,
-    ) -> str:
-        french = str(language).lower().startswith("fr")
-        if self.phase is ProspectingPhase.INTEREST_CHECK:
-            candidates = [
-                "Est-ce que ce type d'amélioration vaudrait la peine d'être exploré pour vous ?"
-                if french
-                else "Would that kind of improvement be worth exploring for you?",
-                "Qu'en pensez-vous, est-ce que cela pourrait vous être utile ?"
-                if french
-                else "What do you think, could that be helpful for your setup?",
-                "Est-ce que vous aimeriez voir comment notre offre se compare à votre service actuel ?"
-                if french
-                else "Would you like to see how our options compare to your current setup?",
-            ]
-        elif self.phase is ProspectingPhase.NEED_DEVELOPMENT:
-            candidates = [
-                "Qu'est-ce que vous aimeriez surtout améliorer dans votre solution actuelle ?"
-                if french
-                else "What would you most like to improve about your current setup?",
-                "Quels sont les programmes ou chaînes que vous regardez le plus souvent ?"
-                if french
-                else "What channels or shows do you find yourself watching most?",
-            ]
-        else:
-            candidates = [
-                "Comment regardez-vous actuellement les programmes qui comptent le plus pour vous ?"
-                if french
-                else "How do you currently watch the programs that matter most to you?",
-                "Quel est votre équipement principal pour la télévision à la maison ?"
-                if french
-                else "What is your main TV setup at home right now?",
-            ]
-        if spoken_history:
-            for c in candidates:
-                if c not in spoken_history:
-                    return c
-        return candidates[0]
 
     def opening_greeting(
         self,

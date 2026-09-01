@@ -882,9 +882,8 @@ class ProductionCallPipeline:
                     "conversational reflexes unsupported by selected TTS; using normal path"
                 )
         if not self._native_tools:
-            # Upstream of the response policy on purpose: that processor releases
-            # sentences to speech, so an unparsed tool block reaching it would be
-            # read aloud to the caller as raw JSON.
+            # Upstream of the response streamer on purpose: an unparsed tool
+            # block reaching it would be read aloud to the caller as raw JSON.
             self.tool_processor = ToolCallProcessor(
                 self.tools,
                 context=self.context,

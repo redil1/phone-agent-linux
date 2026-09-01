@@ -1,4 +1,4 @@
-"""Decide whether a caller turn is something to answer at all.
+"""Annotate caller-turn quality without scripting the AI's response.
 
 This sits between recognition and the language model. The model only ever sees
 text, so it cannot tell that "Hello?" was the caller checking whether the line
@@ -6,9 +6,11 @@ is alive, that "Mm-hmm." was a backchannel, or that "I think." was a cough the
 recognizer guessed at. On real calls it answered all three with a full sales
 pitch, which is the clearest possible sign of a machine.
 
-Turns carrying nothing to answer never reach the model. They are answered from
-the persona's own wordings instead, which is both more controlled and faster -
-a person reacts to not hearing something immediately, not after thinking.
+The model receives every meaningful turn plus a live-system hint describing
+whether it sounded actionable, incomplete, unintelligible, or like a request to
+repeat. Only a true backchannel spoken over the agent is discarded. This keeps
+acoustic knowledge outside the LLM while leaving all conversational wording and
+reasoning inside it.
 """
 
 from __future__ import annotations
@@ -20,7 +22,6 @@ from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
     Frame,
     TranscriptionFrame,
-    TTSSpeakFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
@@ -31,7 +32,7 @@ logger = logging.getLogger("PhoneAgentRepair")
 
 
 class ConversationRepairProcessor(FrameProcessor):
-    """Answer unclear turns from the persona; pass real turns to the model."""
+    """Give the LLM turn-quality context and otherwise stay out of dialogue."""
 
     def __init__(self, runtime: AgentPolicyRuntime, *, enabled: bool = True) -> None:
         super().__init__()
@@ -41,19 +42,6 @@ class ConversationRepairProcessor(FrameProcessor):
         # speaker. Once the agent has stopped and is waiting, anything the
         # caller says is a turn - dropping it leaves both sides silent.
         self._bot_speaking = False
-
-    async def _speak(self, text: str, quality: TurnQuality) -> None:
-        """Say a persona wording directly, without a model round trip."""
-
-        if not text:
-            return
-        self.runtime.note_repair_delivered()
-        logger.info("Repaired caller turn quality=%s chars=%d", quality.value, len(text))
-        # append_to_context=False: a repair is not part of the conversation's
-        # meaning, and letting it into context teaches the model to repeat it.
-        await self.push_frame(
-            TTSSpeakFrame(text, append_to_context=False), FrameDirection.DOWNSTREAM
-        )
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         if isinstance(frame, BotStartedSpeakingFrame):
@@ -70,6 +58,7 @@ class ConversationRepairProcessor(FrameProcessor):
             return
 
         quality = self.runtime.classify_turn(frame.text)
+        self.runtime.note_turn_quality(quality)
 
         if quality is TurnQuality.ACTIONABLE:
             self.runtime.note_turn_understood()
@@ -94,33 +83,13 @@ class ConversationRepairProcessor(FrameProcessor):
             )
             return
 
-        if quality is TurnQuality.REPEAT_REQUEST:
-            # They did not hear the last turn. Moving to new content ignores
-            # that; repeat what was actually said.
-            previous = self.runtime.last_spoken_turn()
-            if previous:
-                await self._speak(
-                    f"{self.runtime.repair.repeat_preamble()} {previous}", quality
-                )
-            else:
-                await self._speak(self.runtime.repair.next_repair(), quality)
-            return
-
-        if quality is TurnQuality.NOT_NOW:
-            await self._speak(self.runtime.repair.not_now_reply(), quality)
-            return
-
-        if quality is TurnQuality.IDENTITY_CHALLENGE:
-            identity = self.runtime.persona_compiler.effective_identity
-            await self._speak(
-                self.runtime.repair.identity_reply(
-                    name=str(identity.get("name", "")),
-                    company=str(identity.get("company", "OXzoon")),
-                ),
-                quality,
-            )
-            return
-
-        # FRAGMENT or UNINTELLIGIBLE: ask again, escalating each consecutive
-        # time rather than repeating one apology.
-        await self._speak(self.runtime.repair.next_repair(), quality)
+        # Repeat requests, bad timing, identity challenges, fragments, and
+        # unintelligible audio all need contextual reasoning. Pass the caller's
+        # words through and let the model respond using the quality guidance in
+        # the mutable live-state system message.
+        logger.info(
+            "Delegated caller-turn recovery to model quality=%s chars=%d",
+            quality.value,
+            len(frame.text.strip()),
+        )
+        await self.push_frame(frame, direction)

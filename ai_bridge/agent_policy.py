@@ -35,13 +35,13 @@ from .human_speech import (
     detect_language,
     detect_register,
     normalize_for_speech,
-    violates_language_lock,
 )
 from .memory.memory_manager import LayeredMemoryManager
 from .memory.memory_writer import ValidatedMemoryWriter
 from .personality.persona_compiler import PersonaCompiler
 from .tasks.call_state import CallOutcome, TaskRuntime
 from .tasks.task_engine import TaskEngine
+from .turn_continuity import looks_semantically_incomplete
 
 EventSink = Callable[[dict[str, Any]], Any]
 logger = logging.getLogger("PhoneAgentPolicy")
@@ -113,11 +113,11 @@ class AgentPolicyRuntime:
             overrides=self.persona_compiler.repair_phrases(language),
         )
         self.acknowledgements = VariedPhrasePicker(pool=acknowledgements_for(language))
-        # Exact repeats are invisible to a model that does not reliably recall
-        # its own output, and they were audible on real calls.
+        # These are observational. They inform the live prompt and evaluator;
+        # they never substitute canned dialogue into the model's response.
         self._spoken_sentences: deque[str] = deque(maxlen=24)
+        self._completed_ai_turns: deque[str] = deque(maxlen=12)
         self._question_open = False
-        self._asked_question_this_turn = False
         # Incremented on every caller turn. A reply generated for an older turn
         # is stale: the caller has already moved on, and speaking it produces
         # two answers to two versions of the same question.
@@ -140,6 +140,10 @@ class AgentPolicyRuntime:
         self._permission_state = "unknown"
         self._conversation_stage = "OPEN"
         self._last_caller_intent = "unknown"
+        self._latest_turn_quality = "unknown"
+        self._latest_turn_guidance = (
+            "Listen to the caller's latest meaning and answer it directly."
+        )
         self._last_ai_response = ""
         self._last_ai_delivery = "none"
         self._closed = False
@@ -249,7 +253,7 @@ class AgentPolicyRuntime:
         logger.info("Caller language switched to %s", code)
 
     def live_state_instructions(self) -> str:
-        """Return compact current-call steering suitable for a Realtime update."""
+        """Return advisory state for the model without scripting its next reply."""
 
         last_response = " ".join(self._last_ai_response.split())[:300] or "none"
         known = "; ".join(f"{key}={value}" for key, value in self.task.state.items()) or "none"
@@ -259,33 +263,32 @@ class AgentPolicyRuntime:
         if missing:
             nxt = missing[0]
             next_question = nxt.question or f"what their {nxt.id.replace('_', ' ')} is"
-        required_move, permitted_question = self.call_context.steering(next_question)
-        if not self.call_context.product_qualification_unlocked:
-            next_question = required_move
-            missing_names = "product qualification locked until explicit interest"
+        strategy_hint, _permitted_question = self.call_context.steering(next_question)
         return (
-            "# INTERNAL LIVE CALL STATE — never read or mention this block aloud\n"
-            f"{self.call_context.state_block(permitted_question)}\n"
+            "# INTERNAL LIVE CALL CONTEXT — never read or mention this block aloud\n"
+            "This is advisory context, not a script. The caller's latest meaning always outranks "
+            "task order, sales stages, missing fields, and sample phrases.\n"
+            f"{self.call_context.state_block(next_question)}\n"
             f"opening_already_attempted: {'yes' if self._opening_attempted else 'no'}\n"
             f"permission_to_continue: {self._permission_state}\n"
             f"current_conversation_stage: {self._conversation_stage}\n"
             f"latest_caller_intent: {self._last_caller_intent}\n"
+            f"latest_caller_turn_quality: {self._latest_turn_quality}\n"
+            f"latest_turn_guidance: {self._latest_turn_guidance}\n"
             f"reply_language: {'French' if self._caller_language == 'fr' else 'English'}\n"
             f"last_ai_turn_delivery: {self._last_ai_delivery}\n"
             f"last_ai_turn_text: {last_response}\n"
-            f"already_answered (never ask these again): {known}\n"
-            f"still_needed: {missing_names}\n"
-            f"next useful discovery question: {next_question}\n"
-            "Continuity rules: Never introduce yourself or the company again when "
-            "opening_already_attempted is yes. Never ask permission again when permission is "
-            "granted. The opening already contained the permission question; if permission is "
-            "still unknown, do not merely paraphrase and repeat that question—respond to the "
-            "caller's actual words or ask for one brief clarification. If latest_caller_intent "
-            "is goodbye or permission_refused, say one brief "
-            "polite goodbye, ask no question, and end the conversation. If the previous AI turn "
-            "was interrupted, respond to the caller's latest meaning and continue from the "
-            "current stage; never restart the script. Ask only one short, relevant question at "
-            "a time."
+            f"facts_already_collected: {known}\n"
+            f"uncollected_context (discover only when natural): {missing_names}\n"
+            f"optional_next_topic: {next_question}\n"
+            f"strategy_hint (optional): {strategy_hint}\n"
+            "Natural conversation rules: Answer direct questions, corrections, confusion, and "
+            "requests to explain before pursuing the objective. If the latest words may be "
+            "garbled or incomplete, do not guess and do not advance task state; ask one brief, "
+            "context-aware clarification. Never use a generic fallback question. Never repeat "
+            "the last AI sentence; rephrase or respond to what changed. Missing task fields are "
+            "notes for later, never reasons to ignore the caller. If latest_caller_intent is "
+            "goodbye or permission_refused, close briefly with no sales question."
         )
 
     def _refresh_live_state(self) -> None:
@@ -293,63 +296,22 @@ class AgentPolicyRuntime:
             return
         self._live_state_message["content"] = self.live_state_instructions()
 
-    def _repeats_opening_or_permission(self, text: str) -> bool:
-        normalized = " ".join(text.casefold().split())
-        patterns = (
-            r"\b(?:bonjour|bonsoir)\b.{0,80}\b(?:je suis|ici)\b",
-            r"\bje vous appelle\b.{0,100}\b(?:iptv|abonnement|subscription)\b",
-            r"\b(?:est ce|est-ce|c est|c'est)\b.{0,60}\b(?:bon moment|quelques minutes)\b",
-            r"\b(?:hello|hi|good morning|good afternoon)\b.{0,80}\b(?:this is|i am|i'm)\b",
-            r"\bi(?:'m| am) calling\b.{0,100}\b(?:iptv|subscription)\b",
-            r"\b(?:is this|is it)\b.{0,50}\b(?:good time|quick conversation|few minutes)\b",
-        )
-        return any(re.search(pattern, normalized) for pattern in patterns)
-
-    def _continuity_guard(self, text: str) -> tuple[str, bool]:
-        if not self._opening_attempted or not self._repeats_opening_or_permission(text):
-            return text, False
-        # Remove repetitive self-introduction phrases if model repeated them, but keep the actual response content
-        cleaned = text
-        patterns = (
-            r"\b(?:bonjour|bonsoir)\b.{0,80}\b(?:je suis|ici)\b[^.!?]*[.!?]*",
-            r"\bje vous appelle\b.{0,100}\b(?:iptv|abonnement|subscription)\b[^.!?]*[.!?]*",
-            r"\b(?:est ce|est-ce|c est|c'est)\b.{0,60}\b(?:bon moment|quelques minutes)\b[^.!?]*[.!?]*",
-            r"\b(?:hello|hi|good morning|good afternoon)\b.{0,80}\b(?:this is|i am|i'm)\b[^.!?]*[.!?]*",
-            r"\bi(?:'m| am) calling\b.{0,100}\b(?:iptv|subscription)\b[^.!?]*[.!?]*",
-            r"\b(?:is this|is it)\b.{0,50}\b(?:good time|quick conversation|few minutes)\b[^.!?]*[.!?]*",
-        )
-        for pattern in patterns:
-            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
-        if cleaned:
-            # The model appended something real after a redundant re-introduction:
-            # keep that and drop only the repetition.
-            return cleaned, True
-        # Nothing survived the strip, so the whole sentence WAS the repeat.
-        # Returning `text` here spoke it anyway, which is how callers ended up
-        # hearing the opening a second time. Substitute a forward-moving turn
-        # instead: it avoids both the repetition and the dead silence that
-        # returning "" would create.
-        if self._permission_state == "refused":
-            replacement = (
-                "Je comprends. Je ne vais pas vous retenir. Bonne journée."
-                if self.reply_language.lower().startswith("fr")
-                else "I understand. I won't keep you. Have a good day."
-            )
-        elif self.reply_language.lower().startswith("fr"):
-            replacement = (
-                "Merci. Pour commencer, qu'est-ce que vous regardez le plus souvent : "
-                "le sport, les films ou les chaînes internationales ?"
-            )
-        else:
-            replacement = (
-                "Thank you. To start, what do you watch most often: sports, films, "
-                "or international channels?"
-            )
-        return replacement, True
-
     def classify_turn(self, text: str) -> TurnQuality:
         """Decide whether this turn carries something to answer at all."""
 
+        if looks_semantically_incomplete(text):
+            return TurnQuality.FRAGMENT
+        # Terminal intent and an answer to the still-pending opening permission
+        # question are meaningful even when they are only one word. Do not apply
+        # this to ordinary "yes"/"okay" backchannels later in the conversation.
+        permission = self._classify_permission(text)
+        awaiting_opening_answer = (
+            self._opening_attempted
+            and self._permission_state == "unknown"
+            and permission != "unknown"
+        )
+        if self._is_goodbye(text) or awaiting_opening_answer:
+            return TurnQuality.ACTIONABLE
         return classify_caller_turn(
             text,
             question_is_open=self._question_open,
@@ -428,6 +390,42 @@ class AgentPolicyRuntime:
 
     def note_turn_understood(self) -> None:
         self.repair.record_success()
+
+    def note_turn_quality(self, quality: TurnQuality) -> None:
+        """Give the model acoustic/semantic context without choosing its words."""
+
+        guidance = {
+            TurnQuality.ACTIONABLE: (
+                "Respond to the caller's actual meaning directly, then continue naturally."
+            ),
+            TurnQuality.BACKCHANNEL: (
+                "Treat this brief response in the context of your last turn; do not launch a "
+                "new script or assume details they did not say."
+            ),
+            TurnQuality.REPEAT_REQUEST: (
+                "The caller is asking you to repeat or explain your last point. Rephrase it "
+                "more simply and answer any clarification; do not move to a new question."
+            ),
+            TurnQuality.NOT_NOW: (
+                "The caller says this is a bad time. Stop selling, acknowledge that naturally, "
+                "and offer a callback only if appropriate."
+            ),
+            TurnQuality.IDENTITY_CHALLENGE: (
+                "The caller wants to know who you are or why you called. Answer plainly and "
+                "briefly before doing anything else."
+            ),
+            TurnQuality.FRAGMENT: (
+                "The recognizer may have captured only part of the caller's thought. Do not "
+                "guess or advance the task; ask a brief context-aware clarification."
+            ),
+            TurnQuality.UNINTELLIGIBLE: (
+                "The caller's audio was not intelligible. Do not infer meaning; ask them "
+                "briefly and naturally to repeat it."
+            ),
+        }[quality]
+        self._latest_turn_quality = quality.value
+        self._latest_turn_guidance = guidance
+        self._refresh_live_state()
 
     def _strip_self_name_vocative(self, sentence: str) -> str:
         """Stop the agent addressing the caller by its own name.
@@ -509,9 +507,17 @@ class AgentPolicyRuntime:
         if register:
             self._caller_register = register
         self._turn_started_at = time.monotonic()
+        turn_quality = self.classify_turn(self.last_caller_text)
+        if not trusted_for_task:
+            turn_quality = TurnQuality.UNINTELLIGIBLE
+        self.note_turn_quality(turn_quality)
         is_goodbye = self._is_goodbye(self.last_caller_text)
         is_attention_check = self._is_attention_check(self.last_caller_text)
-        if trusted_for_task and not (is_goodbye or is_attention_check):
+        if (
+            trusted_for_task
+            and turn_quality is TurnQuality.ACTIONABLE
+            and not (is_goodbye or is_attention_check)
+        ):
             actions = self.task.observe_caller_turn(self.last_caller_text)
             if actions.changed:
                 logger.info(
@@ -531,6 +537,8 @@ class AgentPolicyRuntime:
             self._last_caller_intent = "attention_check"
         elif not trusted_for_task:
             self._last_caller_intent = "uncertain_audio"
+        elif turn_quality is not TurnQuality.ACTIONABLE:
+            self._last_caller_intent = turn_quality.value
         elif self._opening_attempted:
             permission = self._classify_permission(self.last_caller_text)
             if permission != "unknown":
@@ -545,10 +553,12 @@ class AgentPolicyRuntime:
                 self._last_caller_intent = "new_information_or_question"
             if self._permission_state == "granted" and self.task.stage not in {"", "OPEN"}:
                 self._conversation_stage = self.task.stage
-        context_changed = self.call_context.observe_caller_turn(
-            self.last_caller_text,
-            permission_state=self._permission_state,
-        )
+        context_changed = False
+        if trusted_for_task and turn_quality is TurnQuality.ACTIONABLE:
+            context_changed = self.call_context.observe_caller_turn(
+                self.last_caller_text,
+                permission_state=self._permission_state,
+            )
         if context_changed:
             await self._emit(
                 {
@@ -594,16 +604,6 @@ class AgentPolicyRuntime:
             # evaluation, and memory instead of silently rewriting the record.
             spoken_text = raw_text.strip()
             policy_violations = []
-        rewritten = False
-        if enforce_spoken_policy and response_kind != "greeting":
-            spoken_text, rewritten = self._continuity_guard(spoken_text)
-        if rewritten:
-            logger.warning(
-                "Blocked repeated opening task_id=%s stage=%s permission=%s",
-                self.task_id,
-                self._conversation_stage,
-                self._permission_state,
-            )
         if response_kind == "greeting" and spoken_text:
             self.note_opening_attempted()
         if spoken_text:
@@ -623,7 +623,10 @@ class AgentPolicyRuntime:
             persona_data=self.persona_compiler.evaluation_persona_data,
             task_contract=self.task_contract,
             policy_violations=policy_violations,
+            recent_ai_responses=tuple(self._completed_ai_turns),
         )
+        if spoken_text:
+            self._completed_ai_turns.append(spoken_text)
         metrics = {
             "turn_latency_ms": round(latency_ms, 1),
             "fidelity": evaluation.overall_score,
@@ -679,7 +682,6 @@ class AgentPolicyRuntime:
         """
 
         self._response_sequence += 1
-        self._asked_question_this_turn = False
         response_id = f"response-{self._response_sequence}"
         self._pending_playback_ids.append(response_id)
         return response_id
@@ -705,71 +707,16 @@ class AgentPolicyRuntime:
             verified_actions=set(),
         )
         spoken = self._strip_self_name_vocative(spoken)
-        # One question per turn. The model asked "…right? Got it. Do you have a
-        # smart TV…?" - a confirmation it answered itself, then a second
-        # question, in one breath.
-        if "?" in spoken and self._asked_question_this_turn and not is_first:
-            logger.warning("Dropped a second question in the same turn")
-            return "", True
-        if (
-            response_kind != "greeting"
-            and is_first
-            and self.call_context.is_premature_product_qualification(spoken)
-        ):
-            replacement = self.call_context.safe_replacement_question(
-                self.reply_language, spoken_history=set(self._spoken_sentences)
-            )
-            logger.warning(
-                "Replaced premature product qualification direction=%s phase=%s",
-                self.call_context.direction.value,
-                self.call_context.phase.value,
-            )
-            self._remember_spoken(replacement)
-            self._asked_question_this_turn = True
-            self._question_open = True
-            self._last_ai_response = replacement
-            return replacement, True
-        # The persona forbids both of these explicitly and the model still did
-        # them on real calls, so they are enforced rather than requested.
-        if violates_language_lock(spoken, self.reply_language):
-            logger.warning("Blocked reply in the wrong language for a %s turn", self.reply_language)
-            return "", True
+        # Repetition is quality telemetry, not a dialogue generator. The old
+        # implementation replaced model text with a hard-coded stage question;
+        # that replacement repeated five times on a real call and prevented the
+        # model from answering "What improvements?". The model now owns the
+        # wording and the evaluator records any failure after the fact.
         if self._is_repeat(spoken):
-            logger.warning("Repeated sentence detected in this call: %r", spoken[:40])
-            if not is_first:
-                # Mid-turn: the caller has already heard something this turn, so
-                # dropping the repeat costs nothing audible.
-                return "", True
-            # First sentence of the turn. Dropping it would leave dead silence,
-            # but speaking it makes the caller hear the identical sentence twice
-            # -- which is the defect this guard exists to prevent. Substitute a
-            # forward-moving question instead of choosing between the two.
-            replacement = self.call_context.safe_replacement_question(
-                self.reply_language, spoken_history=set(self._spoken_sentences)
-            )
-            self._remember_spoken(replacement)
-            self._asked_question_this_turn = True
-            self._question_open = True
-            self._last_ai_response = replacement
-            return replacement, True
-        if response_kind != "greeting" and is_first:
-            # Repeated openings and permission requests always lead a response,
-            # so checking the first sentence catches them while nothing has
-            # been spoken yet and the whole turn can still be replaced.
-            spoken, rewritten = self._continuity_guard(spoken)
-            if rewritten:
-                logger.warning(
-                    "Blocked repeated opening task_id=%s stage=%s permission=%s",
-                    self.task_id,
-                    self._conversation_stage,
-                    self._permission_state,
-                )
-                return spoken, True
+            logger.warning("Model repeated previously spoken text: %r", spoken[:80])
         if spoken:
             spoken = normalize_for_speech(spoken, self.reply_language)
             self._remember_spoken(spoken)
-            if "?" in spoken:
-                self._asked_question_this_turn = True
             self._question_open = spoken.rstrip().endswith("?")
             # Record it as it is released, not when the turn finalizes: the
             # caller can ask "hein ?" while the model is still writing, and the
@@ -802,7 +749,10 @@ class AgentPolicyRuntime:
             persona_data=self.persona_compiler.evaluation_persona_data,
             task_contract=self.task_contract,
             policy_violations=[],
+            recent_ai_responses=tuple(self._completed_ai_turns),
         )
+        if spoken_text:
+            self._completed_ai_turns.append(spoken_text)
         await self._emit(
             {
                 "type": "transcript",
@@ -853,14 +803,13 @@ class AgentPolicyRuntime:
             pass
 
     def preview_response(self, raw_text: str) -> str:
-        """Apply the deterministic spoken guard without recording a turn."""
+        """Apply hard safety and TTS normalization without scripting dialogue."""
 
         spoken_text, _violations = PermissionGate.enforce_spoken_response(
             raw_text,
             language=self.reply_language,
             verified_actions=set(),
         )
-        spoken_text, _rewritten = self._continuity_guard(spoken_text)
         return normalize_for_speech(spoken_text, self.reply_language)
 
     async def playback_started(self) -> None:
@@ -1005,14 +954,15 @@ _RUN_ON_CHARS = 160
 
 
 class ResponsePolicyProcessor(FrameProcessor):
-    """Release each guarded sentence to speech while the model still writes.
+    """Stream model-owned dialogue through narrow safety checks to speech.
 
     Buffering the whole response before speaking made the caller wait for the
     model to finish *and then* for the full utterance to be synthesized, which
     serialized two multi-second stages that Pipecat is designed to overlap.
-    Each completed sentence is cleared by the deterministic guards and pushed
-    immediately, so synthesis of sentence one runs against generation of
-    sentence two. The turn is still recorded once, as a single transcript.
+    Each completed sentence receives only hard action-claim safety checks and
+    TTS normalization, then is pushed immediately so synthesis of sentence one
+    overlaps generation of sentence two. No task stage or canned conversation
+    logic may replace the model's wording. The turn is recorded once.
     """
 
     def __init__(self, runtime: AgentPolicyRuntime) -> None:
@@ -1034,7 +984,7 @@ class ResponsePolicyProcessor(FrameProcessor):
             self._pending = self._pending[len(sentence) :]
             return sentence.strip()
 
-        # If full sentence is not ready, allow an early clause (e.g., "Great,", "I see,") for the first chunk
+        # If the sentence is not ready, allow an early clause for the first chunk.
         if not self._spoken:
             clause_match = _EARLY_CLAUSE_BOUNDARY.match(self._pending)
             if clause_match and clause_match.group(1).strip():
@@ -1066,8 +1016,8 @@ class ResponsePolicyProcessor(FrameProcessor):
             self._spoken.append(spoken)
             await self.push_frame(LLMTextFrame(spoken), direction)
         if stop:
-            # Guarded wording replaced the model's own; anything it goes on to
-            # say would continue from text the caller never heard.
+            # Only a hard safety substitution may stop the remaining model
+            # text; conversational quality checks are observational.
             self._stopped = True
             self._pending = ""
 

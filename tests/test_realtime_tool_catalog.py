@@ -285,7 +285,7 @@ def test_sample_phrases_model_expert_delivery_and_ask_for_variety() -> None:
         assert "Meeting doubt about you, not about price" in instructions
 
 
-def test_the_question_budget_is_a_hard_rule_at_the_top_of_the_priority_list() -> None:
+def test_question_variety_never_blocks_needed_clarification() -> None:
     """Four turns, four questions, is an interrogation rather than a conversation.
 
     The rule has to outrank the several sections that each tell the agent to ask
@@ -301,8 +301,9 @@ def test_the_question_budget_is_a_hard_rule_at_the_top_of_the_priority_list() ->
     )
     priority = instructions[instructions.index("# NON-NEGOTIABLE TURN PRIORITY") :]
     budget = priority[: priority.index("\n# ")]
-    assert "QUESTION BUDGET" in budget
-    assert "MUST NOT END IN ONE" in budget
+    assert "Avoid interrogating" in budget
+    assert "clarification is genuinely needed" in budget
+    assert "MUST NOT END IN ONE" not in instructions
     # Nothing below may still be issuing a bare order to ask.
     assert "move directly to one useful discovery question" not in instructions
 

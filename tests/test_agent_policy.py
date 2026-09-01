@@ -95,20 +95,19 @@ async def test_cold_outbound_yes_builds_relevance_before_product_slots(tmp_path:
     assert "call_direction: outbound" in state
     assert "conversation_mode: cold_prospecting" in state
     assert "prospect_interest: unknown" in state
-    assert "product_qualification_unlocked: no" in state
-    assert "product qualification locked until explicit interest" in state
+    assert "explicit_product_interest_observed: no" in state
+    assert "uncollected_context (discover only when natural)" in state
     assert "Ask one open, non-product question" in state
+    assert "This is advisory context, not a script" in state
     assert any(
         event.get("type") == "call_context"
         and event.get("phase") == "relevance_discovery"
         for event in events
     )
-    replacement, stop = runtime.guard_sentence(
-        "Great. What device do you plan to watch on first, like a Smart TV or Firestick?",
-        is_first=True,
-    )
-    assert replacement == "How do you currently watch the programs that matter most to you?"
-    assert stop is True
+    model_reply = "Great. What device do you plan to watch on first, like a Smart TV or Firestick?"
+    spoken, stop = runtime.guard_sentence(model_reply, is_first=True)
+    assert spoken == model_reply
+    assert stop is False
 
 
 def test_inbound_intent_does_not_block_relevant_product_qualification() -> None:
@@ -150,7 +149,8 @@ def test_realtime_prompt_distinguishes_outbound_and_inbound_calls() -> None:
 
     assert "OUTBOUND COLD PROSPECTING" in outbound
     assert "Permission to continue" in outbound
-    assert "product discovery remains locked until explicit interest" in outbound
+    assert "usually establish relevance before product qualification" in outbound
+    assert "latest meaning always outranks the suggested sales phase" in outbound
     assert "INBOUND INTENT-LED" in inbound
     assert "caller initiated this call" in inbound.lower()
     assert "cold-sales permission script" in inbound
@@ -228,7 +228,7 @@ async def test_upstream_tts_error_marks_pending_audio_failed(tmp_path: Any) -> N
 
 
 @pytest.mark.asyncio
-async def test_sales_call_state_survives_interruption_and_blocks_repeated_opening(
+async def test_sales_call_state_survives_interruption_without_rewriting_model_dialogue(
     tmp_path: Any,
 ) -> None:
     runtime = AgentPolicyRuntime(
@@ -259,19 +259,19 @@ async def test_sales_call_state_survives_interruption_and_blocks_repeated_openin
         "abonnements IPTV. Est-ce que vous avez quelques minutes pour en discuter ?"
     )
 
-    assert repeated.startswith("Merci. Pour commencer")
-    assert "Bonjour" not in repeated
-    assert "je vous appelle" not in repeated.casefold()
-    assert "quelques minutes" not in repeated.casefold()
+    assert repeated.startswith("Bonjour, je suis Adam")
+    assert "je vous appelle" in repeated.casefold()
     await runtime.playback_started()
     await runtime.mark_playback_interrupted()
     state = context.get_messages()[-1]["content"]
     assert "last_ai_turn_delivery: interrupted" in state
-    assert "never restart the script" in state
+    assert "Never repeat the last AI sentence" in state
 
 
 @pytest.mark.asyncio
-async def test_repeated_english_permission_request_is_rewritten_to_discovery(tmp_path: Any) -> None:
+async def test_repeated_english_permission_request_is_evaluated_not_rewritten(
+    tmp_path: Any,
+) -> None:
     runtime = AgentPolicyRuntime(
         caller_id="anonymous",
         task_id="iptv_subscription_sales",
@@ -289,8 +289,7 @@ async def test_repeated_english_permission_request_is_rewritten_to_discovery(tmp
         "Is this a good time for a quick conversation?"
     )
 
-    assert repeated.startswith("Thank you. To start")
-    assert "this is Adam" not in repeated
+    assert repeated.startswith("Hello, this is Adam")
 
 
 @pytest.mark.asyncio
@@ -311,7 +310,7 @@ async def test_goodbye_closes_live_state_without_another_sales_question(tmp_path
     live_state = runtime.live_state_instructions()
     assert "latest_caller_intent: goodbye" in live_state
     assert "current_conversation_stage: CLOSE" in live_state
-    assert "say one brief polite goodbye, ask no question" in live_state
+    assert "close briefly with no sales question" in live_state
 
 
 @pytest.mark.asyncio

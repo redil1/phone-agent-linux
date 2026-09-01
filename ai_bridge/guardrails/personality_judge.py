@@ -7,6 +7,7 @@ and task contract, computing an overall fidelity score without impacting live la
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,6 +43,7 @@ class PersonalityFidelityJudge:
         persona_data: dict[str, Any] | None = None,
         task_contract: dict[str, Any] | None = None,
         policy_violations: list[str] | None = None,
+        recent_ai_responses: tuple[str, ...] = (),
     ) -> TurnEvaluationResult:
         """Score a speech turn across 4 key dimensions."""
         feedback: list[str] = []
@@ -55,6 +57,15 @@ class PersonalityFidelityJudge:
         if any(c in ai_response for c in ["*", "#", "`", "•"]):
             style_score -= 10.0
             feedback.append("Contained markdown formatting characters")
+        normalized_response = self._normalize(ai_response)
+        repeated_turn = any(
+            normalized_response
+            and normalized_response == self._normalize(previous)
+            for previous in recent_ai_responses
+        )
+        if repeated_turn:
+            style_score = max(0.0, style_score - 15.0)
+            feedback.append("Repeated an earlier AI turn verbatim")
 
         # 2. Deterministic boundary compliance (35 points)
         compliant, violations = PermissionGate.check_compliance(ai_response)
@@ -82,6 +93,11 @@ class PersonalityFidelityJudge:
         if not caller_input.strip():
             task_score = max(0.0, task_score - 5.0)
             feedback.append("No finalized caller input was available for this response")
+        if repeated_turn:
+            task_score = max(0.0, task_score - 15.0)
+        if self._caller_requests_clarification(caller_input) and repeated_turn:
+            task_score = 0.0
+            feedback.append("Repeated instead of answering the caller's clarification")
 
         total = decision_score + value_score + style_score + task_score
         passed = total >= self.min_pass_score and compliant and not violations
@@ -94,4 +110,20 @@ class PersonalityFidelityJudge:
             task_performance_score=round(task_score, 1),
             passed=passed,
             feedback=feedback,
+        )
+
+    @staticmethod
+    def _normalize(text: str) -> str:
+        return " ".join(re.sub(r"[^\wÀ-ÿ\s]", " ", text.casefold()).split())
+
+    @classmethod
+    def _caller_requests_clarification(cls, text: str) -> bool:
+        normalized = cls._normalize(text)
+        return bool(
+            re.search(
+                r"\b(?:what do you mean|what does that mean|what improvements?|"
+                r"can you explain|could you explain|say that again|repeat|clarify|"
+                r"qu est ce que vous voulez dire|que voulez vous dire|expliquez|répétez)\b",
+                normalized,
+            )
         )
