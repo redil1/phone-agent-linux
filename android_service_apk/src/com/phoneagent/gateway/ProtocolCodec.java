@@ -160,7 +160,16 @@ public final class ProtocolCodec {
         );
     }
 
-    public static synchronized void write(OutputStream output, Frame frame, byte[] key)
+    /**
+     * Write one authenticated frame to its channel.
+     *
+     * <p>Each gateway socket has exactly one writer. Synchronizing this method
+     * globally therefore added no frame-safety, but it made unrelated sockets
+     * contend: the continuous 50 Hz caller-audio writer could starve playout
+     * acknowledgements on the separate uplink socket. Per-channel serialization
+     * belongs to the owner of that channel (the remote tunnel uses a fair lock).
+     */
+    public static void write(OutputStream output, Frame frame, byte[] key)
             throws Exception {
         requireKey(key);
         int flags = frame.flags | FLAG_AUTHENTICATED;

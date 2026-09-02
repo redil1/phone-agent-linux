@@ -570,7 +570,8 @@ class FramedGatewayLink:
                         remaining = ack_deadline - time.monotonic()
                         if remaining <= 0:
                             raise LinkDisconnected(
-                                "phone playout acknowledgements stalled for two seconds"
+                                "phone playout acknowledgements stalled for "
+                                f"{self.UPLINK_ACK_TIMEOUT_SECS:g} seconds"
                             )
                         self._uplink_credit.wait(timeout=min(0.1, remaining))
                     if frame.generation_id != self.session.generation_id:

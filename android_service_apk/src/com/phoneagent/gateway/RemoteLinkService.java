@@ -13,6 +13,7 @@ import java.security.MessageDigest;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -66,7 +67,12 @@ public final class RemoteLinkService {
     private volatile Socket tunnel;
     private volatile OutputStream out;
     private volatile Thread worker;
-    private final Object writeLock = new Object();
+    // The downlink media pump writes one caller-audio frame every 20 ms. A
+    // Java monitor is not fair, so that hot thread can release and immediately
+    // reacquire it while the uplink ACK and control pumps remain blocked. The
+    // phone then renders speech locally but its ACKs never reach the runtime.
+    // FIFO fairness bounds their wait to one already-running tunnel frame.
+    private final ReentrantLock writeLock = new ReentrantLock(true);
 
     public RemoteLinkService(String host, int port, byte[] key) {
         this.host = host;
@@ -277,10 +283,13 @@ public final class RemoteLinkService {
         if (stream == null) throw new IOException("remote link is not connected");
         // One writer at a time: media pumps run on their own threads and an
         // interleaved frame would corrupt the stream for everything else.
-        synchronized (writeLock) {
+        writeLock.lock();
+        try {
             stream.write(body);
             stream.write(tag);
             stream.flush();
+        } finally {
+            writeLock.unlock();
         }
     }
 
