@@ -3090,10 +3090,12 @@ class PhoneAgentWebServer:
                 "PHONE_AGENT_RECORDING_CONSENT": ("true" if recording_consent else "false"),
                 "PHONE_AGENT_USE_ADB_FORWARD": (
                     "false"
-                    if (
-                        self._remote_link is not None
-                        and self._remote_link.stats.phone_connected
-                    )
+                    # The relay owns the local gateway ports for its entire
+                    # lifetime, including the seconds before a handset dials
+                    # into it. Basing this on phone_connected races warm-host
+                    # startup and leaves that resident process permanently in
+                    # USB-probe mode once the tunnel appears.
+                    if self._remote_link is not None
                     else "true"
                 ),
                 "PHONE_AGENT_TOOL_CONTROL": str(self.tool_control_store.path),
@@ -3118,10 +3120,6 @@ class PhoneAgentWebServer:
                 (name, value)
                 for name, value in environment.items()
                 if name.startswith("PHONE_AGENT_")
-                # The remote phone can connect after the host is spawned. That
-                # changes only how the next transport opens, not the configured
-                # STT/LLM/TTS/task behavior verified by this signature.
-                and name != "PHONE_AGENT_USE_ADB_FORWARD"
             )
         )
 

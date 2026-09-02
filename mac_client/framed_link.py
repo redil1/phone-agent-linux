@@ -133,6 +133,13 @@ class FramedGatewayLink:
         self._audio_callbacks.append(callback)
 
     def ensure_adb_forward(self) -> None:
+        # The remote relay publishes all four gateway ports as one bundle.  A
+        # plain TCP "is it open?" probe is safe only for the legacy HTTP port:
+        # the framed media ports interpret every accepted socket as a protocol
+        # session, and the Android uplink creates a physical Telephony-TX track
+        # for it.  Probing 8767 while a cellular call is active can therefore
+        # consume/poison a scarce vendor mixer slot before authentication.
+        relay_available = False
         port_pairs = zip(
             (
                 self.ports.legacy_http,
@@ -149,6 +156,12 @@ class FramedGatewayLink:
             strict=True,
         )
         for local_port, remote_port in port_pairs:
+            if relay_available:
+                logger.info(
+                    "gateway port %d is presented by the remote relay bundle",
+                    local_port,
+                )
+                continue
             command = ["adb"]
             if self.device_id:
                 command.extend(["-s", self.device_id])
@@ -158,13 +171,16 @@ class FramedGatewayLink:
             try:
                 subprocess.run(command, check=True, capture_output=True)
             except (OSError, subprocess.CalledProcessError) as exc:
-                # Something else may already be presenting this port: the remote
-                # link relay owns exactly these while a handset is tunnelled in,
-                # and adb then refuses the bind. Failing here retried forever
-                # against a gateway that was reachable the whole time.
-                if _port_is_open(self.host, local_port):
+                # Probe only HTTP, then trust the relay's all-or-nothing port
+                # bundle. Never make an unauthenticated connection to a framed
+                # control or media listener merely to test reachability.
+                if local_port == self.ports.legacy_http and _port_is_open(
+                    self.host, local_port
+                ):
+                    relay_available = True
                     logger.info(
-                        "port %d is already served without adb; using it as-is",
+                        "gateway ports are already served by the remote relay "
+                        "(HTTP port %d verified)",
                         local_port,
                     )
                     continue
@@ -351,7 +367,31 @@ class FramedGatewayLink:
                 channel.sock.sendall(
                     encode_frame(frame, authentication_key=self.authentication_key)
                 )
-                response = self._receive_one(channel)
+                deadline = time.monotonic() + timeout
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError(
+                            f"control command {command_type} acknowledgement timed out"
+                        )
+                    channel.sock.settimeout(remaining)
+                    candidate = self._receive_one(channel)
+                    candidate_body = candidate.json_payload()
+                    if candidate_body.get("command_id") == str(identifier):
+                        response = candidate
+                        body = candidate_body
+                        break
+                    # A previous request can time out after Android executed it,
+                    # leaving its late acknowledgement in this ordered socket.
+                    # It is stale, not a reply to the current command. Continue
+                    # until the matching command id arrives instead of poisoning
+                    # every subsequent status poll with mismatch errors.
+                    logger.warning(
+                        "discarding stale control acknowledgement command_id=%s "
+                        "while waiting for %s",
+                        candidate_body.get("command_id", "<missing>"),
+                        identifier,
+                    )
             except (OSError, TimeoutError, MediaProtocolError) as exc:
                 if not urgent and command_type not in {"call.status", "gateway.health", "audio.flush"}:
                     self._mark_disconnected(exc)
@@ -361,10 +401,6 @@ class FramedGatewayLink:
                     channel.sock.settimeout(original_timeout)
                 except OSError:
                     pass
-
-        body = response.json_payload()
-        if body.get("command_id") != str(identifier):
-            raise LinkRejected("control acknowledgement command_id mismatch")
         if response.kind is FrameKind.ERROR or body.get("status") != "ok":
             raise LinkRejected(str(body.get("message") or body))
         return body

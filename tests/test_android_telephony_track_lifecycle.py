@@ -16,6 +16,14 @@ def test_android_never_retries_physical_telephony_track_creation() -> None:
     assert "telephonyTrackStartAttempts.incrementAndGet();" in source
 
 
+def test_android_requires_the_active_track_to_be_routed_to_telephony() -> None:
+    source = BRIDGE.read_text(encoding="utf-8")
+
+    assert "track.getRoutedDevice()" in source
+    assert "routedDevice.getType() != AudioDeviceInfo.TYPE_TELEPHONY" in source
+    assert 'injectionProof = "android_audio_policy_routed_to_telephony";' in source
+
+
 def test_call_end_schedules_native_telephony_track_cleanup() -> None:
     bridge = BRIDGE.read_text(encoding="utf-8")
     calls = CALL_MANAGER.read_text(encoding="utf-8")

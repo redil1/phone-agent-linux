@@ -82,6 +82,7 @@ public class DigitalAudioBridge {
     private static volatile boolean txConnected;
     private static volatile String captureSource = "not_started";
     private static volatile String injectionRoute = "not_started";
+    private static volatile String injectionProof = "not_started";
     private static volatile String lastError = "";
     private static volatile boolean playoutPrebuffering = true;
     private static volatile int adaptivePlayoutPrebufferFrames = PLAYOUT_PREBUFFER_FRAMES;
@@ -374,6 +375,7 @@ public class DigitalAudioBridge {
                     }
                     txConnected = false;
                     injectionRoute = "not_started";
+                    injectionProof = "not_started";
                     // The injector mix deliberately outlives a media reconnect.
                     // Releasing it here would unbind the recorder WhatsApp
                     // already attached to it, and re-registering mid-call is too
@@ -829,7 +831,31 @@ public class DigitalAudioBridge {
                             "Telephony TX prime wrote " + primed + " of " + SILENCE_FRAME.length
                     );
                 }
+                AudioDeviceInfo routedDevice = null;
+                // Audio policy routing becomes observable asynchronously after
+                // play(). Give the HAL a short bounded window, then fail closed
+                // rather than reporting a route that exists only as a preferred
+                // device request.
+                for (int routeCheck = 0; routeCheck < 5; routeCheck++) {
+                    routedDevice = track.getRoutedDevice();
+                    if (routedDevice != null
+                            && routedDevice.getType() == AudioDeviceInfo.TYPE_TELEPHONY) {
+                        break;
+                    }
+                    Thread.sleep(20L);
+                }
+                if (routedDevice == null
+                        || routedDevice.getType() != AudioDeviceInfo.TYPE_TELEPHONY) {
+                    throw new IllegalStateException(
+                            "Audio policy did not route the active track to Telephony TX; "
+                                    + "actual device="
+                                    + (routedDevice == null
+                                            ? "none"
+                                            : routedDevice.getType())
+                    );
+                }
                 injectionRoute = "telephony_tx_modem_clock_standard_stream";
+                injectionProof = "android_audio_policy_routed_to_telephony";
                 Log.i(TAG, "Started modem-clock Telephony TX route attempt=" + attempt);
                 return track;
             } catch (Exception failure) {
@@ -1025,7 +1051,8 @@ public class DigitalAudioBridge {
             result.put("capture_proof", "unverified_remote_caller_only");
             result.put("injection_route",
                     voipMode ? VoipAudioRoute.injectionRoute() : injectionRoute);
-            result.put("injection_proof", "unverified_remote_endpoint");
+            result.put("injection_proof",
+                    voipMode ? "unverified_remote_endpoint" : injectionProof);
             result.put("network_format", "pcm_s16le_16000_mono");
             result.put("protocol", "phag_v1_hmac_sha256");
             result.put("link_key_provisioned", context != null && LinkKeyStore.isProvisioned(context));

@@ -553,6 +553,28 @@ def test_the_child_is_told_not_to_fight_the_relay_for_the_ports() -> None:
     server._remote_link = SimpleNamespace(stats=SimpleNamespace(phone_connected=True))
     assert server._child_environment()["PHONE_AGENT_USE_ADB_FORWARD"] == "false"
 
+    # The relay already owns the ports before the handset connects. The warm
+    # host must be born in tunnel mode or it becomes stale moments later.
+    server._remote_link = SimpleNamespace(stats=SimpleNamespace(phone_connected=False))
+    assert server._child_environment()["PHONE_AGENT_USE_ADB_FORWARD"] == "false"
+
+
+def test_relay_connection_changes_the_warm_voice_host_signature() -> None:
+    """A host born before tunnel connection must not retain USB probing forever."""
+
+    from types import SimpleNamespace
+
+    from phone_agent_gateway.ai_bridge.runtime_config import ProviderConfig
+    from phone_agent_gateway.ai_bridge.web_server import PhoneAgentWebServer
+
+    server = PhoneAgentWebServer(config=ProviderConfig())
+    before = server._voice_host_environment_signature(server._child_environment())
+
+    server._remote_link = SimpleNamespace(stats=SimpleNamespace(phone_connected=True))
+    after = server._voice_host_environment_signature(server._child_environment())
+
+    assert before != after
+
 
 def test_an_already_served_port_is_used_instead_of_failing() -> None:
     """The relay owns these ports, so adb refuses the bind and used to give up.

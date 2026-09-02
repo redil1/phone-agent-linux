@@ -61,6 +61,57 @@ def test_adb_forward_can_map_alternate_local_control_port(
     ]
 
 
+def test_remote_relay_fallback_never_probes_framed_media_ports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+    probes: list[tuple[str, int]] = []
+
+    def unavailable(command: list[str], **_kwargs: Any) -> None:
+        commands.append(command)
+        raise FileNotFoundError("adb")
+
+    def record_probe(host: str, port: int, timeout: float = 0.5) -> bool:
+        del timeout
+        probes.append((host, port))
+        return True
+
+    monkeypatch.setattr(
+        "phone_agent_gateway.mac_client.framed_link.subprocess.run", unavailable
+    )
+    monkeypatch.setattr(
+        "phone_agent_gateway.mac_client.framed_link._port_is_open", record_probe
+    )
+    ports = LinkPorts(legacy_http=18765, downlink=18766, uplink=18767, control=18768)
+    link = FramedGatewayLink(CallSessionState(), KEY, ports=ports)
+
+    link.ensure_adb_forward()
+
+    assert probes == [("127.0.0.1", 18765)]
+    assert len(commands) == 1
+
+
+def test_control_request_discards_a_stale_late_acknowledgement() -> None:
+    gateway = FakeFramedGateway()
+    gateway.start()
+    session = active_session()
+    link = FramedGatewayLink(
+        session,
+        KEY,
+        ports=gateway.ports,
+        auto_forward_adb=False,
+    )
+    try:
+        link.connect_control()
+        stale_id = uuid4()
+        gateway.stale_control_acks.put(str(stale_id))
+        result = link.request("call.status")
+        assert result["state"] == "ACTIVE"
+    finally:
+        link.close()
+        gateway.close()
+
+
 class FakeFramedGateway:
     def __init__(self) -> None:
         self.listeners = {name: self._listener() for name in ("control", "uplink", "downlink")}
@@ -78,6 +129,7 @@ class FakeFramedGateway:
         self.deferred_uplink_acks: Queue[tuple[socket.socket, MediaFrame]] = Queue()
         self.command_executions: Counter[str] = Counter()
         self.commands: Queue[dict[str, Any]] = Queue()
+        self.stale_control_acks: Queue[str] = Queue()
         self._responses: dict[str, dict[str, Any]] = {}
         self._threads = [
             threading.Thread(target=self._serve, args=(name,), daemon=True)
@@ -171,6 +223,21 @@ class FakeFramedGateway:
                 return
             body = frame.json_payload()
             command_id = body["command_id"]
+            try:
+                stale_id = self.stale_control_acks.get_nowait()
+            except Empty:
+                pass
+            else:
+                self._send_json(
+                    client,
+                    frame,
+                    FrameKind.ACK,
+                    {
+                        "type": "command.ack",
+                        "status": "ok",
+                        "command_id": stale_id,
+                    },
+                )
             response = self._responses.get(command_id)
             if response is None:
                 command_type = body["type"]
