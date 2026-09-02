@@ -34,6 +34,8 @@ def test_call_end_schedules_native_telephony_track_cleanup() -> None:
     assert '"su", "-c", "killall audioserver", "0"' in bridge
     assert 'result.put("audioserver_recoveries", audioServerRecoveries.get());' in bridge
     assert "DigitalAudioBridge.onCellularCallEnded();" in calls
+    assert 'Log.i(TAG, "Playout ACK stopped after the call ended")' in bridge
+    assert 'Log.i(TAG, "Uplink client closed the completed playout stream")' in bridge
 
 
 def test_remote_tunnel_cannot_starve_playout_acknowledgements() -> None:

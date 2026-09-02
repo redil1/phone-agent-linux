@@ -363,7 +363,12 @@ public class DigitalAudioBridge {
                     // already released it by this point.
                     track = null;
                 } catch (Exception e) {
-                    if (running) recordError("Uplink connection failed", e);
+                    if (running && (isExpectedPeerDisconnect(e)
+                            || !"ACTIVE".equals(CallManager.getCallState()))) {
+                        Log.i(TAG, "Uplink client closed the completed playout stream");
+                    } else if (running) {
+                        recordError("Uplink connection failed", e);
+                    }
                 } finally {
                     // Only reached when the handshake failed between starting the
                     // route and entering streamUplink. Every other path released
@@ -680,7 +685,16 @@ public class DigitalAudioBridge {
                 try {
                     sendPlayoutAck(output, key, binding, consumed);
                 } catch (Exception error) {
-                    recordError("Telephony playout acknowledgement failed", error);
+                    // onCellularCallEnded deliberately closes activeTxSocket so
+                    // no additional bytes can reach a dead modem route. A writer
+                    // already finishing its last frame can observe that close;
+                    // this is normal teardown, not failed in-call playout.
+                    if (isExpectedPeerDisconnect(error)
+                            || !"ACTIVE".equals(CallManager.getCallState())) {
+                        Log.i(TAG, "Playout ACK stopped after the call ended");
+                    } else {
+                        recordError("Telephony playout acknowledgement failed", error);
+                    }
                     return;
                 }
             }
