@@ -1,15 +1,15 @@
 """Test sending audio to Gizmo Voice model and capturing its audio reply."""
 
 import asyncio
+import fractions
 import json
 import logging
 import math
-import struct
 import uuid
-import fractions
+
 import av
 import numpy as np
-from aiortc import RTCPeerConnection, RTCSessionDescription, AudioStreamTrack
+from aiortc import AudioStreamTrack, RTCPeerConnection, RTCSessionDescription
 from curl_cffi.curl import CurlMime
 from curl_cffi.requests import AsyncSession
 

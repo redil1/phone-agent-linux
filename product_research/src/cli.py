@@ -5,17 +5,17 @@ Command-line Interface for the Autonomous AI Product Sales Intelligence Pipeline
 import asyncio
 import json
 import os
+from pathlib import Path
+from urllib.parse import urlparse
 
 import click
 
 from .compiler.compiler import AgentCompiler
-from urllib.parse import urlparse
-
 from .crawler.market_crawler import gather_market_context
 from .crawler.web_crawler import WebCrawler
-from .extractor.sales_intelligence import extract_sales_intelligence
 from .extractor.extractor import ProductExtractor
 from .extractor.llm_client import LLMClient
+from .extractor.sales_intelligence import extract_sales_intelligence
 from .sales_skills.gtm_playbooks import enrich_playbook_with_product_context
 from .sales_skills.sales_psychology import get_core_sales_playbook
 from .schemas.product_schema import ProductKnowledgeBase
@@ -104,17 +104,26 @@ def build(url, name, output_dir, max_pages, provider, model, ollama_url):
         # no way to verify later that a quoted price actually came from the site.
         os.makedirs(output_dir, exist_ok=True)
         source_path = os.path.join(output_dir, "crawled_source.md")
-        with open(source_path, "w", encoding="utf-8") as f:
-            f.write(aggregated_markdown)
+        await asyncio.to_thread(
+            Path(source_path).write_text,
+            aggregated_markdown,
+            encoding="utf-8",
+        )
 
         sales_intel_path = os.path.join(output_dir, "sales_intelligence.json")
-        with open(sales_intel_path, "w", encoding="utf-8") as f:
-            json.dump(sales_intel, f, indent=2, ensure_ascii=False)
+        await asyncio.to_thread(
+            Path(sales_intel_path).write_text,
+            json.dumps(sales_intel, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
         # Also save raw knowledge base JSON
         raw_kb_path = os.path.join(output_dir, "product_knowledge_base.json")
-        with open(raw_kb_path, "w", encoding="utf-8") as f:
-            f.write(kb.model_dump_json(indent=2))
+        await asyncio.to_thread(
+            Path(raw_kb_path).write_text,
+            kb.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
 
         print_compilation_success(compiled_files)
         console.print("\n[bold green]✅ Production Voice Agent Knowledge Pack Successfully Generated![/bold green]\n")
@@ -135,8 +144,7 @@ def crawl_cmd(url, output, max_pages):
         crawler = WebCrawler(max_pages=max_pages)
         pages = await crawler.crawl(url)
         markdown = crawler.aggregate_markdown(pages)
-        with open(output, "w", encoding="utf-8") as f:
-            f.write(markdown)
+        await asyncio.to_thread(Path(output).write_text, markdown, encoding="utf-8")
         console.print(f"[bold green]Saved {len(pages)} pages to {output}[/bold green]")
 
     asyncio.run(run_crawl())
@@ -167,4 +175,3 @@ def ui_cmd(host, port):
     print_banner()
     console.print(f"[bold green]🌐 Starting Web UI at:[/bold green] [cyan]http://{host}:{port}[/cyan]\n")
     uvicorn.run("src.server:app", host=host, port=port, reload=False)
-

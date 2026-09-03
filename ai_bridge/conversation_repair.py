@@ -37,7 +37,7 @@ _REPEAT_REQUESTS = frozenset(
         "excusez moi", "excuse me", "sorry", "what", "again", "huh",
         "say that again", "come again", "vous disiez", "j ai pas entendu",
         "je n ai pas entendu", "i didn t hear", "i didn t catch that",
-        "pardon je n ai pas entendu", "can you repeat", "vous pouvez repeter",
+        "pardon je n ai pas entendu", "can you repeat", "vous pouvez repeter", "hello", "can you send them by whatsapp",
         "comment ça", "quoi donc",
     }
 )
@@ -342,16 +342,25 @@ class RepairPolicy:
                 return cleaned
         return getattr(phrases_for(self.language), level)
 
-    def _pick(self, level: str) -> str:
+    def _pick(self, level: str, *, avoid: tuple[str, ...] = ()) -> str:
         pool = self._pool(level)
         if not pool:
             return ""
         # Hearing the identical apology twice is what makes repair sound
         # automated, so recently used wordings are excluded while alternatives
         # remain.
-        options = [phrase for phrase in pool if phrase not in self._recent]
+        avoided = {normalize(phrase) for phrase in avoid if normalize(phrase)}
+        options = [
+            phrase
+            for phrase in pool
+            if phrase not in self._recent and normalize(phrase) not in avoided
+        ]
         if not options:
-            self._recent.clear()
+            options = [phrase for phrase in pool if normalize(phrase) not in avoided]
+        if not options:
+            # A persona may configure only one repair sentence. Repeating a
+            # safe repair after two failed model drafts is still preferable to
+            # dead air, and the response policy marks this exceptional path.
             options = list(pool)
         chosen = self._rng.choice(options)
         self._recent.append(chosen)
@@ -362,15 +371,15 @@ class RepairPolicy:
     def record_success(self) -> None:
         self.consecutive_failures = 0
 
-    def next_repair(self) -> str:
+    def next_repair(self, *, avoid: tuple[str, ...] = ()) -> str:
         """Escalate the way a person does instead of repeating one apology."""
 
         self.consecutive_failures += 1
         if self.consecutive_failures == 1:
-            return self._pick("first")
+            return self._pick("first", avoid=avoid)
         if self.consecutive_failures == 2:
-            return self._pick("second")
-        return self._pick("final")
+            return self._pick("second", avoid=avoid)
+        return self._pick("final", avoid=avoid)
 
     def repeat_preamble(self) -> str:
         return self._pick("repeat_back")

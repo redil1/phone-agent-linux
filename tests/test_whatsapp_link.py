@@ -659,7 +659,7 @@ def test_the_transport_accepts_unframed_caller_audio() -> None:
 
     from phone_agent_gateway.ai_bridge.pipecat_transport import PhoneAgentTransport
 
-    assert hasattr(PhoneAgentTransport, "feed_s2s_audio_bytes")
+    assert hasattr(PhoneAgentTransport, "feed_audio_bytes")
 
 
 def test_the_android_uplink_wait_is_cellular_only() -> None:

@@ -1,7 +1,12 @@
 # PhoneAgent AI Gateway - Production NVIDIA CUDA Container
-# PyTorch 2.6 + CUDA 12.4 + Kokoro-82M TTS + Whisper Lightning STT + Pipecat
+# PyTorch 2.13 + CUDA 12.9 + Kokoro-82M TTS + Whisper STT + Pipecat
 
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+FROM ghcr.io/astral-sh/uv@sha256:8b940d3a9d65bed080436972241af2e21c84b5e8c9193f7014ed71479ee795ff AS uv
+
+# Keep Python and its native extension ABI on one distribution. CUDA user-space
+# libraries are hash-locked PyTorch wheel dependencies; the NVIDIA container
+# runtime injects only the host driver interface at launch.
+FROM python@sha256:9e25f400253a5fa3191813d6a67eb801ca1e6f012b3bd2588fa6920b59e3eba6
 
 LABEL maintainer="PhoneAgent AI"
 LABEL description="Production CUDA-Accelerated Cellular Telephony AI Gateway"
@@ -9,39 +14,44 @@ LABEL description="Production CUDA-Accelerated Cellular Telephony AI Gateway"
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
+    UV_FROZEN=1 \
+    UV_NO_DEV=1 \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    PATH="/app/.venv/bin:$PATH" \
     PHONE_AGENT_WEB_HOST="127.0.0.1" \
     PHONE_AGENT_WEB_PORT="8090" \
     PHONE_AGENT_REMOTE_LINK_PORT="8770" \
     PHONE_AGENT_TTS_PROVIDER="kokoro" \
-    PHONE_AGENT_STT_PROVIDER="sensevoice" \
+    PHONE_AGENT_STT_PROVIDER="whisper_turbo" \
+    PHONE_AGENT_STT_MODEL="large-v3-turbo" \
     PHONE_AGENT_LLM_PROVIDER="antigravity_gemini" \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-# Install system dependencies, audio libraries, and Python 3.11
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common \
-    curl \
-    git \
-    ffmpeg \
-    sox \
-    libsox-fmt-all \
-    libsox-dev \
-    libsndfile1 \
-    netcat-openbsd \
-    procps \
-    lsof \
-    ca-certificates \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-venv \
-    python3.11-dev \
-    python3.11-distutils \
-    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11 \
+# Freeze Debian's transitive package universe, then install exact direct packages.
+ARG DEBIAN_SNAPSHOT=20250721T000000Z
+RUN sed -i \
+        -e 's|^# deb http://snapshot.debian.org|deb [check-valid-until=no] http://snapshot.debian.org|' \
+        -e '/^deb http:\/\/deb.debian.org/d' \
+        /etc/apt/sources.list \
+    && grep -q "$DEBIAN_SNAPSHOT" /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    curl=7.74.0-1.3+deb11u15 \
+    git=1:2.30.2-1+deb11u4 \
+    ffmpeg=7:4.3.9-0+deb11u1 \
+    espeak-ng=1.50+dfsg-7+deb11u2 \
+    sox=14.4.2+git20190427-2+deb11u2 \
+    libsox-fmt-all=14.4.2+git20190427-2+deb11u2 \
+    libsndfile1=1.0.31-2 \
+    netcat-openbsd=1.217-3 \
+    lsof=4.93.2+dfsg-1.1 \
+    ca-certificates=20210119 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=uv /uv /uvx /usr/local/bin/
 
 ARG UID=1001
 ARG GID=1001
@@ -58,17 +68,22 @@ RUN (groupadd -g ${GID} phoneagent 2>/dev/null || true) && \
 
 WORKDIR /app
 
-# Install PyTorch with CUDA 12.4 wheels
-RUN python3.11 -m pip install --upgrade pip setuptools wheel && \
-    python3.11 -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124 && \
-    python3.11 -m pip install faster-whisper kokoro misaki[en] soxr supertonic segno funasr modelscope
+# Install only hash-locked dependencies first so source-only changes reuse this layer.
+COPY --chown=phoneagent:phoneagent pyproject.toml uv.lock /app/
+RUN uv sync --frozen --no-dev --extra cloud --extra local --no-install-project
 
-# Install Spacy English model for Kokoro G2P
-RUN python3.11 -m pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
-
-# Copy project source and install
+# Copy project source and install the project without changing the resolved graph.
 COPY --chown=phoneagent:phoneagent . /app
-RUN python3.11 -m pip install -e ".[cloud,dev]"
+RUN uv sync --frozen --no-dev --extra cloud --extra local --no-editable
+
+# Give non-root model/runtime caches stable writable homes and expose the
+# hash-locked CUDA wheel libraries to native consumers such as CTranslate2.
+RUN mkdir -p /home/phoneagent/.cache/huggingface \
+             /home/phoneagent/.cache/torch/kernels \
+    && chown -R ${UID}:${GID} /home/phoneagent/.cache
+ENV HF_HOME=/home/phoneagent/.cache/huggingface \
+    TORCH_HOME=/home/phoneagent/.cache/torch \
+    LD_LIBRARY_PATH=/app/.venv/lib/python3.11/site-packages/nvidia/cublas/lib:/app/.venv/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
 USER phoneagent
 
@@ -77,5 +92,5 @@ EXPOSE 8090 8770 8765 8766 8767 8768
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
     CMD curl -f http://127.0.0.1:8090/api/status || exit 1
 
-ENTRYPOINT ["python3.11", "-m", "phone_agent_gateway.ai_bridge.web_server"]
-CMD ["--host", "0.0.0.0", "--port", "8090"]
+ENTRYPOINT ["python", "-m", "phone_agent_gateway.ai_bridge.web_server"]
+CMD ["--host", "127.0.0.1", "--port", "8090"]

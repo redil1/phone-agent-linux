@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "status": "baseline_recorded",
+  "contract_profile_status": "pass",
+  "contract_checks_passed": 6,
+  "a6000_profile_status": "threshold_failure",
+  "a6000_checks_passed": 5,
+  "a6000_checks_total": 6,
+  "a6000_stt_final_p95_ms": 146.183,
+  "a6000_llm_ttft_p95_ms": 142.703,
+  "a6000_tts_ttfa_p95_ms": 158.187,
+  "a6000_e2e_ttfa_p95_ms": 615.549,
+  "a6000_long_call_ttft_drift_percent": 26.556,
+  "target_long_call_drift_percent": 15.0,
+  "raw_contract_sha256": "eb106b19ca732a0bff111f54dde2787ae89fc3cab1e3a6d2f0708e8933be053b",
+  "raw_a6000_sha256": "e0d94dcd2ad176d646a4dba4353f88d4f3fd34dac30071d13f6018800fc40303",
+  "contains_customer_data": false
+}

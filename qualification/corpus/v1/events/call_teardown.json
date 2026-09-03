@@ -1,0 +1,34 @@
+{
+  "events": [
+    {
+      "at_ms": 3526,
+      "type": "transcript.final"
+    },
+    {
+      "at_ms": 3546,
+      "type": "turn.committed"
+    },
+    {
+      "at_ms": 3646,
+      "type": "call.teardown.started"
+    },
+    {
+      "at_ms": 3696,
+      "type": "generation.flush"
+    },
+    {
+      "at_ms": 4446,
+      "details": {
+        "reason": "clean_peer_close"
+      },
+      "type": "link.closed"
+    },
+    {
+      "at_ms": 4546,
+      "type": "call.teardown.completed"
+    }
+  ],
+  "provenance": "synthetic",
+  "scenario_id": "call_teardown",
+  "schema_version": 1
+}

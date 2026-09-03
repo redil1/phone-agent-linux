@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import importlib
 import json
 import logging
 import os
@@ -36,7 +35,6 @@ from .voice_host_lock import VoiceHostBusyError, VoiceHostLock
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("PhoneVoiceAgent")
-INBOUND_REALTIME_PRECONNECT_GRACE_SECONDS = 2.2
 
 
 def _env_flag(name: str) -> bool:
@@ -49,7 +47,6 @@ class ActiveCallRuntime:
     client: AuthenticatedPhoneAgentClient
     transport: PhoneAgentTransport
     pipeline: Any | None = None
-    pipeline_start_task: asyncio.Task[None] | None = None
     media_attached: bool = False
     phone_audio_route: dict[str, Any] = field(default_factory=dict)
     recorder: CallRecordingSession | None = None
@@ -86,7 +83,6 @@ class PhoneVoiceAgent:
             logger.info("starting authenticated PhoneAgent voice host pid=%d", os.getpid())
             await self._prewarm_primary_llm()
             await self._prepare_provider_services()
-            await self._preload_realtime_pipeline()
             self._emit_voice_host_ready()
             await self._replace_runtime(retry=True)
             if self._dial_number:
@@ -97,13 +93,6 @@ class PhoneVoiceAgent:
                 if resp.get("status") != "ok":
                     logger.error("dial failed: %s", resp)
                     self._stopping.set()
-                elif (
-                    self.config.pipeline_mode == "s2s_chatgpt_realtime"
-                    and self.config.call_channel == "whatsapp"
-                ):
-                    # Preserve the frozen WhatsApp sequence: its media sidecar
-                    # confirms peer acceptance before Realtime is prepared.
-                    self._begin_realtime_preconnect(runtime, dial_number)
                 self._dial_number = None
             command_task: asyncio.Task[None] | None = None
             if self._command_stdin:
@@ -124,15 +113,14 @@ class PhoneVoiceAgent:
                         poll_interval = 0.5 if runtime.session.is_active else 0.25
                         await asyncio.sleep(poll_interval)
             finally:
-                if command_task is not None and not command_task.done():
+                if command_task is not None:
                     command_task.cancel()
                     await asyncio.gather(command_task, return_exceptions=True)
                 await self._close_runtime(hangup=True)
 
     async def _prewarm_primary_llm(self) -> None:
         """Reach model-ready state before monitoring or attaching cellular calls."""
-        if self.config.pipeline_mode == "s2s_chatgpt_realtime":
-            return
+        # Pipeline mode is always cascade in production
 
         delay = 0.5
         while not self._stopping.is_set():
@@ -153,43 +141,13 @@ class PhoneVoiceAgent:
                     pass
                 delay = min(delay * 2, 5.0)
 
-    async def _preload_realtime_pipeline(self) -> None:
-        """Finish cold Realtime imports before the receptionist reports listening."""
-
-        if (
-            self.config.pipeline_mode != "s2s_chatgpt_realtime"
-            or self.config.call_channel == "whatsapp"
-        ):
-            return
-        module_name = (
-            "phone_agent_gateway.ai_bridge.openai_realtime_websocket_pipeline"
-            if self.config.providers.chatgpt_realtime_transport == "websocket"
-            else "phone_agent_gateway.ai_bridge.chatgpt_realtime_pipeline"
-        )
-        started = time.perf_counter()
-        await asyncio.to_thread(importlib.import_module, module_name)
-        logger.info(
-            "Realtime pipeline preloaded before GSM readiness module=%s elapsed_ms=%.1f",
-            module_name.rsplit(".", 1)[-1],
-            (time.perf_counter() - started) * 1000,
-        )
-
     async def _place_outbound_call(
         self,
         runtime: ActiveCallRuntime,
         dial_number: str,
     ) -> dict[str, Any]:
-        """Overlap GSM carrier ringing with the Realtime handshake."""
+        """Place an outbound call via the authenticated client."""
 
-        if (
-            self.config.pipeline_mode == "s2s_chatgpt_realtime"
-            and getattr(self.config, "call_channel", "gsm") != "whatsapp"
-        ):
-            logger.info("starting Realtime preconnect before GSM dial request")
-            self._begin_realtime_preconnect(runtime, dial_number)
-            # Let the connection task start before the Android dial request,
-            # which can remain blocked until Telecom reports the live call.
-            await asyncio.sleep(0)
         return await asyncio.to_thread(runtime.client.dial, dial_number)
 
     async def _handle_status(self, status: CallStatus) -> None:
@@ -241,22 +199,11 @@ class PhoneVoiceAgent:
             CallState.HOLDING,
         }:
             self._outbound_seen_live_state = True
-        pipeline_mode = getattr(self.config, "pipeline_mode", "")
         if status.state is CallState.RINGING:
-            if pipeline_mode == "s2s_chatgpt_realtime":
-                self._begin_realtime_preconnect(
-                    runtime,
-                    status.incoming_number or "incoming:anonymous",
-                )
             if self.config.auto_answer:
                 if self._auto_answer_attempted:
                     return
                 self._auto_answer_attempted = True
-                if (
-                    pipeline_mode == "s2s_chatgpt_realtime"
-                    and getattr(self.config, "call_channel", "gsm") != "whatsapp"
-                ):
-                    await self._give_inbound_preconnect_head_start(runtime)
                 logger.info("answering incoming call under configured auto-answer policy")
                 try:
                     await asyncio.to_thread(runtime.client.answer)
@@ -270,22 +217,7 @@ class PhoneVoiceAgent:
                     raise
                 return
 
-        if (
-            pipeline_mode == "s2s_chatgpt_realtime"
-            and status.state in {CallState.DIALING, CallState.CONNECTING}
-            and runtime.pipeline is None
-        ):
-            self._begin_realtime_preconnect(
-                runtime,
-                status.incoming_number
-                or self._outbound_number
-                or f"unknown:{runtime.session.call_id}",
-            )
-
-        should_start_active_call = runtime.pipeline is None or (
-            pipeline_mode == "s2s_chatgpt_realtime"
-            and not getattr(runtime, "media_attached", False)
-        )
+        should_start_active_call = runtime.pipeline is None
         if status.state is CallState.ACTIVE and should_start_active_call:
             await self._start_call(runtime, status)
             return
@@ -475,29 +407,18 @@ class PhoneVoiceAgent:
             self._emit_event(
                 {"type": "recording_error", "message": "Call recording could not start"}
             )
-        if self.config.pipeline_mode == "s2s_chatgpt_realtime":
-            self._begin_realtime_preconnect(runtime, caller_id)
-            pipeline = runtime.pipeline
-            if pipeline is None:
-                raise RuntimeError("Realtime pipeline preconnect did not create a pipeline")
-        else:
-            pipeline = ProductionCallPipeline(
-                runtime.transport,
-                self.config,
-                services=services,
-                caller_id=caller_id,
-                call_direction=self.call_direction,
-                event_sink=self._emit_event,
-            )
+        pipeline = ProductionCallPipeline(
+            runtime.transport,
+            self.config,
+            services=services,
+            caller_id=caller_id,
+            call_direction=self.call_direction,
+            event_sink=self._emit_event,
+            call_completion_sink=self._call_completion_sink(runtime),
+        )
         runtime.pipeline = pipeline
         try:
-            if self.config.pipeline_mode == "s2s_chatgpt_realtime":
-                await self._await_realtime_preconnect(runtime, caller_id)
-                pipeline = runtime.pipeline
-                if pipeline is None:
-                    raise RuntimeError("Realtime pipeline disappeared during preconnect")
-            else:
-                await pipeline.start()
+            await pipeline.start()
             await self._greet_pipeline_once(pipeline)
         except Exception as exc:
             logger.exception("voice pipeline could not start: %s", exc)
@@ -508,28 +429,9 @@ class PhoneVoiceAgent:
             runtime.pipeline = None
             raise
 
-    def _begin_realtime_preconnect(
-        self,
-        runtime: ActiveCallRuntime,
-        caller_id: str,
-    ) -> None:
-        """Start the remote Realtime handshake during ringing, before answer."""
+    def _call_completion_sink(self, runtime: ActiveCallRuntime):
+        """Build the single guarded telephony completion path for every pipeline."""
 
-        if runtime.pipeline is not None or runtime.pipeline_start_task is not None:
-            return
-        websocket_transport = self.config.providers.chatgpt_realtime_transport == "websocket"
-        if websocket_transport:
-            from .openai_realtime_websocket_pipeline import (
-                OpenAIRealtimeWebSocketPipeline as RealtimePipeline,
-            )
-        else:
-            from .chatgpt_realtime_pipeline import ChatGPTRealtimePipeline as RealtimePipeline
-
-        pipeline_kwargs: dict[str, Any] = {
-            "caller_id": caller_id,
-            "call_direction": self.call_direction,
-            "event_sink": self._emit_event,
-        }
         async def complete_call(reason: str) -> None:
             if self._runtime is not runtime:
                 return
@@ -541,104 +443,7 @@ class PhoneVoiceAgent:
             if self._one_call_mode:
                 self._stopping.set()
 
-        pipeline_kwargs["call_completion_sink"] = complete_call
-        if websocket_transport:
-
-            async def terminal_failure(message: str) -> None:
-                if self._runtime is not runtime:
-                    return
-                logger.error(
-                    "terminating cellular call after unrecoverable Realtime failure: %s",
-                    message,
-                )
-                try:
-                    await asyncio.to_thread(runtime.client.hangup)
-                except Exception:
-                    logger.warning(
-                        "could not hang up after unrecoverable Realtime failure",
-                        exc_info=True,
-                    )
-                if self._one_call_mode:
-                    self._stopping.set()
-
-            pipeline_kwargs["terminal_failure_sink"] = terminal_failure
-
-        pipeline = RealtimePipeline(runtime.transport, self.config, **pipeline_kwargs)
-        runtime.pipeline = pipeline
-
-        async def connect() -> None:
-            started = time.perf_counter()
-            await pipeline.start()
-            logger.info(
-                "Realtime preconnect ready elapsed_ms=%.1f",
-                (time.perf_counter() - started) * 1000,
-            )
-
-        runtime.pipeline_start_task = asyncio.create_task(
-            connect(),
-            name="chatgpt-realtime-preconnect",
-        )
-
-    async def _give_inbound_preconnect_head_start(
-        self,
-        runtime: ActiveCallRuntime,
-    ) -> None:
-        """Use ringing time for Realtime without delaying auto-answer indefinitely."""
-
-        task = runtime.pipeline_start_task
-        if task is None:
-            return
-        started = time.perf_counter()
-        try:
-            await asyncio.wait_for(
-                asyncio.shield(task),
-                timeout=INBOUND_REALTIME_PRECONNECT_GRACE_SECONDS,
-            )
-            logger.info(
-                "Realtime ready before inbound auto-answer elapsed_ms=%.1f",
-                (time.perf_counter() - started) * 1000,
-            )
-        except TimeoutError:
-            logger.info(
-                "answering inbound call after bounded Realtime head start elapsed_ms=%.1f",
-                (time.perf_counter() - started) * 1000,
-            )
-        except Exception as exc:
-            # The active-call preconnect join retries once. Answering here keeps
-            # a transient model failure from ringing forever.
-            logger.warning("Realtime preconnect failed before auto-answer: %s", exc)
-
-    async def _await_realtime_preconnect(
-        self,
-        runtime: ActiveCallRuntime,
-        caller_id: str,
-    ) -> None:
-        """Join a ringing-time handshake, retrying once on a transient failure."""
-
-        task = runtime.pipeline_start_task
-        if task is None:
-            self._begin_realtime_preconnect(runtime, caller_id)
-            task = runtime.pipeline_start_task
-        if task is None:
-            raise RuntimeError("Realtime preconnect task was not created")
-        try:
-            await task
-            runtime.pipeline_start_task = None
-            return
-        except Exception as exc:
-            logger.warning("Realtime ringing-time preconnect failed; retrying active call: %s", exc)
-            failed_pipeline = runtime.pipeline
-            runtime.pipeline = None
-            runtime.pipeline_start_task = None
-            if failed_pipeline is not None:
-                await failed_pipeline.cancel("ringing-time preconnect failed")
-
-        self._begin_realtime_preconnect(runtime, caller_id)
-        retry = runtime.pipeline_start_task
-        if retry is None:
-            raise RuntimeError("Realtime active-call retry task was not created")
-        await retry
-        runtime.pipeline_start_task = None
+        return complete_call
 
     async def _greet_pipeline_once(self, pipeline: Any) -> None:
         """Attempt the opening once per cellular call, including across media recovery."""
@@ -714,13 +519,6 @@ class PhoneVoiceAgent:
     async def _prepare_provider_services(self) -> None:
         """Construct heavyweight provider objects before a call becomes active."""
 
-        if self.config.pipeline_mode == "s2s_chatgpt_realtime":
-            # The official Realtime session receives its complete persona in
-            # session.update. Mutating ChatGPT account-level system messages is
-            # unrelated, adds pre-dial delay, and can leak this task into normal
-            # ChatGPT conversations.
-            self._speech_models_prewarmed = True
-            return
         if self._prepared_services is not None or self._stopping.is_set():
             return
         if not self._speech_models_prewarmed:
@@ -795,19 +593,19 @@ class PhoneVoiceAgent:
                 delay = min(delay * 2, 5.0)
 
     def _new_runtime(self) -> ActiveCallRuntime:
-        session = CallSessionState()
-        session.set_phase(SessionPhase.CONNECTING)
-        transport = PhoneAgentTransport(
-            PhoneAgentTransportParams(
-                audio_in_sample_rate=self.config.sample_rate,
-                audio_out_sample_rate=self.config.sample_rate,
-                frame_ms=self.config.frame_ms,
-                input_queue_frames=self.config.input_queue_frames,
-            ),
-            session=session,
-        )
         if self.config.call_channel == "whatsapp":
+            session = CallSessionState(uuid4_str=False)
+            transport = PhoneAgentTransport(
+                PhoneAgentTransportParams(audio_out_sample_rate=self.config.sample_rate),
+                session,
+            )
             return self._new_whatsapp_runtime(session, transport)
+
+        session = CallSessionState()
+        transport = PhoneAgentTransport(
+            PhoneAgentTransportParams(audio_out_sample_rate=self.config.sample_rate),
+            session,
+        )
         client = AuthenticatedPhoneAgentClient(
             session,
             self.config.link_authentication_key or b"",
@@ -821,12 +619,7 @@ class PhoneVoiceAgent:
             device_id=self.config.device_id,
             auto_forward_adb=self.config.use_adb_forward,
         )
-        audio_receiver = (
-            transport.feed_s2s_phone_frame
-            if self.config.pipeline_mode == "s2s_chatgpt_realtime"
-            else transport.feed_phone_frame
-        )
-        client.link.on_audio_received(audio_receiver)
+        client.link.on_audio_received(transport.feed_phone_frame)
         transport.set_tx_handler(client.link.send_audio_chunk)
         transport.set_audio_end_handler(client.link.send_audio_end_marker)
         transport.set_flush_handler(client.flush_audio)
@@ -862,15 +655,7 @@ class PhoneVoiceAgent:
             country_code=self.config.whatsapp_country_code,
             max_duration_secs=self.config.whatsapp_max_duration_secs,
         )
-        # Raw PCM, not framed media: there is no sequence or call id to check.
-        # The two pipelines read caller audio from different places — S2S from
-        # the listeners, the cascade from the Pipecat queue — so the channel has
-        # to pick the same way the cellular branch does.
-        client.link.on_audio_received(
-            transport.feed_s2s_audio_bytes
-            if self.config.pipeline_mode == "s2s_chatgpt_realtime"
-            else transport.feed_audio_bytes
-        )
+        client.link.on_audio_received(transport.feed_audio_bytes)
         transport.set_tx_handler(client.link.send_audio_chunk)
         transport.set_audio_end_handler(client.link.send_audio_end_marker)
         transport.set_flush_handler(client.flush_audio)
@@ -895,12 +680,6 @@ class PhoneVoiceAgent:
                     await asyncio.to_thread(runtime.client.hangup)
             except Exception:
                 logger.warning("could not hang up during shutdown", exc_info=True)
-        start_task = runtime.pipeline_start_task
-        runtime.pipeline_start_task = None
-        if start_task is not None:
-            if not start_task.done():
-                start_task.cancel()
-            await asyncio.gather(start_task, return_exceptions=True)
         if runtime.pipeline is not None:
             try:
                 await runtime.pipeline.stop()

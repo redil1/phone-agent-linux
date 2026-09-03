@@ -1,0 +1,328 @@
+{
+  "schema_version": 1,
+  "policy_owner": "platform-security",
+  "dependency_classes": {
+    "python-runtime": {
+      "owner": "voice-platform",
+      "lock": "uv.lock",
+      "update_method": "uv lock --upgrade-package <name>"
+    },
+    "python-development": {
+      "owner": "developer-experience",
+      "lock": "uv.lock",
+      "update_method": "uv lock --upgrade-group dev"
+    },
+    "rust-sidecar": {
+      "owner": "channel-platform",
+      "lock": "whatsapp_channel/rust_caller/Cargo.lock",
+      "update_method": "cargo update -p <name> --precise <version>"
+    },
+    "android-toolchain": {
+      "owner": "device-platform",
+      "lock": "security/dependency-policy.json",
+      "update_method": "qualified toolchain change"
+    },
+    "container-base": {
+      "owner": "platform-security",
+      "lock": "Dockerfile.cuda digest",
+      "update_method": "digest-only pull request"
+    },
+    "models": {
+      "owner": "voice-ml",
+      "lock": "release model manifest",
+      "update_method": "quality, licence, security, and latency qualification"
+    }
+  },
+  "supported_toolchains": {
+    "python": [
+      "3.11.13"
+    ],
+    "cuda": "12.9",
+    "python_base": "3.11.13-slim-bullseye@sha256:9e25f400253a5fa3191813d6a67eb801ca1e6f012b3bd2588fa6920b59e3eba6",
+    "debian_snapshot": "20250721T000000Z",
+    "cuda_delivery": "hash-locked PyTorch cu129 wheels plus NVIDIA host driver injection",
+    "pytorch": "2.13.0+cu129",
+    "java": 17,
+    "android_compile_sdk": 34,
+    "android_build_tools": "34.0.0",
+    "rust_minimum": "1.85.0",
+    "uv": "0.12.9"
+  },
+  "update_cadence": {
+    "scheduled_review_days": 14,
+    "transitive_refresh_days": 30,
+    "toolchain_review_days": 90,
+    "emergency_security_updates": "event-driven",
+    "required_evidence": [
+      "lock diff",
+      "CVE report",
+      "licence report",
+      "SBOM",
+      "unit and integration tests",
+      "latency and quality regression results for media or model changes",
+      "rollback artifact"
+    ]
+  },
+  "vulnerability_policy": {
+    "critical_triage_hours": 24,
+    "critical_remediation_hours": 72,
+    "high_triage_hours": 72,
+    "high_remediation_days": 14,
+    "exception_maximum_days": 90,
+    "exception_file": "security/dependency-audit-allowlist.json",
+    "required_exception_fields": [
+      "id",
+      "aliases",
+      "package",
+      "affected_version",
+      "owner",
+      "expires",
+      "justification"
+    ],
+    "audit_version_normalizations": {
+      "torch": {
+        "locked_version": "2.13.0+cu129",
+        "advisory_version": "2.13.0",
+        "reason": "The cu129 local label selects the binary build; upstream advisories identify the common PyTorch 2.13.0 source release."
+      }
+    }
+  },
+  "licence_policy": {
+    "project_expression": "LicenseRef-Proprietary",
+    "technical_allowlist": [
+      "0BSD",
+      "Apache-2.0",
+      "BSD-2-Clause",
+      "BSD-3-Clause",
+      "BSL-1.0",
+      "ISC",
+      "MIT",
+      "MIT-0",
+      "MPL-2.0",
+      "PSF-2.0"
+    ],
+    "conditional_licences": [
+      "LGPL-2.1-or-later",
+      "LGPL-3.0-or-later",
+      "LicenseRef-NVIDIA-SOFTWARE-LICENSE"
+    ],
+    "prohibited_without_written_legal_approval": [
+      "AGPL-1.0-only",
+      "AGPL-1.0-or-later",
+      "AGPL-3.0-only",
+      "AGPL-3.0-or-later",
+      "GPL-2.0-only",
+      "GPL-2.0-or-later",
+      "GPL-3.0-only",
+      "GPL-3.0-or-later",
+      "LicenseRef-Evaluation-Only",
+      "UNKNOWN"
+    ],
+    "rule": "Every shipped component must have an exact-version licence decision. Conditional or copyleft components require recorded distribution architecture, obligations, and written legal approval. Unknown and evaluation-only licences fail release.",
+    "legal_boundary": "This is an engineering release policy, not legal advice. The product owner or qualified counsel records final commercial approval."
+  },
+  "system_components": [
+    {
+      "package": "espeak-ng",
+      "version": "1.50+dfsg-7+deb11u2",
+      "expression": "GPL-3.0-or-later",
+      "decision": "approved-separate-program-with-obligations",
+      "owner": "voice-ml",
+      "source": "https://github.com/espeak-ng/espeak-ng/blob/master/COPYING",
+      "architecture": "Separate Linux-distribution executable invoked without shell; PhoneAgent does not import, link, or bundle the eSpeak shared library.",
+      "distribution_obligations": "Preserve GPL notices and provide the corresponding-source mechanism for the exact Debian package."
+    }
+  ],
+  "model_components": [
+    {
+      "model": "openai/whisper-large-v3-turbo",
+      "revision": "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
+      "expression": "MIT",
+      "decision": "approved",
+      "owner": "voice-ml",
+      "source": "https://huggingface.co/openai/whisper-large-v3-turbo"
+    },
+    {
+      "model": "hexgrad/Kokoro-82M",
+      "revision": "f3ff3571791e39611d31c381e3a41a3af07b4987",
+      "expression": "Apache-2.0",
+      "decision": "approved",
+      "owner": "voice-ml",
+      "source": "https://huggingface.co/hexgrad/Kokoro-82M"
+    },
+    {
+      "model": "EryriLabs/phonellm-alpha-1-GGUF",
+      "revision": "41469ed9a09cf90724b632157e304f12e5286dbf",
+      "expression": "BSD-2-Clause AND LicenseRef-NVIDIA-Nemotron-Open-Model",
+      "decision": "approved-with-obligations",
+      "owner": "voice-ml",
+      "source": "https://huggingface.co/EryriLabs/phonellm-alpha-1-GGUF",
+      "distribution_obligations": "Ship the NVIDIA licence and required attribution notice with redistributed model artifacts."
+    },
+    {
+      "model": "Supertone/supertonic-2",
+      "revision": "75e6727618a02f323c720cba9478152d4bc16ca4",
+      "expression": "LicenseRef-OpenRAIL-M",
+      "decision": "approved-with-obligations",
+      "owner": "voice-ml",
+      "source": "https://huggingface.co/Supertone/supertonic-2/blob/main/LICENSE",
+      "distribution_obligations": "Flow the model's use restrictions and licence notice into customer terms and hosted-service controls."
+    },
+    {
+      "model": "FunAudioLLM/SenseVoiceSmall",
+      "revision": "3847d57b6bdf2dd8875cb1508d2af43d80a16bf7",
+      "expression": "LicenseRef-FunASR-Model-1.1",
+      "decision": "evaluation-only",
+      "distribution_scope": "sensevoice-evaluation",
+      "owner": "voice-ml",
+      "source": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE"
+    }
+  ],
+  "reviewed_component_families": [
+    {
+      "family": "PyTorch CUDA 12.9 NVIDIA wheels",
+      "expression": "LicenseRef-NVIDIA-SOFTWARE-LICENSE",
+      "decision": "approved-with-obligations",
+      "owner": "platform-security",
+      "source": "https://docs.nvidia.com/cuda/eula/",
+      "distribution_obligations": "Preserve the NVIDIA CUDA licence and wheel notices; distribute only as dependencies of the qualified PhoneAgent runtime.",
+      "components": {
+        "nvidia-cublas-cu12": "12.9.1.4",
+        "nvidia-cuda-cupti-cu12": "12.9.79",
+        "nvidia-cuda-nvrtc-cu12": "12.9.86",
+        "nvidia-cuda-runtime-cu12": "12.9.79",
+        "nvidia-cudnn-cu12": "9.20.0.48",
+        "nvidia-cufft-cu12": "11.4.1.4",
+        "nvidia-cufile-cu12": "1.14.1.1",
+        "nvidia-curand-cu12": "10.3.10.19",
+        "nvidia-cusolver-cu12": "11.7.5.82",
+        "nvidia-cusparse-cu12": "12.5.10.65",
+        "nvidia-cusparselt-cu12": "0.8.1",
+        "nvidia-nccl-cu12": "2.29.7",
+        "nvidia-nvjitlink-cu12": "12.9.86",
+        "nvidia-nvshmem-cu12": "3.4.5",
+        "nvidia-nvtx-cu12": "12.9.79"
+      }
+    }
+  ],
+  "reviewed_components": [
+    {
+      "package": "phone-agent-gateway",
+      "version": "0.7.0",
+      "expression": "LicenseRef-Proprietary",
+      "decision": "project-owned",
+      "owner": "product-owner",
+      "source": "pyproject.toml"
+    },
+    {
+      "package": "google-crc32c",
+      "version": "1.8.0",
+      "expression": "Apache-2.0",
+      "decision": "approved",
+      "owner": "platform-security",
+      "source": "https://github.com/googleapis/python-crc32c/blob/main/LICENSE"
+    },
+    {
+      "package": "en-core-web-sm",
+      "version": "3.8.0",
+      "expression": "MIT",
+      "decision": "approved-hash-locked-url-artifact",
+      "owner": "voice-ml",
+      "source": "https://github.com/explosion/spacy-models/blob/master/LICENSE",
+      "security_review": "The hash-locked direct URL is excluded from pip-audit because pip-audit 2.10.1 rejects URL requirements; it remains present in the CycloneDX SBOM and exact-version licence gate."
+    },
+    {
+      "package": "cuda-toolkit",
+      "version": "12.9.1",
+      "expression": "LicenseRef-NVIDIA-SOFTWARE-LICENSE",
+      "decision": "approved-with-obligations",
+      "owner": "platform-security",
+      "source": "https://docs.nvidia.com/cuda/eula/",
+      "distribution_obligations": "Preserve the NVIDIA CUDA licence and notices for the exact wheel graph; do not expose CUDA SDK components as a standalone hosted service."
+    },
+    {
+      "package": "cuda-bindings",
+      "version": "12.9.7",
+      "expression": "LicenseRef-NVIDIA-SOFTWARE-LICENSE",
+      "decision": "approved-with-obligations",
+      "owner": "platform-security",
+      "source": "https://docs.nvidia.com/cuda/eula/",
+      "distribution_obligations": "Preserve the NVIDIA CUDA licence and notices for the exact wheel graph."
+    },
+    {
+      "package": "edge-tts",
+      "version": "7.2.8",
+      "expression": "LGPL-3.0-or-later",
+      "decision": "approved-dynamic-library-with-obligations",
+      "owner": "voice-platform",
+      "source": "https://github.com/rany2/edge-tts/blob/master/LICENSE",
+      "distribution_obligations": "Preserve the LGPL notice and source offer, keep the library replaceable, and publish modifications to the library itself."
+    },
+    {
+      "package": "num2words",
+      "version": "0.5.14",
+      "expression": "LGPL-2.1-or-later",
+      "decision": "approved-dynamic-library-with-obligations",
+      "owner": "voice-ml",
+      "source": "https://github.com/savoirfairelinux/num2words/blob/master/COPYING",
+      "distribution_obligations": "Preserve the LGPL notice and source offer, keep the library replaceable, and publish modifications to the library itself."
+    },
+    {
+      "package": "soxr",
+      "version": "1.0.0",
+      "expression": "LGPL-2.1-or-later",
+      "decision": "approved-dynamic-library-with-obligations",
+      "owner": "voice-ml",
+      "source": "https://github.com/dofuuz/python-soxr/blob/master/LICENSE.txt",
+      "distribution_obligations": "Preserve the LGPL notice and source offer, retain replacement rights, and publish modifications to the library itself."
+    },
+    {
+      "package": "tld",
+      "version": "0.13.2",
+      "expression": "MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later",
+      "decision": "approved-under-mpl-1.1-option",
+      "owner": "knowledge-platform",
+      "source": "https://github.com/barseghyanartur/tld/blob/main/LICENSE.rst",
+      "distribution_obligations": "Select the MPL-1.1 option, preserve notices, and publish modifications to MPL-covered files."
+    },
+    {
+      "package": "kaldiio",
+      "version": "2.18.1",
+      "expression": "LicenseRef-Evaluation-Only",
+      "decision": "blocked",
+      "distribution_scope": "sensevoice-evaluation",
+      "owner": "voice-ml",
+      "source": "https://github.com/nttcslab-sp/kaldiio/blob/master/LICENSE",
+      "replacement_required": "Remove the FunASR dependency from every commercial release graph or obtain a written commercial licence from NTT."
+    },
+    {
+      "package": "espeakng-loader",
+      "version": "0.2.4",
+      "expression": "MIT AND GPL-3.0-or-later",
+      "decision": "removed",
+      "distribution_scope": "removed",
+      "owner": "voice-ml",
+      "source": "https://github.com/thewh1teagle/espeakng-loader/blob/main/LICENSE",
+      "replacement_required": "Do not ship its bundled in-process eSpeak NG library in a proprietary release."
+    },
+    {
+      "package": "phonemizer-fork",
+      "version": "3.3.2",
+      "expression": "GPL-3.0-or-later",
+      "decision": "removed",
+      "distribution_scope": "removed",
+      "owner": "voice-ml",
+      "source": "https://pypi.org/project/phonemizer-fork/",
+      "replacement_required": "Replace the in-process Kokoro phonemization path or obtain written legal approval."
+    },
+    {
+      "package": "cuda-toolkit",
+      "version": "13.0.3.0",
+      "expression": "LicenseRef-NVIDIA-SOFTWARE-LICENSE",
+      "decision": "removed",
+      "owner": "platform-security",
+      "source": "https://docs.nvidia.com/cuda/eula/",
+      "replacement_required": "None; the accidental CUDA toolkit meta-package remains absent from the qualified PyTorch CUDA 12.9 wheel graph."
+    }
+  ]
+}

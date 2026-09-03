@@ -51,6 +51,7 @@ from .tasks.task_engine import TaskEngine
 from .turn_continuity import looks_semantically_incomplete
 
 EventSink = Callable[[dict[str, Any]], Any]
+CallCompletionSink = Callable[[str], Awaitable[None] | None]
 logger = logging.getLogger("PhoneAgentPolicy")
 
 _DIRECT_PRODUCT_QUESTION = re.compile(
@@ -59,7 +60,7 @@ _DIRECT_PRODUCT_QUESTION = re.compile(
     r"what does .{0,30}(?:plan|package|subscription) include|"
     r"how much|price range|(?:basic|starter|essential|family|premium) "
     r"(?:plan|package)|month[- ]to[- ]month|no contract|contract terms|"
-    r"trial|devices? (?:does|do|can)|what do you offer"
+    r"trial|devices? (?:does|do|can)|what do you offer|send|whatsapp|register|interested|offers?"
     r")\b",
     re.IGNORECASE,
 )
@@ -176,6 +177,10 @@ class AgentPolicyRuntime:
         self._last_ai_delivery = "none"
         self._last_guard_rejection = ""
         self._repeat_authorized_epoch = -1
+        self._terminal_response_id: str | None = None
+        self._terminal_completion_reason = ""
+        self._terminal_completion_sink: CallCompletionSink | None = None
+        self._terminal_completion_notified = False
         self._closed = False
 
     def recompile_system_prompt(self) -> str:
@@ -323,8 +328,7 @@ class AgentPolicyRuntime:
             )
         elif self._last_caller_intent == "attention_check":
             required_move = (
-                "Confirm you are present in a few words, then continue the unfinished outbound "
-                "sales point. Never ask 'how can I help you today?' because you called them."
+                "Confirm you are present warmly ('Yes, I am here!'), and IMMEDIATELY answer or fulfill the caller's last request (such as sending info on WhatsApp, discussing plans, or confirming registration). Never stay silent and never just say 'I am here' without moving forward."
             )
         else:
             required_move = (
@@ -353,6 +357,12 @@ class AgentPolicyRuntime:
             f"required_next_move: {required_move}\n"
             "Quality and stage fields are fallible hints derived from audio and simple state; "
             "never let a hint contradict or replace the caller's actual words. "
+            "CONVERSATIONAL MEMORY & NATURAL HUMAN TURN-TAKING (MANDATORY): "
+            "1. Conversational Backchannels: If the caller says a one or two word acknowledgement (e.g. 'Yeah', 'Yes', 'Okay', 'Right', 'Mm-hmm', 'Sure') while you are in the middle of explaining something or after you asked a question, DO NOT restart or robotically pitch a new plan! Acknowledge briefly and smoothly continue your natural point (e.g. 'Great! We can set that up for you right away.'). "
+            "2. Conversational Flow Over State Machine: Never say 'Just to confirm' or mechanically repeat plans. If the caller says they are budget-conscious or have limited time, respect it immediately without generic filler. "
+            "3. When the caller already confirmed their plan choice (e.g. Essential) or requested WhatsApp summary, DO NOT RE-PITCH other plans or ask if they want to hear more plans. "
+            "4. Execute actions directly. Never read aloud a drafted text message word-for-word to ask for confirmation when the caller already asked to send it. "
+            "5. Keep conversational turns natural, direct, and concise (1-2 sentences maximum). "
             "Natural conversation rules: Answer direct questions, corrections, confusion, and "
             "requests to explain before pursuing the objective. If the latest words may be "
             "garbled or incomplete, do not guess and do not advance task state; ask one brief, "
@@ -375,7 +385,14 @@ class AgentPolicyRuntime:
         if isinstance(messages, list):
             with contextlib.suppress(ValueError):
                 messages.remove(self._live_state_message)
-            messages.append(self._live_state_message)
+            # CRITICAL CONVERSATION CONTINUITY:
+            # The system live state message must be placed BEFORE the user's latest turn, NOT AFTER.
+            # If placed after the user turn, Ollama sees the prompt ending in a system message rather than a user prompt,
+            # disrupting the conversational turn-taking dialogue structure.
+            if messages and messages[-1].get('role') == 'user':
+                messages.insert(len(messages) - 1, self._live_state_message)
+            else:
+                messages.append(self._live_state_message)
 
     def classify_turn(self, text: str) -> TurnQuality:
         """Decide whether this turn carries something to answer at all."""
@@ -718,6 +735,22 @@ class AgentPolicyRuntime:
         response_kind: str = "turn",
         enforce_spoken_policy: bool = True,
     ) -> tuple[str, TurnEvaluationResult]:
+        spoken_text, evaluation, _response_id = await self.finalize_response_with_identity(
+            raw_text,
+            response_kind=response_kind,
+            enforce_spoken_policy=enforce_spoken_policy,
+        )
+        return spoken_text, evaluation
+
+    async def finalize_response_with_identity(
+        self,
+        raw_text: str,
+        *,
+        response_kind: str = "turn",
+        enforce_spoken_policy: bool = True,
+    ) -> tuple[str, TurnEvaluationResult, str]:
+        """Finalize one response and return its delivery correlation identity."""
+
         if enforce_spoken_policy:
             spoken_text, policy_violations = PermissionGate.enforce_spoken_response(
                 raw_text,
@@ -784,7 +817,11 @@ class AgentPolicyRuntime:
                 "task_id": self.task_id,
             }
         )
-        if self.memory_enabled and self.last_caller_text:
+        if (
+            self.memory_enabled
+            and self.last_caller_text
+            and self.last_caller_transcript_trusted
+        ):
             task = asyncio.create_task(
                 self.memory_writer.process_turn_async(
                     self.caller_id,
@@ -798,7 +835,53 @@ class AgentPolicyRuntime:
             )
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
-        return spoken_text, evaluation
+        return spoken_text, evaluation, response_id
+
+    def arm_terminal_completion(
+        self,
+        response_id: str,
+        reason: str,
+        sink: CallCompletionSink | None,
+    ) -> None:
+        """Bind hangup to one exact response's verified playout result."""
+
+        if not response_id or response_id not in self._pending_playback_ids:
+            raise ValueError("terminal response must be pending phone playback")
+        if self._terminal_response_id is not None or self._terminal_completion_notified:
+            raise RuntimeError("terminal completion is already armed or completed")
+        self._terminal_response_id = response_id
+        self._terminal_completion_reason = " ".join(reason.split())[:500]
+        self._terminal_completion_sink = sink
+
+    async def _resolve_terminal_completion(self, response_id: str, status: str) -> None:
+        if response_id != self._terminal_response_id:
+            return
+        reason = self._terminal_completion_reason or "AI ended call"
+        sink = self._terminal_completion_sink
+        self._terminal_response_id = None
+        self._terminal_completion_reason = ""
+        self._terminal_completion_sink = None
+        if status != "completed":
+            await self._emit(
+                {
+                    "type": "terminal_completion_aborted",
+                    "response_id": response_id,
+                    "playback_status": status,
+                    "reason": "closing was not verified as rendered on the phone",
+                }
+            )
+            return
+        if self._terminal_completion_notified:
+            return
+        self._terminal_completion_notified = True
+        await self._emit(
+            {"type": "call_completion", "response_id": response_id, "reason": reason}
+        )
+        if sink is None:
+            return
+        result = sink(reason)
+        if inspect.isawaitable(result):
+            await result
 
     def begin_streamed_response(self) -> str:
         """Reserve this turn's playback identity before any audio is produced.
@@ -838,11 +921,14 @@ class AgentPolicyRuntime:
         # Never let a known duplicate reach TTS. The response processor asks
         # the model to regenerate from the latest caller meaning; it does not
         # substitute a canned sales-stage sentence here.
-        if self._is_repeat(spoken):
+        if response_kind != "recovery_fallback" and self._is_repeat(spoken):
             self._last_guard_rejection = "repeat"
             logger.warning("Blocked model text repeated previously: %r", spoken[:80])
             return "", True
-        if self._is_low_value_acknowledgement(spoken):
+        if (
+            response_kind != "recovery_fallback"
+            and self._is_low_value_acknowledgement(spoken)
+        ):
             self._last_guard_rejection = "low_value_acknowledgement"
             logger.warning("Blocked mirror-only model sentence: %r", spoken[:80])
             return "", True
@@ -918,7 +1004,11 @@ class AgentPolicyRuntime:
                 "task_id": self.task_id,
             }
         )
-        if self.memory_enabled and self.last_caller_text:
+        if (
+            self.memory_enabled
+            and self.last_caller_text
+            and self.last_caller_transcript_trusted
+        ):
             task = asyncio.create_task(
                 self.memory_writer.process_turn_async(
                     self.caller_id,
@@ -1002,22 +1092,28 @@ class AgentPolicyRuntime:
             )
         else:
             status = "completed"
+        response_id = self._active_playback_id
         self._last_ai_delivery = status
         self._refresh_live_state()
         await self._emit_playback_status(status, message=message)
         self._active_playback_id = None
         self._playback_interrupted = False
+        if response_id is not None:
+            await self._resolve_terminal_completion(response_id, status)
 
     async def playback_failed(self, message: str) -> None:
         if self._active_playback_id is None and self._pending_playback_ids:
             self._active_playback_id = self._pending_playback_ids.popleft()
         if self._active_playback_id is None:
             return
+        response_id = self._active_playback_id
         await self._emit_playback_status("failed", message=message)
         self._active_playback_id = None
         self._playback_interrupted = False
         self._last_ai_delivery = "failed"
         self._refresh_live_state()
+        if response_id is not None:
+            await self._resolve_terminal_completion(response_id, "failed")
 
     async def _emit_playback_status(self, status: str, *, message: str = "") -> None:
         await self._emit(
@@ -1081,7 +1177,7 @@ def transcription_evidence(
         metadata = {}
     trusted = metadata.get("trusted_for_task", True) is not False
     raw_confidence = metadata.get("confidence")
-    confidence = float(raw_confidence) if isinstance(raw_confidence, (int, float)) else None
+    confidence = float(raw_confidence) if isinstance(raw_confidence, int | float) else None
     raw_language = metadata.get("language")
     language = str(raw_language).strip() if raw_language else None
     return trusted, confidence, language
@@ -1137,6 +1233,7 @@ class ResponsePolicyProcessor(FrameProcessor):
         self._response_id: str | None = None
         self._epoch = -1
         self._rejected_repeat = ""
+        self._all_rejected_repeats: list[str] = []
         self._repeat_retry: Callable[[str, int], Awaitable[bool]] | None = None
         self._retry_resolved: Callable[[int], Awaitable[None]] | None = None
 
@@ -1202,14 +1299,15 @@ class ResponsePolicyProcessor(FrameProcessor):
         elif (
             rejection in {"repeat", "low_value_acknowledgement"}
             and not self._spoken
-            and not self._rejected_repeat
         ):
             # Remember the duplicate in case the *whole* draft contains
             # nothing new.  Do not abandon the stream yet: smaller local
             # models often prefix a useful answer with one stale sentence.
             # Dropping only that sentence preserves the useful continuation
             # and avoids paying for another generation.
-            self._rejected_repeat = sentence
+            if not self._rejected_repeat:
+                self._rejected_repeat = sentence
+            self._all_rejected_repeats.append(sentence)
         if stop:
             # Permission failures must abandon the remaining draft because it
             # may depend on wording the caller never heard.  Repetition is
@@ -1229,6 +1327,61 @@ class ResponsePolicyProcessor(FrameProcessor):
         self._response_id = None
         self._epoch = -1
         self._rejected_repeat = ""
+        self._all_rejected_repeats = []
+
+    async def _release_recovery_fallback(
+        self,
+        rejected: str,
+        epoch: int,
+        direction: FrameDirection,
+        all_rejected: list[str] | None = None,
+    ) -> bool:
+        """Speak one observable repair after the model exhausts its retry budget.
+
+        This is deliberately narrower than normal conversation generation: it
+        runs only after both the original model draft and its quality retry were
+        blocked before TTS. Deterministic code owns recovery from that failure,
+        while every ordinary conversational response remains LLM-owned.
+        """
+
+        if self.runtime.is_stale(epoch):
+            return False
+        rejected_list = all_rejected if all_rejected is not None else self._all_rejected_repeats
+        avoid_phrases = tuple(
+            dict.fromkeys(
+                filter(
+                    None,
+                    [
+                        rejected,
+                        *rejected_list,
+                        " ".join(rejected_list),
+                    ],
+                )
+            )
+        )
+        fallback = self.runtime.repair.next_repair(avoid=avoid_phrases)
+        spoken, _stop = self.runtime.guard_sentence(
+            fallback,
+            is_first=True,
+            response_kind="recovery_fallback",
+        )
+        self.runtime.consume_guard_rejection()
+        if not spoken:
+            return False
+        response_id = self.runtime.begin_streamed_response()
+        await self.push_frame(LLMFullResponseStartFrame(), direction)
+        await self.push_frame(LLMTextFrame(spoken), direction)
+        await self.runtime.finalize_streamed_response(
+            response_id,
+            spoken,
+            response_kind="recovery_fallback",
+        )
+        await self.push_frame(LLMFullResponseEndFrame(), direction)
+        logger.warning(
+            "Used policy repair after model repetition recovery was exhausted epoch=%d",
+            epoch,
+        )
+        return True
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -1275,6 +1428,7 @@ class ResponsePolicyProcessor(FrameProcessor):
             stale = self.runtime.is_stale(self._epoch)
             epoch = self._epoch
             rejected_repeat = self._rejected_repeat
+            all_rejected_repeats = list(self._all_rejected_repeats)
             self._reset()
             if stale and response_id is not None:
                 self.runtime.discard_pending_playback(response_id)
@@ -1293,7 +1447,24 @@ class ResponsePolicyProcessor(FrameProcessor):
                     except Exception:
                         logger.exception("Could not schedule repetition recovery")
                 if not scheduled:
-                    logger.error("Suppressed repeated response after recovery budget exhausted")
+                    released = await self._release_recovery_fallback(
+                        rejected_repeat,
+                        epoch,
+                        direction,
+                        all_rejected=all_rejected_repeats,
+                    )
+                    if released and self._retry_resolved is not None:
+                        await self._retry_resolved(epoch)
+                    if not released:
+                        logger.warning("Repetition guard bypassed gracefully; releasing original response to preserve live call continuity")
+                    # Instead of dropping the response, push the spoken sentence to avoid silent drops on the phone
+                    if rejected_repeat:
+                        response_id = self.runtime.begin_streamed_response()
+                        await self.push_frame(LLMFullResponseStartFrame(), direction)
+                        await self.push_frame(LLMTextFrame(rejected_repeat), direction)
+                        await self.runtime.finalize_streamed_response(response_id, rejected_repeat, response_kind="turn")
+                        await self.push_frame(LLMFullResponseEndFrame(), direction)
+                        released = True
                 return
             if response_id is not None:
                 if spoken_text:
@@ -1316,12 +1487,23 @@ class PlaybackEventProcessor(FrameProcessor):
     across each speaking span.
     """
 
-    def __init__(self, runtime: AgentPolicyRuntime, session: Any | None = None) -> None:
+    def __init__(
+        self,
+        runtime: AgentPolicyRuntime,
+        session: Any | None = None,
+        output_transport: Any | None = None,
+        *,
+        playout_timeout_secs: float = 6.0,
+    ) -> None:
         super().__init__()
         self.runtime = runtime
         self._session = session
+        self._output_transport = output_transport
+        self._playout_timeout_secs = playout_timeout_secs
         self._delivered_at_start = 0
+        self._rendered_at_start = -1
         self._dropped_at_start = 0
+        self._audio_end_epoch_at_start = 0
 
     def _counters(self) -> tuple[int, int]:
         if self._session is None:
@@ -1336,15 +1518,59 @@ class PlaybackEventProcessor(FrameProcessor):
         elif direction is FrameDirection.DOWNSTREAM:
             if isinstance(frame, BotStartedSpeakingFrame):
                 self._delivered_at_start, self._dropped_at_start = self._counters()
+                if self._session is not None:
+                    self._rendered_at_start = int(
+                        self._session.metrics.last_rendered_sequence
+                    )
+                if self._output_transport is not None:
+                    self._audio_end_epoch_at_start = self._output_transport.audio_end_epoch
                 await self.runtime.playback_started()
             elif isinstance(frame, BotStoppedSpeakingFrame):
                 delivered, dropped = self._counters()
-                await self.runtime.playback_stopped(
-                    delivered_frames=(
-                        None if self._session is None else delivered - self._delivered_at_start
-                    ),
-                    dropped_frames=dropped - self._dropped_at_start,
-                )
+                if self._session is None or self._output_transport is None:
+                    await self.runtime.playback_stopped(
+                        delivered_frames=(
+                            None if self._session is None else delivered - self._delivered_at_start
+                        ),
+                        dropped_frames=dropped - self._dropped_at_start,
+                    )
+                else:
+                    marker = await self._output_transport.wait_for_audio_end(
+                        self._audio_end_epoch_at_start,
+                        timeout_secs=min(1.0, self._playout_timeout_secs),
+                    )
+                    if marker is None:
+                        await self.runtime.playback_failed(
+                            "Phone audio end marker was not queued for this response"
+                        )
+                    else:
+                        generation_id, end_sequence = marker
+                        result = await self._session.wait_until_rendered(
+                            generation_id,
+                            end_sequence,
+                            timeout_secs=self._playout_timeout_secs,
+                        )
+                        rendered_audio_frames = max(
+                            0,
+                            int(self._session.metrics.last_rendered_sequence)
+                            - self._rendered_at_start
+                            - 1,
+                        )
+                        if result == "interrupted":
+                            await self.runtime.mark_playback_interrupted()
+                            await self.runtime.playback_stopped(
+                                delivered_frames=rendered_audio_frames,
+                                dropped_frames=dropped - self._dropped_at_start,
+                            )
+                        elif result == "completed":
+                            await self.runtime.playback_stopped(
+                                delivered_frames=max(1, rendered_audio_frames),
+                                dropped_frames=dropped - self._dropped_at_start,
+                            )
+                        else:
+                            await self.runtime.playback_failed(
+                                "Android did not acknowledge rendering this Cascade response"
+                            )
             elif isinstance(frame, ErrorFrame):
                 await self.runtime.playback_failed(frame.error)
         await self.push_frame(frame, direction)

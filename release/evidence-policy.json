@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "owner": "release-engineering",
+  "profiles": {
+    "development": {
+      "purpose": "Local, pull-request, and architecture evidence with no deployable release claim.",
+      "required_categories": ["security", "test"]
+    },
+    "candidate": {
+      "purpose": "Deployable candidate evidence before hardware or production approval.",
+      "required_categories": ["benchmark", "evaluation", "security", "test"]
+    },
+    "production-runtime": {
+      "purpose": "Production runtime release without an Android application change.",
+      "required_categories": ["benchmark", "evaluation", "image", "migration", "rollback", "security", "test"]
+    },
+    "production-android": {
+      "purpose": "Production Android release without a server runtime change.",
+      "required_categories": ["apk", "migration", "rollback", "security", "test"]
+    },
+    "production-combined": {
+      "purpose": "Production runtime and Android release.",
+      "required_categories": ["apk", "benchmark", "evaluation", "image", "migration", "rollback", "security", "test"]
+    }
+  }
+}

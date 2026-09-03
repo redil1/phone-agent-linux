@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "item": "M1-07",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:11:00Z",
+  "contains_customer_data": false,
+  "s2s_tests_removed": [
+    "tests/test_chatgpt_gizmo_manager.py",
+    "tests/test_chatgpt_realtime_audio.py",
+    "tests/test_chatgpt_realtime_auth.py",
+    "tests/test_chatgpt_realtime_pipeline.py",
+    "tests/test_openai_realtime_websocket_pipeline.py"
+  ],
+  "archived_location": "migration/historical_s2s/tests/",
+  "documentation_updates": [
+    "docs/WEBUI_USER_GUIDE.md",
+    "docs/NEW_MAC_INSTALL_GUIDE.md",
+    "docs/TOOLS_AND_MCP.md"
+  ],
+  "verification": {
+    "fast_unit_tests_passed": 683,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "bf2d937cdd8da7461a19e6872934fb3272cbd2aba8d8ac821961823748b35e60",
+    "sdist_sha256": "d163afc350efb7e74ef5194534866f8e1e2dc26e157c6ea59d76bcc08da3085a"
+  }
+}

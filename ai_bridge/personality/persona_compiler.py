@@ -208,7 +208,7 @@ class PersonaCompiler:
             lines.extend(f"- {str(item).strip()}" for item in value if str(item).strip())
         elif isinstance(value, dict):
             for key, nested in value.items():
-                if key in {"principle", "rules"} or isinstance(nested, (list, str)):
+                if key in {"principle", "rules"} or isinstance(nested, list | str):
                     lines.extend(PersonaCompiler._render_rules("", nested))
         return [f"# {title}", *lines] if title and lines else lines
 
@@ -960,7 +960,7 @@ or stage directions.
             raise ValueError(f"{path} cannot hold more than {cls.MAX_ENTRIES_PER_SECTION} entries")
         cleaned: list[str] = []
         for item in value:
-            if not isinstance(item, (str, int, float)):
+            if not isinstance(item, str | int | float):
                 raise ValueError(f"{path} must contain only text lines")
             text = str(item).strip()
             if len(text) > cls.MAX_ENTRY_CHARS:
@@ -1102,7 +1102,7 @@ or stage directions.
         if not str(identity.get("name", "")).strip() or not str(identity.get("role", "")).strip():
             raise ValueError("persona identity requires a name and role")
         for name, value in merged.get("trait_intensity", {}).items():
-            if not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
+            if not isinstance(value, int | float) or not 0.0 <= float(value) <= 1.0:
                 raise ValueError(f"trait {name!r} must be between 0 and 1")
 
         payload = yaml.safe_dump(merged, allow_unicode=True, sort_keys=False)

@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "milestone": "M0",
+  "status": "pass",
+  "generated_at": "2026-09-03T07:11:14Z",
+  "contains_customer_data": false,
+  "source": {
+    "revision": "uncommitted-new-project",
+    "normalized_sdist_sha256": "7705c27be3599b99c2bd76d858155e662d855432dd1b90770acf73b4fd1df55d",
+    "wheel_sha256": "d46f7fae2c03d6ffa81ceca5d00f4af02a190222300b4afdceb3ffee093b01fe",
+    "independent_byte_identical_builds": 2
+  },
+  "baseline_bundle": {
+    "path": "reports/releases/m0-clean-baseline",
+    "manifest_sha256": "a9335e1320119022bac4d02e400aeb6a3de7509d56b6e55987bbc754c2b2bdfd",
+    "source_validation": "pass",
+    "installed_wheel_validation": "pass",
+    "passed_gates": 5,
+    "not_applicable_gates": 3,
+    "artifacts": 6
+  },
+  "exit_gates": [
+    {
+      "gate": "clean_signed_reproducible_baseline",
+      "status": "pass",
+      "evidence": {
+        "tests_passed": 900,
+        "tests_skipped": 40,
+        "device_tests_deselected": 4,
+        "duration_seconds": 51.36,
+        "ruff": "pass",
+        "pyright_errors": 0,
+        "locked_packages": 223,
+        "signature_algorithm": "Ed25519",
+        "qualification_public_key_sha256": "986a9254d801eff14a82bfb62595cea1d8002f4c4dc55273da35c46188cbe86a"
+      }
+    },
+    {
+      "gate": "authorized_gsm_zero_nominal_playout_faults",
+      "status": "pass",
+      "evidence": {
+        "baseline_report_sha256": "581e2c335620e1292f267bdb5956025d7da66957a2b66a07695a0bb86052e12d",
+        "authorized_call_started_at": "2026-09-02T19:50:25.995Z",
+        "dropped_input_frames": 0,
+        "sequence_gaps": 0,
+        "dropped_output_frames": 0,
+        "flush_failures": 0,
+        "mid_speech_starvation_events": 0,
+        "mid_speech_concealment_frames": 0,
+        "audio_track_underruns": 0,
+        "delivery_faults": 0,
+        "stale_uplink_frames_observed": 8
+      }
+    },
+    {
+      "gate": "initial_baseline_rollback_documented_and_tested",
+      "status": "pass",
+      "evidence": {
+        "runtime_target_image_id": "sha256:082c9bfcfd3b87cfdd02ab53c3dd1ffca61d8a07fe1cb433106c93753e1c26fb",
+        "live_drill_sha256": "b582153fb8a274d3be3289be263da904baca838e7e228ac1bcab796893025a0c",
+        "live_checks_passed": 15,
+        "live_action": "verified_already_at_baseline",
+        "simulated_candidate_restore": "pass",
+        "simulated_failed_target_previous_image_restore": "pass",
+        "active_call_refusal": "pass",
+        "rollback_focused_tests_passed": 5,
+        "signature_focused_tests_passed": 3,
+        "android_device_mutated": false
+      }
+    }
+  ],
+  "carried_risks": {
+    "a6000_long_call_ttft_drift_percent": 26.556,
+    "target_percent": 15,
+    "owner": "M7-04 through M7-12",
+    "android_note": "The live M0 drill did not flash or uninstall an APK; exact installed and baked hashes and the authorized persistent-image recovery procedure remain frozen."
+  }
+}

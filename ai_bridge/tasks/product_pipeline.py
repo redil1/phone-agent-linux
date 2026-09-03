@@ -33,7 +33,14 @@ logger = logging.getLogger("ProductPipeline")
 
 ENGINE_DIR_ENV = "PHONE_AGENT_PRODUCT_ENGINE_DIR"
 # The research engine ships inside this project so a checkout is one product.
-BUNDLED_ENGINE_DIR = Path(__file__).resolve().parents[2] / "product_research"
+# In source checkouts, parents[2] is the root repo. When installed as package phone_agent_gateway,
+# parents[3] is the /app root or repo root.
+_repo_candidates = [
+    Path(__file__).resolve().parents[2] / "product_research",
+    Path(__file__).resolve().parents[3] / "product_research" if len(Path(__file__).resolve().parents) > 3 else Path("/nonexistent"),
+    Path("/app/product_research"),
+]
+BUNDLED_ENGINE_DIR = next((c for c in _repo_candidates if (c / "main.py").is_file()), _repo_candidates[0])
 # Kept as a fallback for a standalone checkout of the engine beside the gateway.
 LEGACY_ENGINE_DIR = Path.home() / "Desktop" / "ProductSearchEngine"
 # A crawl plus a full seven-pillar extraction is slow, but not this slow.

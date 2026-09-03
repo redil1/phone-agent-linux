@@ -172,6 +172,9 @@ def _decode_whisper(
         condition_on_previous_text=False,
         no_speech_threshold=0.6,
         temperature=0.0,
+        compression_ratio_threshold=2.2,
+        repetition_penalty=1.2,
+        no_repeat_ngram_size=3,
         hotwords=_WHISPER_HOTWORDS,
     )
     segments = list(segments_iter)
@@ -205,6 +208,13 @@ def _decode_whisper(
     # These phrases are common autoregressive completions of long silence, but
     # are also perfectly legitimate short caller turns. Reject them only when
     # their duration is acoustically implausible, never by text alone.
+    # Hard anti-looping check: if a phrase or token pattern repeats itself > 3 times in a single turn, it is a Whisper hallucination
+    import re
+    if re.search(r'(.{4,30}?)(?:\s*){2,}', text, flags=re.IGNORECASE):
+        logger.warning("Discarded repetitive ASR hallucination loop: %s", text[:60])
+        text = ""
+        confidence = 0.0
+
     speech_seconds = len(samples) / 16_000
     if (
         text.casefold().rstrip(".!?, ")
@@ -523,9 +533,14 @@ class ParakeetLocalSTTService(STTService):
                     # audio rather than the most recent, which carries intent.
                     del self._buffer[: len(self._buffer) - self._max_utterance_bytes]
 
+        # Only trigger barge-in interruption if speech is genuinely sustained (>120ms of real voice energy)
+        # to prevent background breath/clicks/line static from cutting off the bot mid-sentence.
         if speech and not self._speaking:
             self._speaking = True
             await self.push_frame(UserStartedSpeakingFrame())
+            if self._bot_speaking and self._speech_bytes >= (16_000 * 2 * 120 // 1000):
+                logger.info("Caller barged in with sustained speech while bot was speaking; broadcasting interruption")
+                await self.broadcast_interruption()
         yield None
 
     async def _endpoint_watchdog(self) -> None:

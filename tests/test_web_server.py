@@ -13,7 +13,10 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from phone_agent_gateway.ai_bridge.memory.memory_manager import LayeredMemoryManager
-from phone_agent_gateway.ai_bridge.personality.persona_compiler import PersonaCompiler
+from phone_agent_gateway.ai_bridge.personality.persona_compiler import (
+    DEFAULT_PERSONA_PATH,
+    PersonaCompiler,
+)
 from phone_agent_gateway.ai_bridge.production_security import AuditLedger
 from phone_agent_gateway.ai_bridge.runtime_config import ProviderConfig
 from phone_agent_gateway.ai_bridge.web_server import PhoneAgentWebServer
@@ -38,8 +41,8 @@ def test_get_index_serves_html() -> None:
             assert 'id="google-tts-scene"' in text
             assert 'id="google-tts-sample-context"' in text
             assert 'id="google-tts-model"' in text
-            assert 'id="chatgpt-realtime-transport"' in text
-            assert 'id="chatgpt-realtime-reasoning"' in text
+            # S2S realtime controls removed in M1-06
+            assert 'id="pipeline-mode"' in text
             assert 'id="tab-identity"' in text
             assert 'id="tab-tools"' in text
             assert 'id="tab-business"' in text
@@ -76,6 +79,34 @@ def test_get_status_returns_idle() -> None:
             data = await resp.json()
             assert data["status"] == "ok"
             assert data["call_state"] == "IDLE"
+
+    asyncio.run(_test())
+
+
+def test_disabled_warm_voice_host_does_not_prewarm_models_in_studio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _test() -> None:
+        monkeypatch.setenv("PHONE_AGENT_WARM_VOICE_HOST", "0")
+        server = _studio()
+        prewarm_started = asyncio.Event()
+
+        async def forbidden_process_local_prewarm() -> None:
+            prewarm_started.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            server,
+            "_prewarm_gpu_models_task",
+            forbidden_process_local_prewarm,
+        )
+        async with TestClient(TestServer(server.app)) as client:
+            await asyncio.sleep(0)
+            response = await client.get("/api/gpu/status")
+            gpu = (await response.json())["gpu"]
+            assert gpu["status"] == "deferred"
+            assert gpu["models"]["owner"] == "per-call voice host"
+            assert not prewarm_started.is_set()
 
     asyncio.run(_test())
 
@@ -697,6 +728,18 @@ def test_recording_consent_is_explicitly_forwarded_to_call_process() -> None:
     assert enabled["PHONE_AGENT_RECORDING_CONSENT"] == "true"
 
 
+def test_child_worker_never_persists_identity_beside_packaged_persona(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PHONE_AGENT_PERSONA_PATH", str(DEFAULT_PERSONA_PATH))
+    server = _studio()
+    server.persona_compiler.persona_path = DEFAULT_PERSONA_PATH
+
+    child = server._child_environment()
+
+    assert "PHONE_AGENT_PERSONA_PATH" not in child
+
+
 def test_inbound_receptionist_environment_forces_gsm_auto_answer_without_recording() -> None:
     server = _studio()
     environment = server._child_environment(
@@ -1293,11 +1336,12 @@ def test_dynamic_phone_route_does_not_make_verified_host_stale() -> None:
     server = _studio()
     writer = object()
     server._receptionist_process = SimpleNamespace(returncode=None, stdin=writer)
+    server._remote_link = SimpleNamespace(
+        stats=SimpleNamespace(phone_connected=False)
+    )  # type: ignore[assignment]
     _mark_resident_host_current(server)
 
-    server._remote_link = SimpleNamespace(
-        stats=SimpleNamespace(phone_connected=True)
-    )  # type: ignore[assignment]
+    server._remote_link.stats.phone_connected = True
 
     assert server._resident_host_stdin() is writer
 

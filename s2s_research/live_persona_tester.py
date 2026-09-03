@@ -5,12 +5,13 @@ opening transcript to verify which strategy makes the voice AI adopt the exact p
 """
 
 import asyncio
+import fractions
 import json
 import logging
 import uuid
-import fractions
+
 import av
-from aiortc import RTCPeerConnection, RTCSessionDescription, AudioStreamTrack
+from aiortc import AudioStreamTrack, RTCPeerConnection, RTCSessionDescription
 from curl_cffi.curl import CurlMime
 from curl_cffi.requests import AsyncSession
 
@@ -244,7 +245,7 @@ async def main():
                     "role": "user",
                     "content": [{
                         "type": "input_text",
-                        "text": f"Instruction: You are Aziz from OXzoon IPTV on a phone call. Greet the customer right now in French with: 'Bonjour ! Ici Aziz, Directeur Commercial chez OXzoon IPTV. Comment puis-je vous aider ?'"
+                        "text": "Instruction: You are Aziz from OXzoon IPTV on a phone call. Greet the customer right now in French with: 'Bonjour ! Ici Aziz, Directeur Commercial chez OXzoon IPTV. Comment puis-je vous aider ?'"
                     }]
                 }
             },

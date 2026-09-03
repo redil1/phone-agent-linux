@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "item": "M11-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:44:00Z",
+  "contains_customer_data": false,
+  "milestone_11_deliverables": {
+    "memory_candidate": "ai_bridge/customer_memory.py: MemoryCandidate (caller_id, key, value, confidence, sensitivity)",
+    "customer_memory_store": "ai_bridge/customer_memory.py: CustomerMemoryStore (commit_memory with confidence threshold, export_customer_data, erase_customer_data)"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 712,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "bd3ed606e7e355cd56f73575904230befb8e920296c2f3f3af198efd4b379291",
+    "sdist_sha256": "8cd5680be8806cc65a092c0389e8024c69881cbf424d5b126cd882016fcde493"
+  }
+}

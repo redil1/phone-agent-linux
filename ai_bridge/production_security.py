@@ -251,6 +251,6 @@ class AuditLedger:
             return [cls._safe(item, depth=depth + 1) for item in value[:64]]
         if isinstance(value, str):
             return value[:1_000]
-        if value is None or isinstance(value, (bool, int, float)):
+        if value is None or isinstance(value, bool | int | float):
             return value
         return str(value)[:500]

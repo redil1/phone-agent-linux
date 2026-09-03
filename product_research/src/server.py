@@ -3,8 +3,10 @@ FastAPI Web Server for Autonomous AI Product Sales Intelligence.
 Provides REST API & Web UI for crawling, 7-pillar knowledge extraction, and 3-tier compiling.
 """
 
+import asyncio
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -57,10 +59,10 @@ class SimulateVoiceTurnRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
-    index_path = os.path.join(STATIC_DIR, "index.html")
-    if os.path.exists(index_path):
-        with open(index_path, encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
+    index_path = Path(STATIC_DIR) / "index.html"
+    if index_path.exists():
+        content = await asyncio.to_thread(index_path.read_text, encoding="utf-8")
+        return HTMLResponse(content=content)
     return HTMLResponse(content="<h1>Loading UI...</h1>")
 
 
@@ -126,18 +128,26 @@ async def generate_knowledge_pack(req: GenerateRequest):
         compiler = AgentCompiler(output_dir=temp_dist)
         compiled_paths = compiler.compile_all(kb, enriched_playbook)
 
-        # Read back compiled strings for instant UI rendering
-        with open(compiled_paths["tier1_hot_yaml"], encoding="utf-8") as f:
-            hot_yaml = f.read()
-
-        with open(compiled_paths["tier2_fast_json"], encoding="utf-8") as f:
-            fast_json = json.load(f)
-
-        with open(compiled_paths["tier3_edge_md"], encoding="utf-8") as f:
-            edge_md = f.read()
-
-        with open(compiled_paths["voice_agent_prompt"], encoding="utf-8") as f:
-            voice_prompt = f.read()
+        # Read generated artifacts off the request loop.
+        hot_yaml, fast_json_text, edge_md, voice_prompt = await asyncio.gather(
+            asyncio.to_thread(
+                Path(compiled_paths["tier1_hot_yaml"]).read_text,
+                encoding="utf-8",
+            ),
+            asyncio.to_thread(
+                Path(compiled_paths["tier2_fast_json"]).read_text,
+                encoding="utf-8",
+            ),
+            asyncio.to_thread(
+                Path(compiled_paths["tier3_edge_md"]).read_text,
+                encoding="utf-8",
+            ),
+            asyncio.to_thread(
+                Path(compiled_paths["voice_agent_prompt"]).read_text,
+                encoding="utf-8",
+            ),
+        )
+        fast_json = json.loads(fast_json_text)
 
         return {
             "success": True,
@@ -154,7 +164,7 @@ async def generate_knowledge_pack(req: GenerateRequest):
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/api/simulate-voice-turn")

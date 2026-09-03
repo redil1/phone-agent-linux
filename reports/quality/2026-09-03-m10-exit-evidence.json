@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "item": "M10-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:42:00Z",
+  "contains_customer_data": false,
+  "milestone_10_deliverables": {
+    "grounded_fact": "ai_bridge/knowledge_retrieval.py: GroundedFact (fact_id, tenant_id, topic, content, is_active, trust_level)",
+    "knowledge_retrieval_engine": "ai_bridge/knowledge_retrieval.py: KnowledgeRetrievalEngine (strictly tenant-isolated keyword/ontology retrieval with inactive fact suppression)"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 711,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "f63c0402a80d76091db2f609d47f94eacb274b0022aa5c8df52ec432a72514ae",
+    "sdist_sha256": "3a53d39a8980ec9430d85b8d8934f171bbf48076e327ace2d0c9863fc49656b1"
+  }
+}

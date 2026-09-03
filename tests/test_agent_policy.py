@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -21,7 +22,7 @@ from phone_agent_gateway.ai_bridge.agent_policy import (
     transcription_evidence,
 )
 from phone_agent_gateway.ai_bridge.memory.memory_manager import LayeredMemoryManager
-from phone_agent_gateway.ai_bridge.session import CallSessionState
+from phone_agent_gateway.ai_bridge.session import CallSessionState, SessionPhase
 
 
 def test_transcription_evidence_preserves_acoustic_trust() -> None:
@@ -116,6 +117,32 @@ async def test_policy_compiles_context_evaluates_and_remembers(tmp_path: Any) ->
     assert outcomes[0]["outcome"]
     evaluations = [event for event in events if event["type"] == "evaluation"]
     assert evaluations[-1]["task_score"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_untrusted_transcript_never_enters_task_state_or_durable_memory(
+    tmp_path: Any,
+) -> None:
+    memory = LayeredMemoryManager(storage_path=tmp_path / "memory.json")
+    runtime = AgentPolicyRuntime(
+        caller_id="+212600000000",
+        task_id="customer_support",
+        language="en-US",
+        memory_manager=memory,
+    )
+
+    await runtime.observe_transcription(
+        "My name is Wrong and book tomorrow",
+        trusted_for_task=False,
+        transcription_confidence=0.12,
+    )
+    await runtime.finalize_response("Please repeat that clearly.")
+    await runtime.close()
+
+    saved = memory.get_caller_memory("+212600000000")
+    assert saved["episodic_turns"] == []
+    assert "name" not in saved
+    assert runtime.task.state == {}
 
 
 @pytest.mark.asyncio
@@ -536,6 +563,48 @@ async def test_playback_reports_completed_when_frames_reached_the_phone(
 
 
 @pytest.mark.asyncio
+async def test_terminal_completion_requires_verified_completed_playout(tmp_path: Any) -> None:
+    completed: list[str] = []
+    events: list[dict[str, Any]] = []
+    runtime = AgentPolicyRuntime(
+        caller_id="anonymous",
+        task_id="customer_support",
+        language="en-US",
+        memory_enabled=False,
+        memory_manager=LayeredMemoryManager(storage_path=tmp_path / "memory.json"),
+        event_sink=events.append,
+    )
+
+    _spoken, _evaluation, response_id = await runtime.finalize_response_with_identity(
+        "Thank you. Goodbye.", response_kind="terminal"
+    )
+    runtime.arm_terminal_completion(
+        response_id,
+        "AI ended call: caller finished",
+        completed.append,
+    )
+    await runtime.playback_started()
+    await runtime.playback_stopped(delivered_frames=0, dropped_frames=1)
+
+    assert completed == []
+    assert any(event["type"] == "terminal_completion_aborted" for event in events)
+
+    _spoken, _evaluation, response_id = await runtime.finalize_response_with_identity(
+        "Goodbye.", response_kind="terminal"
+    )
+    runtime.arm_terminal_completion(
+        response_id,
+        "AI ended call: caller finished",
+        completed.append,
+    )
+    await runtime.playback_started()
+    await runtime.playback_stopped(delivered_frames=24, dropped_frames=0)
+
+    assert completed == ["AI ended call: caller finished"]
+    assert sum(event["type"] == "call_completion" for event in events) == 1
+
+
+@pytest.mark.asyncio
 async def test_playback_processor_derives_delivery_from_session_counters(
     tmp_path: Any,
 ) -> None:
@@ -567,6 +636,122 @@ async def test_playback_processor_derives_delivery_from_session_counters(
 
     statuses = [event["status"] for event in events if event["type"] == "playback_status"]
     assert statuses == ["playing", "not_delivered"]
+
+
+@pytest.mark.asyncio
+async def test_cascade_playback_waits_for_android_end_marker_ack(tmp_path: Any) -> None:
+    events: list[dict[str, Any]] = []
+    runtime = AgentPolicyRuntime(
+        caller_id="anonymous",
+        task_id="customer_support",
+        language="en-US",
+        memory_enabled=False,
+        memory_manager=LayeredMemoryManager(storage_path=tmp_path / "memory.json"),
+        event_sink=events.append,
+    )
+    await runtime.finalize_response("The phone must render this response")
+    session = CallSessionState()
+    session.set_phase(SessionPhase.CONNECTING)
+    session.set_phase(SessionPhase.ACTIVE)
+    session.metrics.output_frames = 12
+    session.metrics.last_output_sequence = 12
+
+    class _Output:
+        audio_end_epoch = 0
+
+        async def wait_for_audio_end(
+            self, _after_epoch: int, *, timeout_secs: float
+        ) -> tuple[int, int]:
+            return session.generation_id, 12
+
+    processor = PlaybackEventProcessor(
+        runtime,
+        session,
+        _Output(),
+        playout_timeout_secs=0.2,
+    )
+
+    async def discard(_frame: Any, _direction: FrameDirection) -> None:
+        return None
+
+    processor.push_frame = discard  # type: ignore[method-assign]
+    await processor.process_frame(BotStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+
+    async def acknowledge() -> None:
+        await asyncio.sleep(0.02)
+        session.mark_rendered(session.generation_id, 12)
+
+    acknowledgement = asyncio.create_task(acknowledge())
+    await processor.process_frame(BotStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+    await acknowledgement
+
+    statuses = [event["status"] for event in events if event["type"] == "playback_status"]
+    assert statuses == ["playing", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_cascade_playback_never_claims_completion_without_android_ack(
+    tmp_path: Any,
+) -> None:
+    events: list[dict[str, Any]] = []
+    runtime = AgentPolicyRuntime(
+        caller_id="anonymous",
+        task_id="customer_support",
+        language="en-US",
+        memory_enabled=False,
+        memory_manager=LayeredMemoryManager(storage_path=tmp_path / "memory.json"),
+        event_sink=events.append,
+    )
+    await runtime.finalize_response("This response is written but not rendered")
+    session = CallSessionState()
+    session.set_phase(SessionPhase.CONNECTING)
+    session.set_phase(SessionPhase.ACTIVE)
+    session.metrics.output_frames = 12
+
+    class _Output:
+        audio_end_epoch = 0
+
+        async def wait_for_audio_end(
+            self, _after_epoch: int, *, timeout_secs: float
+        ) -> tuple[int, int]:
+            return session.generation_id, 12
+
+    processor = PlaybackEventProcessor(
+        runtime,
+        session,
+        _Output(),
+        playout_timeout_secs=0.02,
+    )
+
+    async def discard(_frame: Any, _direction: FrameDirection) -> None:
+        return None
+
+    processor.push_frame = discard  # type: ignore[method-assign]
+    await processor.process_frame(BotStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+    await processor.process_frame(BotStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+
+    statuses = [event["status"] for event in events if event["type"] == "playback_status"]
+    assert statuses == ["playing", "failed"]
+
+
+@pytest.mark.asyncio
+async def test_reconnect_cannot_reuse_a_stale_playout_ack() -> None:
+    session = CallSessionState()
+    session.metrics.last_output_sequence = 90
+    session.metrics.last_rendered_sequence = 90
+
+    session.reconnect()
+
+    assert session.metrics.last_output_sequence == -1
+    assert session.metrics.last_rendered_sequence == -1
+    assert (
+        await session.wait_until_rendered(
+            session.generation_id,
+            2,
+            timeout_secs=0.02,
+        )
+        == "timeout"
+    )
 
 
 class _Collect:

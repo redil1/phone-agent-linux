@@ -6,7 +6,7 @@ end to end. It is written for an administrator who does not need to understand t
 The installation includes:
 
 - PhoneAgent Studio and the native Android USB/audio bridge;
-- OpenAI Realtime speech-to-speech;
+- Universal Cascade voice pipeline;
 - GSM inbound and outbound calling;
 - direct full-duplex WhatsApp voice calling;
 - OpenWA live WhatsApp messaging;

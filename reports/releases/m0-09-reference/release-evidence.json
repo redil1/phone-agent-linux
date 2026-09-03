@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "release": {
+    "release_id": "m0-09-reference",
+    "product": "phone-agent-gateway",
+    "version": "0.7.0-dev-m0.09",
+    "profile": "development",
+    "source_revision": "uncommitted",
+    "source_tree_sha256": "2f7f12b7ccbc961b880fa46cf70b37a0f8e8247d5c1b6f3d7cf7bb8d98d20afb",
+    "created_at": "2026-09-03T06:15:00Z"
+  },
+  "environment": {
+    "profile_id": "linux-x86_64-development",
+    "os": "linux",
+    "architecture": "x86_64",
+    "python": "3.11.16",
+    "gpu": "NVIDIA RTX A6000",
+    "device_profile": null
+  },
+  "subjects": [
+    {
+      "kind": "source",
+      "identifier": "m0-09-format-source-set",
+      "digest": "sha256:2f7f12b7ccbc961b880fa46cf70b37a0f8e8247d5c1b6f3d7cf7bb8d98d20afb"
+    }
+  ],
+  "gates": [
+    {
+      "gate_id": "m0-09-test",
+      "category": "test",
+      "required": true,
+      "status": "pass",
+      "started_at": "2026-09-03T06:13:10Z",
+      "finished_at": "2026-09-03T06:14:00Z",
+      "executor": ".venv/bin/pytest",
+      "summary": "The complete non-device Python suite terminated successfully.",
+      "metrics": {"passed": 833, "skipped": 39, "device_deselected": 4, "duration_seconds": 50.20},
+      "artifacts": [
+        {
+          "path": "evidence/test/full-suite.json",
+          "sha256": "76b75f5054aeae8c11824978776631a45ed108bf637f3d85fc860ee01af0bb59",
+          "bytes": 260,
+          "media_type": "application/json",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "gate_id": "m0-09-evaluation",
+      "category": "evaluation",
+      "required": false,
+      "status": "pass",
+      "started_at": "2026-09-03T06:05:55Z",
+      "finished_at": "2026-09-03T06:06:00Z",
+      "executor": "ci/run-stage.sh eval",
+      "summary": "The current conversation, policy, context, personality, and tool eval suite passed.",
+      "metrics": {"passed": 153, "failed": 0, "duration_seconds": 4.74},
+      "artifacts": [
+        {
+          "path": "evidence/evaluation/conversation-eval.json",
+          "sha256": "142bfc90c7fc1044ddae7b1b14bfaf6f36ce8b8532889ea6659f72956a8a590b",
+          "bytes": 360,
+          "media_type": "application/json",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "gate_id": "m0-09-benchmark",
+      "category": "benchmark",
+      "required": false,
+      "status": "not_applicable",
+      "started_at": "2026-09-03T06:06:00Z",
+      "finished_at": "2026-09-03T06:06:00Z",
+      "executor": "release-engineering",
+      "summary": "No benchmark claim is attached to this format-only development release.",
+      "metrics": {},
+      "artifacts": [],
+      "not_applicable_reason": "M0-10 owns the repeatable performance harness; this bundle makes no performance qualification claim."
+    },
+    {
+      "gate_id": "m0-09-security",
+      "category": "security",
+      "required": true,
+      "status": "pass",
+      "started_at": "2026-09-03T06:02:55Z",
+      "finished_at": "2026-09-03T06:03:16Z",
+      "executor": "ci/run-stage.sh security",
+      "summary": "Dependency audit policy passed with the single owned, unexpired NLTK exception.",
+      "metrics": {"findings": 1, "exceptions": 1},
+      "artifacts": [
+        {
+          "path": "evidence/security/dependency-audit-validation.json",
+          "sha256": "994d1dff7ab4cb959bc399252b5d282582068b0290377af618c41c98d6fc60fc",
+          "bytes": 247,
+          "media_type": "application/json",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "gate_id": "m0-09-migration",
+      "category": "migration",
+      "required": false,
+      "status": "not_applicable",
+      "started_at": "2026-09-03T06:06:00Z",
+      "finished_at": "2026-09-03T06:06:00Z",
+      "executor": "release-engineering",
+      "summary": "This development evidence format does not migrate persisted state.",
+      "metrics": {},
+      "artifacts": [],
+      "not_applicable_reason": "No schema, persisted state, active deployment, or installed runtime was migrated by M0-09."
+    },
+    {
+      "gate_id": "m0-09-apk",
+      "category": "apk",
+      "required": false,
+      "status": "not_applicable",
+      "started_at": "2026-09-03T06:06:00Z",
+      "finished_at": "2026-09-03T06:06:00Z",
+      "executor": "release-engineering",
+      "summary": "This development evidence format does not release an Android package.",
+      "metrics": {},
+      "artifacts": [],
+      "not_applicable_reason": "The qualified Android application and GSM media path were not built, installed, or changed by M0-09."
+    },
+    {
+      "gate_id": "m0-09-image",
+      "category": "image",
+      "required": false,
+      "status": "not_applicable",
+      "started_at": "2026-09-03T06:06:00Z",
+      "finished_at": "2026-09-03T06:06:00Z",
+      "executor": "release-engineering",
+      "summary": "This development evidence format does not publish a container image.",
+      "metrics": {},
+      "artifacts": [],
+      "not_applicable_reason": "No container image was built, deployed, retagged, or promoted by the M0-09 format implementation."
+    },
+    {
+      "gate_id": "m0-09-rollback",
+      "category": "rollback",
+      "required": false,
+      "status": "not_applicable",
+      "started_at": "2026-09-03T06:06:00Z",
+      "finished_at": "2026-09-03T06:06:00Z",
+      "executor": "release-engineering",
+      "summary": "No deployment mutation occurred and therefore no rollback was executed.",
+      "metrics": {},
+      "artifacts": [],
+      "not_applicable_reason": "The live runtime, device, APK, persisted state, and GSM route were untouched, so rollback is not applicable."
+    }
+  ],
+  "attestation": {
+    "generated_by": "release-engineering",
+    "generator_version": "release-evidence-v1",
+    "generated_at": "2026-09-03T06:15:00Z",
+    "command": "uv run python release/evidence.py reports/releases/m0-09-reference --seal",
+    "contains_secrets": false,
+    "contains_customer_data": false
+  }
+}

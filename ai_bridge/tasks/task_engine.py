@@ -100,7 +100,7 @@ class TaskEngine:
             raise ValueError(f"{field} cannot hold more than {cls.MAX_ENTRIES_PER_FIELD} entries")
         cleaned: list[str] = []
         for item in value:
-            if not isinstance(item, (str, int, float)):
+            if not isinstance(item, str | int | float):
                 raise ValueError(f"{field} must contain only text lines")
             text = str(item).strip()
             if len(text) > cls.MAX_ENTRY_CHARS:

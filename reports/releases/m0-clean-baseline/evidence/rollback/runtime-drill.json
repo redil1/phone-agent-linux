@@ -1,0 +1,101 @@
+{
+  "action": "verified_already_at_baseline",
+  "android_recovery_anchors": {
+    "baked_system_apk_sha256": "51686d7325a31bc1df487c8bf31c9be82f0622d4ea41941ae5f62f10d34ee35e",
+    "installed_update_apk_sha256": "9fd917778f44efd46d3ac3fd1ac90d3b4773547c0614989af3d3595e12051d55",
+    "package": "com.phoneagent.gateway",
+    "protocol": "phag_v1_hmac_sha256"
+  },
+  "baseline_id": "gsm-cascade-2026-09-02",
+  "checks": [
+    {
+      "evidence": "sha256:082c9bfcfd3b87cfdd02ab53c3dd1ffca61d8a07fe1cb433106c93753e1c26fb",
+      "name": "baseline_image_present",
+      "status": "pass"
+    },
+    {
+      "evidence": "1",
+      "name": "compose_targets_exact_image",
+      "status": "pass"
+    },
+    {
+      "evidence": "sha256:082c9bfcfd3b87cfdd02ab53c3dd1ffca61d8a07fe1cb433106c93753e1c26fb",
+      "name": "active_image_exact",
+      "status": "pass"
+    },
+    {
+      "evidence": "ok",
+      "name": "api_health",
+      "status": "pass"
+    },
+    {
+      "evidence": "IDLE",
+      "name": "call_idle",
+      "status": "pass"
+    },
+    {
+      "evidence": "True",
+      "name": "voice_host_ready",
+      "status": "pass"
+    },
+    {
+      "evidence": "True",
+      "name": "worker_configuration_current",
+      "status": "pass"
+    },
+    {
+      "evidence": "cascade",
+      "name": "effective_pipeline_mode",
+      "status": "pass"
+    },
+    {
+      "evidence": "whisper_turbo",
+      "name": "effective_stt_provider",
+      "status": "pass"
+    },
+    {
+      "evidence": "large-v3-turbo",
+      "name": "effective_stt_model",
+      "status": "pass"
+    },
+    {
+      "evidence": "ollama",
+      "name": "effective_llm_provider",
+      "status": "pass"
+    },
+    {
+      "evidence": "hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M",
+      "name": "effective_llm_model",
+      "status": "pass"
+    },
+    {
+      "evidence": "kokoro",
+      "name": "effective_tts_provider",
+      "status": "pass"
+    },
+    {
+      "evidence": "hexgrad/Kokoro-82M",
+      "name": "effective_tts_model",
+      "status": "pass"
+    },
+    {
+      "evidence": "af_heart",
+      "name": "effective_tts_voice_id",
+      "status": "pass"
+    }
+  ],
+  "contains_customer_data": false,
+  "generated_at": "2026-09-03T07:06:10Z",
+  "mode": "apply",
+  "qualified": true,
+  "report_sha256": "41d52c9cfc6dd6e50c3c306fd0e3fa08dbb563c90923930f78a61748b86be22c",
+  "runtime": {
+    "active_image_after": "sha256:082c9bfcfd3b87cfdd02ab53c3dd1ffca61d8a07fe1cb433106c93753e1c26fb",
+    "active_image_before": "sha256:082c9bfcfd3b87cfdd02ab53c3dd1ffca61d8a07fe1cb433106c93753e1c26fb",
+    "call_state_after": "IDLE",
+    "container": "phoneagent-core",
+    "fallback_exercised": false,
+    "target_image_id": "sha256:082c9bfcfd3b87cfdd02ab53c3dd1ffca61d8a07fe1cb433106c93753e1c26fb"
+  },
+  "schema_version": 1
+}

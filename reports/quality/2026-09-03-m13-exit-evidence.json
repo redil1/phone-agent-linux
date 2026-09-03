@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "item": "M13-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:47:00Z",
+  "contains_customer_data": false,
+  "milestone_13_deliverables": {
+    "turn_trace_span": "ai_bridge/telemetry_instrumentation.py: TurnTraceSpan (trace_id, call_id, turn_id, vad_ms, stt_ms, llm_ttft_ms, tts_first_audio_ms, total_latency_ms, outcome_status)",
+    "platform_telemetry_hub": "ai_bridge/telemetry_instrumentation.py: PlatformTelemetryHub (correlates spans per call_id)"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 714,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "3a57363cbfd6f8608f258a036d9abd544680d866436b165db55014610c56ad2f",
+    "sdist_sha256": "b4a861509a4f65348de58a8cd6dcbf46f3c8602cc0ff2b1969485a00ef72ff34"
+  }
+}

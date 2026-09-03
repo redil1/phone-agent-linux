@@ -1,8 +1,10 @@
 import asyncio
-from phone_agent_gateway.mac_client.protocol_client import AuthenticatedPhoneAgentClient
-from phone_agent_gateway.mac_client.framed_link import LinkPorts
+
 from phone_agent_gateway.ai_bridge.runtime_config import RuntimeConfig
 from phone_agent_gateway.ai_bridge.session import CallSessionState
+from phone_agent_gateway.mac_client.framed_link import LinkPorts
+from phone_agent_gateway.mac_client.protocol_client import AuthenticatedPhoneAgentClient
+
 
 async def check():
     config = RuntimeConfig.from_env(require_provider_credentials=False)

@@ -65,6 +65,13 @@ public class GatewayService extends Service {
         return link != null && link.isConnected();
     }
 
+    /** Zero until a coordinator has completed authenticated negotiation. */
+    public static int remoteLinkProtocolVersion() {
+        GatewayService service = instance;
+        if (service == null || service.remoteLink == null) return 0;
+        return service.remoteLink.getNegotiatedVersion();
+    }
+
     private void startRemoteLinkIfConfigured() {
         try {
             java.io.File config = new java.io.File(getFilesDir(), "remote-link.json");

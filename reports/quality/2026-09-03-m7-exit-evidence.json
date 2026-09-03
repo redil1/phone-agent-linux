@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "item": "M7-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:37:00Z",
+  "contains_customer_data": false,
+  "milestone_7_deliverables": {
+    "model_registry": "ai_bridge/model_router.py: ModelRegistry",
+    "model_profile": "ai_bridge/model_router.py: ModelProfile",
+    "stable_context_layout": "ai_bridge/model_router.py: StableContextLayout"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 706,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "c7b0841410694d84cb4039fb2546eb1df6f67598c81b60f06ca4214144442248",
+    "sdist_sha256": "f9e8571efb50ebe161bd9abdc760510819353b9ea1d7e6daafe8d997fef6665f"
+  }
+}

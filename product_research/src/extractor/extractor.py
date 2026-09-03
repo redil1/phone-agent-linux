@@ -521,4 +521,4 @@ Extract the complete ProductKnowledgeBase JSON conforming to the 7 pillars.
             raise ValueError(
                 f"Extracted JSON from {self.llm_client.provider} ({self.llm_client.model}) failed schema validation: {ve}\n"
                 f"Raw LLM Response: {raw_json}"
-            )
+            ) from ve

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "exceptions": [
+    {
+      "id": "PYSEC-2026-3740",
+      "aliases": [
+        "CVE-2026-81726",
+        "GHSA-8mgp-746c-j5xp"
+      ],
+      "package": "nltk",
+      "affected_version": "3.10.3",
+      "owner": "dependency-governance",
+      "expires": "2026-12-01",
+      "justification": "Pipecat 1.7.0 requires NLTK and no fixed NLTK release exists. PhoneAgent never calls the affected NLTK model import/export APIs, never accepts caller-controlled NLTK paths, and does not use NLTK pathsec as a sandbox boundary."
+    }
+  ]
+}

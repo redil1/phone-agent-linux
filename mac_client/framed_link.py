@@ -27,6 +27,11 @@ from phone_agent_gateway.ai_bridge.session import CallSessionState, GenerationAd
 
 logger = logging.getLogger("PhoneAgentFramedLink")
 
+# Must exceed the relay's 20-second v2 attach budget. A local runtime socket
+# must not abandon an OPEN while Android can still complete its authenticated
+# WAN carrier, otherwise the eventual data HELLO becomes an orphan.
+REMOTE_STREAM_HANDSHAKE_TIMEOUT_SECONDS = 25.0
+
 
 class LinkError(RuntimeError):
     """Base authenticated-link error."""
@@ -194,7 +199,9 @@ class FramedGatewayLink:
         self.connect_control(timeout=timeout)
         self.connect_media(timeout=timeout)
 
-    def connect_control(self, timeout: float = 3.0) -> None:
+    def connect_control(
+        self, timeout: float = REMOTE_STREAM_HANDSHAKE_TIMEOUT_SECONDS
+    ) -> None:
         """Connect only urgent control; safe before a cellular call is active."""
 
         if self.auto_forward_adb:
@@ -215,7 +222,9 @@ class FramedGatewayLink:
             self.session.generation_id,
         )
 
-    def connect_media(self, timeout: float = 15.0) -> None:
+    def connect_media(
+        self, timeout: float = REMOTE_STREAM_HANDSHAKE_TIMEOUT_SECONDS
+    ) -> None:
         """Attach authenticated media only after Telecom reports ACTIVE."""
 
         if not self.connected:

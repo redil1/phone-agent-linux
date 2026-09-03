@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .feature_flags import FeatureFlagError, feature_flag_enabled, transition_control_value
+
 
 class ConfigurationError(ValueError):
     """Required or unsafe runtime configuration."""
@@ -136,14 +138,14 @@ class ProviderConfig:
     flux_eot_timeout_ms: int = 1600
     antigravity_live_chunk_ms: int = 200
     antigravity_live_context_bias: str = ""
-    antigravity_live_endpoint_ms: int = 900
+    antigravity_live_endpoint_ms: int = 500
     antigravity_live_incomplete_endpoint_ms: int = 1500
     antigravity_live_stability_ms: int = 280
     antigravity_live_fallback_endpoint_ms: int = 1800
-    parakeet_endpoint_ms: int = 1000
-    parakeet_incomplete_endpoint_ms: int = 1400
+    parakeet_endpoint_ms: int = 600
+    parakeet_incomplete_endpoint_ms: int = 900
     parakeet_energy_threshold_dbfs: float = -42.0
-    speculative_pipeline_enabled: bool = True
+    speculative_pipeline_enabled: bool = False
     speculative_prefetch_silence_ms: int = 180
     speculative_prefetch_stability_ms: int = 140
     speculative_fast_endpoint_ms: int = 450
@@ -298,6 +300,21 @@ class ProviderConfig:
         llm_model = os.getenv("PHONE_AGENT_LLM_MODEL", "").strip() or model_defaults.get(
             llm_provider, ""
         )
+        try:
+            speculative_pipeline_enabled = feature_flag_enabled(
+                "PHONE_AGENT_SPECULATIVE_PIPELINE", default=False
+            )
+            conversational_reflex_enabled = feature_flag_enabled(
+                "PHONE_AGENT_CONVERSATIONAL_REFLEX", default=False
+            )
+            supertonic_fallback_to_edge = feature_flag_enabled(
+                "PHONE_AGENT_SUPERTONIC_FALLBACK_TO_EDGE", default=True
+            )
+            pipeline_mode = transition_control_value(
+                "PHONE_AGENT_PIPELINE_MODE", default="cascade"
+            )
+        except FeatureFlagError as exc:
+            raise ConfigurationError(str(exc)) from exc
         config = cls(
             stt_provider=stt_provider,
             stt_model=os.getenv("PHONE_AGENT_STT_MODEL", "").strip()
@@ -313,7 +330,7 @@ class ProviderConfig:
                 "PHONE_AGENT_ANTIGRAVITY_CONTEXT_BIAS", ""
             ).strip(),
             antigravity_live_endpoint_ms=_env_int(
-                "PHONE_AGENT_ANTIGRAVITY_ENDPOINT_MS", 900, 400, 3000
+                "PHONE_AGENT_ANTIGRAVITY_ENDPOINT_MS", 500, 400, 3000
             ),
             antigravity_live_incomplete_endpoint_ms=_env_int(
                 "PHONE_AGENT_ANTIGRAVITY_INCOMPLETE_ENDPOINT_MS", 1500, 600, 4000
@@ -324,14 +341,14 @@ class ProviderConfig:
             antigravity_live_fallback_endpoint_ms=_env_int(
                 "PHONE_AGENT_ANTIGRAVITY_FALLBACK_ENDPOINT_MS", 1800, 700, 5000
             ),
-            parakeet_endpoint_ms=_env_int("PHONE_AGENT_PARAKEET_ENDPOINT_MS", 1000, 200, 3000),
+            parakeet_endpoint_ms=_env_int("PHONE_AGENT_PARAKEET_ENDPOINT_MS", 600, 200, 3000),
             parakeet_incomplete_endpoint_ms=_env_int(
-                "PHONE_AGENT_PARAKEET_INCOMPLETE_ENDPOINT_MS", 1400, 300, 4000
+                "PHONE_AGENT_PARAKEET_INCOMPLETE_ENDPOINT_MS", 900, 300, 4000
             ),
             parakeet_energy_threshold_dbfs=_env_float(
                 "PHONE_AGENT_PARAKEET_ENERGY_THRESHOLD_DBFS", -42.0, -80.0, -10.0
             ),
-            speculative_pipeline_enabled=_env_bool("PHONE_AGENT_SPECULATIVE_PIPELINE", True),
+            speculative_pipeline_enabled=speculative_pipeline_enabled,
             speculative_prefetch_silence_ms=_env_int(
                 "PHONE_AGENT_SPECULATIVE_PREFETCH_SILENCE_MS", 180, 100, 1000
             ),
@@ -351,7 +368,7 @@ class ProviderConfig:
                 "PHONE_AGENT_SPECULATIVE_COMMIT_WAIT_MS", 160, 0, 500
             ),
             conversation_repair_enabled=_env_bool("PHONE_AGENT_CONVERSATION_REPAIR", True),
-            conversational_reflex_enabled=_env_bool("PHONE_AGENT_CONVERSATIONAL_REFLEX", False),
+            conversational_reflex_enabled=conversational_reflex_enabled,
             conversational_reflex_cooldown_ms=_env_int(
                 "PHONE_AGENT_CONVERSATIONAL_REFLEX_COOLDOWN_MS", 8000, 0, 60000
             ),
@@ -423,7 +440,7 @@ class ProviderConfig:
             supertonic_inter_op_threads=_env_int(
                 "PHONE_AGENT_SUPERTONIC_INTER_OP_THREADS", 0, 0, 64
             ),
-            supertonic_fallback_to_edge=_env_bool("PHONE_AGENT_SUPERTONIC_FALLBACK_TO_EDGE", True),
+            supertonic_fallback_to_edge=supertonic_fallback_to_edge,
             vibevoice_ddpm_steps=_env_int("PHONE_AGENT_VIBEVOICE_DDPM_STEPS", 10, 1, 100),
             vibevoice_cfg_scale=_env_float("PHONE_AGENT_VIBEVOICE_CFG_SCALE", 1.3, 0.5, 5.0),
             deepgram_api_key=os.getenv("DEEPGRAM_API_KEY", "").strip(),
@@ -440,7 +457,7 @@ class ProviderConfig:
             google_api_key=os.getenv("GOOGLE_API_KEY", "").strip()
             or os.getenv("GEMINI_API_KEY", "").strip(),
             cartesia_api_key=os.getenv("CARTESIA_API_KEY", "").strip(),
-            pipeline_mode=os.getenv("PHONE_AGENT_PIPELINE_MODE", "cascade").strip().lower(),
+            pipeline_mode=pipeline_mode,
             call_channel=os.getenv("PHONE_AGENT_CALL_CHANNEL", "gsm").strip().lower(),
             whatsapp_country_code=os.getenv("PHONE_AGENT_WHATSAPP_COUNTRY", "212").strip(),
             whatsapp_max_duration_secs=_env_int("PHONE_AGENT_WHATSAPP_MAX_SECS", 900, 30, 3600),
@@ -497,96 +514,15 @@ class ProviderConfig:
                 "call channel must be 'gsm', 'whatsapp' or 'whatsapp_phone', "
                 f"got {self.call_channel!r}"
             )
-        if self.pipeline_mode not in {"cascade", "s2s_chatgpt_realtime"}:
-            raise ConfigurationError(
-                "PHONE_AGENT_PIPELINE_MODE must be cascade or s2s_chatgpt_realtime"
-            )
         if self.pipeline_mode == "s2s_chatgpt_realtime":
-            if self.chatgpt_realtime_transport not in {"websocket", "webrtc"}:
-                raise ConfigurationError(
-                    "PHONE_AGENT_CHATGPT_TRANSPORT must be websocket or webrtc"
-                )
-            if self.chatgpt_realtime_reasoning_effort not in {
-                "minimal",
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-            }:
-                raise ConfigurationError(
-                    "PHONE_AGENT_CHATGPT_REASONING_EFFORT must be minimal, low, medium, "
-                    "high, or xhigh"
-                )
-            allowed_voices = {
-                "alloy",
-                "ash",
-                "ballad",
-                "cedar",
-                "coral",
-                "echo",
-                "marin",
-                "sage",
-                "shimmer",
-                "verse",
-            }
-            if self.chatgpt_realtime_voice not in allowed_voices:
-                raise ConfigurationError(
-                    f"PHONE_AGENT_CHATGPT_VOICE must be one of {sorted(allowed_voices)}"
-                )
-            if not self.stt_language.lower().startswith(("en", "fr")):
-                raise ConfigurationError(
-                    "PHONE_AGENT_STT_LANGUAGE must be an English or French locale"
-                )
-            if self.chatgpt_realtime_transcription_model not in {
-                "gpt-live-transcribe",
-                "gpt-transcribe",
-                "gpt-4o-mini-transcribe",
-                "gpt-4o-transcribe",
-            }:
-                raise ConfigurationError("PHONE_AGENT_CHATGPT_TRANSCRIPTION_MODEL is not supported")
-            if len(self.chatgpt_realtime_input_languages) > 1 and (
-                self.chatgpt_realtime_transcription_model
-                not in {"gpt-live-transcribe", "gpt-transcribe"}
-            ):
-                raise ConfigurationError(
-                    "Bilingual Realtime input requires gpt-live-transcribe or gpt-transcribe"
-                )
-            if not set(self.chatgpt_realtime_input_languages) <= {"en", "fr"}:
-                raise ConfigurationError(
-                    "PHONE_AGENT_CHATGPT_INPUT_LANGUAGES currently supports only en and fr"
-                )
-            if self.chatgpt_realtime_noise_reduction not in {
-                "off",
-                "near_field",
-                "far_field",
-            }:
-                raise ConfigurationError(
-                    "PHONE_AGENT_CHATGPT_NOISE_REDUCTION must be off, near_field, or far_field"
-                )
-            if self.chatgpt_realtime_vad_mode not in {"server_vad", "semantic_vad"}:
-                raise ConfigurationError(
-                    "PHONE_AGENT_CHATGPT_VAD_MODE must be server_vad or semantic_vad"
-                )
-            if self.chatgpt_realtime_vad_eagerness not in {
-                "low",
-                "medium",
-                "high",
-                "auto",
-            }:
-                raise ConfigurationError(
-                    "PHONE_AGENT_CHATGPT_VAD_EAGERNESS must be low, medium, high, or auto"
-                )
-            # The Realtime server rejects the whole session.update below 5000,
-            # which would fail the call at connect time rather than degrade.
-            if self.chatgpt_realtime_idle_timeout_ms and (
-                self.chatgpt_realtime_idle_timeout_ms < 5_000
-            ):
-                raise ConfigurationError(
-                    "PHONE_AGENT_CHATGPT_IDLE_TIMEOUT_MS must be 0 or at least 5000"
-                )
-            if not 0.8 <= self.chatgpt_realtime_speed <= 2.0:
-                raise ConfigurationError("PHONE_AGENT_CHATGPT_SPEED must be between 0.8 and 2.0")
-            return
+            raise ConfigurationError(
+                "PHONE_AGENT_PIPELINE_MODE 's2s_chatgpt_realtime' is deprecated and removed; "
+                "please migrate to 'cascade'"
+            )
+        if self.pipeline_mode != "cascade":
+            raise ConfigurationError(
+                f"PHONE_AGENT_PIPELINE_MODE must be 'cascade', got {self.pipeline_mode!r}"
+            )
         supported = {
             "stt": (
                 self.stt_provider,
@@ -752,7 +688,7 @@ class ProviderConfig:
             raise ConfigurationError("OLLAMA_KEEP_ALIVE must be 1 to 32 characters")
         if not require_credentials:
             return
-        missing = []
+        missing: list[str] = []
         if self.stt_provider == "deepgram_flux" and not self.deepgram_api_key:
             missing.append("DEEPGRAM_API_KEY")
         if self.llm_provider == "openai" and not self.openai_api_key:

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "status": "pass",
+  "tests_passed": 153,
+  "contract_performance_executed": true,
+  "contract_performance_status": "pass",
+  "contains_customer_data": false
+}

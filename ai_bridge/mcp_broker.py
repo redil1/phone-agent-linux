@@ -183,7 +183,7 @@ def _validate_schema_definition(schema: Any, *, depth: int = 0) -> dict[str, Any
                 normalized_union[key] = text
         if "default" in schema:
             default = schema["default"]
-            if isinstance(default, (dict, list)) or (
+            if isinstance(default, dict | list) or (
                 isinstance(default, str) and len(default) > 1_000
             ):
                 raise McpBrokerError("MCP schema default is invalid")
@@ -208,7 +208,7 @@ def _validate_schema_definition(schema: Any, *, depth: int = 0) -> dict[str, Any
         normalized["enum"] = schema["enum"]
     if "default" in schema:
         default = schema["default"]
-        if isinstance(default, (dict, list)) or (
+        if isinstance(default, dict | list) or (
             isinstance(default, str) and len(default) > 1_000
         ):
             raise McpBrokerError("MCP schema default is invalid")
@@ -222,7 +222,7 @@ def _validate_schema_definition(schema: Any, *, depth: int = 0) -> dict[str, Any
     for key in ("minimum", "maximum"):
         if key in schema:
             value = schema[key]
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
+            if not isinstance(value, int | float) or isinstance(value, bool):
                 raise McpBrokerError(f"MCP schema {key} is invalid")
             normalized[key] = value
     if kind == "object":
@@ -268,7 +268,7 @@ def _validate_value(value: Any, schema: Mapping[str, Any], path: str = "argument
         "object": isinstance(value, dict),
         "string": isinstance(value, str),
         "integer": isinstance(value, int) and not isinstance(value, bool),
-        "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+        "number": isinstance(value, int | float) and not isinstance(value, bool),
         "boolean": isinstance(value, bool),
         "array": isinstance(value, list),
         "null": value is None,
@@ -322,7 +322,7 @@ def _sanitize(value: Any, *, depth: int = 0) -> Any:
         text = EMAIL_RE.sub("<redacted-email>", value)
         text = PHONE_RE.sub("<redacted-phone>", text)
         return text[:4_000]
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None or isinstance(value, bool | int | float):
         return value
     return str(value)[:1_000]
 

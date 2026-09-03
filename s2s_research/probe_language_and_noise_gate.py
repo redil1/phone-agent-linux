@@ -1,10 +1,12 @@
 import asyncio
 import json
+
 import numpy as np
-import soxr
-from aiortc import RTCPeerConnection, AudioStreamTrack
+from aiortc import AudioStreamTrack, RTCPeerConnection
 from curl_cffi.requests import AsyncSession
+
 from phone_agent_gateway.ai_bridge.chatgpt_realtime_auth import ChatGPTAuthManager
+
 
 class SimTrack(AudioStreamTrack):
     kind = "audio"
@@ -22,7 +24,9 @@ class SimTrack(AudioStreamTrack):
         else:
             samples = noise
 
-        import fractions, av
+        import fractions
+
+        import av
         frame = av.AudioFrame.from_ndarray(samples.reshape(1, -1), format="s16", layout="mono")
         frame.sample_rate = 48000
         frame.pts = self._pts

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "item": "M2-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:27:00Z",
+  "contains_customer_data": false,
+  "milestone_2_deliverables": {
+    "M2-01_runtime_schema": "ai_bridge/runtime_schema.py: UniversalRuntimeConfigSchema",
+    "M2-02_precedence_provenance": "ai_bridge/runtime_schema.py: compile_effective_configuration",
+    "M2-03_compile_before_save": "ai_bridge/runtime_schema.py: validate_compiled_configuration",
+    "M2-04_transactional_activation": "ai_bridge/runtime_schema.py: TransactionalControlPlane.activate (boundary-safe, prewarmed, automatic restore)",
+    "M2-05_authoritative_read_back": "ai_bridge/runtime_schema.py: TransactionalControlPlane.read_back (desired, staged, active, worker_reported)",
+    "M2-06_audit_ledger": "ai_bridge/runtime_schema.py: ConfigurationLedgerRecord (append-only, signed, local)",
+    "M2-07_security_isolation": "Loopback isolation and token authentication verified",
+    "M2-08_regression_suite": "tests/test_runtime_schema.py (all round-trips, validation, and transitions passed)"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 694,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "ecd5d5b64f1fadc45deb40007cdfe5721c035ec15d82986373f3e097fcdb4688",
+    "sdist_sha256": "00dab23cfbd7007f08b653c3b8abccd6fb50417604d4e9ba64f40b38888da14f"
+  }
+}

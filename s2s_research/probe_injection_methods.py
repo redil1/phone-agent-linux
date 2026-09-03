@@ -10,11 +10,10 @@ Tests multiple injection mechanisms against the live ChatGPT Realtime WebRTC Gat
 import asyncio
 import json
 import logging
-import sys
 import uuid
+
 import av
-import numpy as np
-from aiortc import RTCPeerConnection, RTCSessionDescription, AudioStreamTrack
+from aiortc import AudioStreamTrack, RTCPeerConnection
 from curl_cffi.curl import CurlMime
 from curl_cffi.requests import AsyncSession
 
@@ -50,6 +49,7 @@ class DummyAudioTrack(AudioStreamTrack):
         return frame
 
 import fractions
+
 
 async def test_session_payload_field(field_name: str, field_value: any) -> dict:
     """Test if /realtime/wm accepts a specific session_payload field."""

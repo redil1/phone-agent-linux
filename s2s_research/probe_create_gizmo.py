@@ -1,7 +1,9 @@
 import asyncio
-import json
+
 from curl_cffi.requests import AsyncSession
+
 from phone_agent_gateway.ai_bridge.chatgpt_realtime_auth import ChatGPTAuthManager
+
 
 async def create_phone_agent_gizmo():
     auth = ChatGPTAuthManager()

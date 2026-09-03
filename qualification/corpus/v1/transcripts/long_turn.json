@@ -1,0 +1,16 @@
+{
+  "language": "en-US",
+  "provenance": "synthetic",
+  "scenario_id": "long_turn",
+  "schema_version": 1,
+  "turns": [
+    {
+      "end_ms": 17878,
+      "finalized": true,
+      "language": "en-US",
+      "role": "caller",
+      "start_ms": 0,
+      "text": "I currently use several services, but reliability matters more to me than extra features. I would like one clear monthly price, no surprise conditions, and an easy setup. Please explain the closest option and what evidence you have that it will meet those needs."
+    }
+  ]
+}

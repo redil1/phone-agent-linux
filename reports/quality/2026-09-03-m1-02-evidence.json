@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "backlog_item": "M1-02",
+  "status": "pass",
+  "contains_customer_data": false,
+  "pipeline": "cascade",
+  "characterization": {
+    "behavior_count": 10,
+    "test_node_count": 31,
+    "matrix_sha256": "95115a2c09109f5837e847ca993c8556df8e06c251391091eddb89f7e9cf6b9f"
+  },
+  "artifacts": {
+    "apk_sha256": "a1e21b4e5386a24b16f1123b98b0d23341c79a702c8c2aace54093064597bec4",
+    "android_source_sha256": "01427d6f2ef58fce1e4e0b453ce2fce0c1dd04c77dfeb4a67a17106e651f1831",
+    "apk_signer_certificate_sha256": "becc17ac72ab3344695b10531daa2c764c1bb2b1ecb66ce1d7e56cc34a1d2b82",
+    "qualification_report_sha256": "031b22da62bcb18339d5efb5830f61a85e9fb56591a04d06edce636c404377c3"
+  },
+  "device": {
+    "profile": "redmi-12c-earth-trebledroid-android14",
+    "abi": "arm64-v8a",
+    "sdk": 34,
+    "fingerprint": "google/treble_arm64_bvS/tdgsi_arm64_ab:14/AP1A.240505.005.B1/240508:userdebug/test-keys",
+    "dialer_role": true,
+    "updated_privileged_system_app": true,
+    "reboot_persistence": true,
+    "remote_link_protocol_version": 2,
+    "remote_link_negotiated_version": 2,
+    "qualification_checks_total": 24,
+    "qualification_checks_passed": 24,
+    "qualified": true
+  },
+  "gates": {
+    "ruff": "pass",
+    "pyright": "pass",
+    "fast_unit": {
+      "passed": 776,
+      "skipped": 39,
+      "device_deselected": 1
+    },
+    "integration_pytest": {
+      "passed": 227
+    },
+    "android_protocol": "pass",
+    "security": "pass_with_governed_exception",
+    "licence_sbom": "pass",
+    "device_qualification": "pass"
+  },
+  "next_action": "Proceed to M1-03: Remove legacy adapter removal backend modules and entry branches."
+}

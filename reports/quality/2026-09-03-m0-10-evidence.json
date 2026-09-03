@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "backlog_id": "M0-10",
+  "status": "pass",
+  "verified_at": "2026-09-03T06:49:05Z",
+  "pipeline": "stt_llm_tts_cascade",
+  "profiles": {
+    "linux-x86_64-contract-ci": {
+      "status": "pass",
+      "iterations": 5,
+      "long_call_turns": 60,
+      "checks_passed": 6,
+      "checks_total": 6
+    },
+    "linux-x86_64-rtx-a6000-local": {
+      "status": "threshold_failure",
+      "iterations": 5,
+      "long_call_turns": 60,
+      "checks_passed": 5,
+      "checks_total": 6,
+      "stt_final_p95_ms": 146.183,
+      "llm_ttft_p95_ms": 142.703,
+      "tts_ttfa_p95_ms": 158.187,
+      "e2e_ttfa_p95_ms": 615.549,
+      "stt_wer_max": 0.0,
+      "long_call_ttft_drift_percent": 26.556,
+      "unresolved_owner": ["M7-04", "M7-05", "M7-06", "M7-07", "M7-08", "M7-09", "M7-12"]
+    }
+  },
+  "verification": {
+    "ruff": "pass",
+    "pyright_errors": 0,
+    "pyright_warnings": 0,
+    "focused_tests_passed": 59,
+    "evaluation_tests_passed": 153,
+    "full_tests_passed": 890,
+    "full_tests_skipped": 40,
+    "device_tests_deselected": 4,
+    "full_test_duration_seconds": 49.45,
+    "package": "pass",
+    "wheel_runtime_smoke": "pass",
+    "security_policy": "pass",
+    "licence_sbom_policy": "pass",
+    "warm_host_ready_after_benchmark": true,
+    "warm_host_configuration_current": true
+  },
+  "artifacts": [
+    {"path": "qualification/performance_harness.py", "sha256": "31c0ecce87596ece8be691d196543b744eb0057e4489e55d97697ce895b33584"},
+    {"path": "qualification/performance/profiles.json", "sha256": "c3cc9c085058174d70c1712e71ec89c97ad76398252fd5803917e7d1ec13dd04"},
+    {"path": "artifacts/performance/m0-10-contract.json", "sha256": "eb106b19ca732a0bff111f54dde2787ae89fc3cab1e3a6d2f0708e8933be053b"},
+    {"path": "artifacts/performance/m0-10-rtx-a6000.json", "sha256": "e0d94dcd2ad176d646a4dba4353f88d4f3fd34dac30071d13f6018800fc40303"},
+    {"path": "artifacts/ci-m0-10/package/phone_agent_gateway-0.7.0-py3-none-any.whl", "sha256": "37ad06ca0648561d9e5bf7ce1ddf31649164723e86fc625288bab96bf87023d8"},
+    {"path": "artifacts/ci-m0-10/security/dependency-audit.json", "sha256": "94d0fed2f9d55179c9165fcbd9150b274d8317cd9025c35b4b0e035ef06c89d8"}
+  ],
+  "contains_audio": false,
+  "contains_transcripts": false,
+  "contains_customer_data": false,
+  "deployment_changed": false,
+  "android_or_gsm_changed": false,
+  "operational_repair": {
+    "path": "/home/Ubuntu/.cache/huggingface",
+    "owner_uid": 1001,
+    "owner_gid": 1001,
+    "reason": "restore non-root warm-worker cache write access"
+  }
+}

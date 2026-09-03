@@ -7,6 +7,7 @@ import contextlib
 import logging
 import os
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
@@ -56,6 +57,7 @@ from .turn_continuity import SemanticTurnGuardProcessor
 
 logger = logging.getLogger("PhoneAgentPipeline")
 MAX_REPEAT_RECOVERY_ATTEMPTS = 1
+CallCompletionSink = Callable[[str], Awaitable[None] | None]
 
 LOCAL_WHISPER_PROVIDERS = frozenset(
     {
@@ -203,6 +205,7 @@ def create_provider_services(config: ProviderConfig, sample_rate: int) -> Provid
                 incomplete_endpoint_ms=config.parakeet_incomplete_endpoint_ms,
                 prefetch_silence_ms=config.speculative_prefetch_silence_ms,
                 energy_threshold_dbfs=config.parakeet_energy_threshold_dbfs,
+                echo_guard_db=12.0,
                 speculative_pipeline_enabled=config.speculative_pipeline_enabled,
             )
         else:
@@ -229,6 +232,7 @@ def create_provider_services(config: ProviderConfig, sample_rate: int) -> Provid
             incomplete_endpoint_ms=config.parakeet_incomplete_endpoint_ms,
             prefetch_silence_ms=config.speculative_prefetch_silence_ms,
             energy_threshold_dbfs=config.parakeet_energy_threshold_dbfs,
+            echo_guard_db=12.0,
             speculative_pipeline_enabled=config.speculative_pipeline_enabled,
         )
     else:
@@ -303,6 +307,18 @@ def create_provider_services(config: ProviderConfig, sample_rate: int) -> Provid
             model=config.tts_model,
             voice=config.tts_voice_id or "af_heart",
             lang=config.stt_language,
+        )
+    elif config.tts_provider in {"faster_qwen3", "faster_qwen3_tts", "qwen3_tts"}:
+        from .faster_qwen3_tts_service import FasterQwen3TTSService
+
+        model_to_use = config.tts_model
+        if not model_to_use or "Qwen" not in model_to_use:
+            model_to_use = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+        tts = FasterQwen3TTSService(
+            sample_rate=sample_rate,
+            model=model_to_use,
+            voice=config.tts_voice_id or "ryan",
+            language=config.stt_language,
         )
     elif config.tts_provider == "google_genai":
         google_tts_key = config.google_api_key or os.getenv("GEMINI_API_KEY", "")
@@ -521,12 +537,36 @@ def create_llm_service(config: ProviderConfig) -> Any:
     raise ValueError(f"unsupported LLM provider: {config.llm_provider}")
 
 
+def ollama_runtime_options(config: ProviderConfig, model_name: str) -> dict[str, Any]:
+    """Return the exact Ollama runner shape used for both warmup and live turns.
+
+    Ollama keys resident runners by model options including ``num_ctx``.  A warmup
+    with defaults followed by a live request with a configured context therefore
+    tears down and reloads a multi-gigabyte model.  Keeping one canonical option
+    builder prevents that cold-load regression across every warmup entry point.
+    """
+
+    from .ollama_native import required_model_options
+
+    options: dict[str, Any] = {
+        "temperature": config.ollama_temperature,
+        "top_p": config.ollama_top_p,
+        "top_k": config.ollama_top_k,
+        "min_p": config.ollama_min_p,
+        "presence_penalty": config.ollama_presence_penalty,
+        "num_predict": config.ollama_num_predict,
+        "num_ctx": config.ollama_num_ctx,
+    }
+    options.update(required_model_options(model_name))
+    return options
+
+
 async def prewarm_primary_llm(config: ProviderConfig) -> float | None:
     """Make the selected local LLM resident before the host accepts calls."""
 
     if config.llm_provider != "ollama":
         return None
-    from .ollama_native import OllamaNativeClient, required_model_options
+    from .ollama_native import OllamaNativeClient
 
     client = OllamaNativeClient(
         base_url=config.ollama_base_url,
@@ -534,20 +574,10 @@ async def prewarm_primary_llm(config: ProviderConfig) -> float | None:
     )
     try:
         model_name = config.llm_model or "qwen2.5:3b"
-        options = {
-            "temperature": config.ollama_temperature,
-            "top_p": config.ollama_top_p,
-            "top_k": config.ollama_top_k,
-            "min_p": config.ollama_min_p,
-            "presence_penalty": config.ollama_presence_penalty,
-            "num_predict": config.ollama_num_predict,
-            "num_ctx": config.ollama_num_ctx,
-        }
-        options.update(required_model_options(model_name))
         result = await client.prewarm(
             model=model_name,
             keep_alive=config.ollama_keep_alive,
-            options=options,
+            options=ollama_runtime_options(config, model_name),
         )
         return result.elapsed_ms
     finally:
@@ -577,11 +607,16 @@ async def prewarm_speech_models(config: ProviderConfig) -> dict[str, float]:
         config.stt_provider in {"sensevoice", "sensevoice_small"}
         and not sensevoice_language_fallback
     ):
-        from .sensevoice_stt_service import prewarm_sensevoice
+        try:
+            from .sensevoice_stt_service import prewarm_sensevoice
 
-        timings["sensevoice_ms"] = await asyncio.to_thread(
-            prewarm_sensevoice, "iic/SenseVoiceSmall"
-        )
+            timings["sensevoice_ms"] = await asyncio.to_thread(
+                prewarm_sensevoice, "iic/SenseVoiceSmall"
+            )
+        except Exception as e:
+            logger.warning("SenseVoice prewarm failed, falling back to parakeet/whisper: %s", e)
+            from .parakeet_local_stt import prewarm_parakeet
+            timings["parakeet_ms"] = await asyncio.to_thread(prewarm_parakeet, "large-v3-turbo")
     if config.stt_provider == "parakeet_local":
         from .parakeet_local_stt import prewarm_parakeet
 
@@ -609,6 +644,11 @@ async def prewarm_speech_models(config: ProviderConfig) -> dict[str, float]:
             config.tts_voice_id or "af_heart",
             config.stt_language,
         )
+    if config.tts_provider in {"faster_qwen3", "faster_qwen3_tts", "qwen3_tts"}:
+        from .faster_qwen3_tts_service import prewarm_faster_qwen3
+
+        model_to_prewarm = config.tts_model or "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+        timings["faster_qwen3_ms"] = await asyncio.to_thread(prewarm_faster_qwen3, model_to_prewarm)
     if config.tts_provider == "supertonic":
         import time
 
@@ -760,14 +800,20 @@ async def prewarm_gpu_resident_models(
 
     from .ollama_native import OllamaNativeClient
 
-    client = OllamaNativeClient(base_url=ollama_base, turn_timeout_secs=45.0)
+    client = OllamaNativeClient(
+        base_url=ollama_base,
+        turn_timeout_secs=max(float(config.ollama_turn_timeout_secs), 120.0)
+        if config
+        else 120.0,
+    )
     timings["ollama_models"] = {}
     try:
         for model_name in models_to_warm:
             try:
                 res = await client.prewarm(
                     model=model_name,
-                    keep_alive="-1",
+                    keep_alive=config.ollama_keep_alive if config else "-1",
+                    options=ollama_runtime_options(config, model_name) if config else None,
                     messages=[{"role": "user", "content": "Hello"}],
                 )
                 timings["ollama_models"][model_name] = {
@@ -801,11 +847,16 @@ class ProductionCallPipeline:
         caller_id: str = "anonymous",
         call_direction: str = "outbound",
         event_sink: EventSink | None = None,
+        call_completion_sink: CallCompletionSink | None = None,
     ) -> None:
         self.transport = transport
         self.config = config
         self.services = services or create_provider_services(config.providers, config.sample_rate)
         self.telemetry = CallTelemetry()
+        self._event_sink = event_sink
+        self._call_completion_sink = call_completion_sink
+        self._terminal_request_lock = asyncio.Lock()
+        self._terminal_request_accepted = False
         self.policy = AgentPolicyRuntime(
             caller_id=caller_id,
             task_id=config.task_id,
@@ -832,6 +883,7 @@ class ProductionCallPipeline:
             call_id=str(transport.session.call_id),
             system_prompt=config.system_prompt,
             event_sink=event_sink,
+            terminal_request_sink=self._accept_ai_end_call,
         )
         self.tool_processor: ToolCallProcessor | None = None
         self._native_tools = llm_supports_native_tools(self.services.llm)
@@ -841,7 +893,11 @@ class ProductionCallPipeline:
             self.policy, enabled=config.providers.conversation_repair_enabled
         )
         self.response_policy = ResponsePolicyProcessor(self.policy)
-        self.playback_events = PlaybackEventProcessor(self.policy, transport.session)
+        self.playback_events = PlaybackEventProcessor(
+            self.policy,
+            transport.session,
+            transport.output(),
+        )
         self.speculative_turn: SpeculativeTurnCoordinator | None = None
         if config.providers.speculative_pipeline_enabled:
             speculative_turn = SpeculativeTurnCoordinator(
@@ -976,6 +1032,53 @@ class ProductionCallPipeline:
         self._background_warm: asyncio.Task | None = None
         self._register_handlers()
 
+    async def _emit(self, event: dict[str, Any]) -> None:
+        if self._event_sink is None:
+            return
+        result = self._event_sink(event)
+        if asyncio.iscoroutine(result):
+            await result
+
+    async def _accept_ai_end_call(self, result: dict[str, Any]) -> None:
+        """Speak one model-selected close and hang up only after verified playout."""
+
+        async with self._terminal_request_lock:
+            if self._terminal_request_accepted:
+                return
+            reason = " ".join(str(result.get("reason", "conversation complete")).split())
+            closing = " ".join(str(result.get("closing_message", "Goodbye.")).split())
+            if not closing:
+                return
+            self._terminal_request_accepted = True
+            await self._emit(
+                {
+                    "type": "ai_end_call_requested",
+                    "reason": reason,
+                    "closing_message": closing,
+                    "pipeline": "cascade",
+                }
+            )
+            spoken, _evaluation, response_id = await self.policy.finalize_response_with_identity(
+                closing,
+                response_kind="terminal",
+            )
+            if not spoken:
+                self._terminal_request_accepted = False
+                await self._emit(
+                    {
+                        "type": "terminal_completion_aborted",
+                        "reason": "terminal closing was rejected by spoken policy",
+                        "pipeline": "cascade",
+                    }
+                )
+                return
+            self.policy.arm_terminal_completion(
+                response_id,
+                f"AI ended call: {reason or 'conversation complete'}",
+                self._call_completion_sink,
+            )
+            await self.worker.queue_frame(TTSSpeakFrame(spoken, append_to_context=True))
+
     def _register_handlers(self) -> None:
         if isinstance(self.services.stt, DeepgramFluxSTTService):
             self.flux_turn_tracker = FluxTurnTimingTracker(self.telemetry)
@@ -1086,8 +1189,11 @@ class ProductionCallPipeline:
     async def _resolve_repetition_retry(self, epoch: int) -> None:
         if epoch != self._repeat_retry_epoch or self._repeat_retry_message is None:
             return
-        with contextlib.suppress(ValueError):
-            self.context.messages.remove(self._repeat_retry_message)
+        # KV-CACHE OPTIMIZATION:
+        # Never remove messages from previous turns in the middle of history.
+        # Removing messages truncates and shifts token positions, destroying Ollama's
+        # llama.cpp KV-cache prefix and causing high prefill latency spikes (up to 900ms+).
+        # We simply mark the retry as resolved and keep the history strictly append-only.
         self._repeat_retry_message = None
         self._repeat_retry_attempts = 0
 

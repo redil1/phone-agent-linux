@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from pipecat.frames.frames import (
     Frame,
+    FunctionCallResultProperties,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
@@ -19,11 +21,16 @@ from phone_agent_gateway.ai_bridge.cascade_tools import (
     TOOL_CLOSE,
     TOOL_OPEN,
     CascadeToolRuntime,
+    NativeToolBinding,
     ToolCallProcessor,
     emitted_tool_instructions,
     llm_supports_native_tools,
 )
-from phone_agent_gateway.ai_bridge.tasks.tool_catalog import RealtimeTool
+from phone_agent_gateway.ai_bridge.tasks.tool_catalog import (
+    END_CALL_TOOL_NAME,
+    RealtimeTool,
+    build_end_call_tool,
+)
 
 
 class _Context:
@@ -210,6 +217,91 @@ async def test_a_preamble_is_spoken_before_a_tool_runs() -> None:
     await _drive(processor, f'{TOOL_OPEN}{{"name":"x","arguments":{{}}}}{TOOL_CLOSE}')
 
     assert order == ["preamble", "tool"]
+
+
+@pytest.mark.asyncio
+async def test_end_call_is_handed_to_terminal_delivery_and_not_requeued() -> None:
+    """Cascade must speak the tool's exact close, not start another LLM pass."""
+
+    terminal: list[dict[str, Any]] = []
+    policy = _Policy()
+    runtime = CascadeToolRuntime(
+        policy=policy,
+        caller_id="+212600000000",
+        call_id="call-1",
+        terminal_request_sink=terminal.append,
+    )
+    runtime.catalog = {END_CALL_TOOL_NAME: build_end_call_tool()}
+    preambles: list[str] = []
+
+    async def preamble(name: str) -> None:
+        preambles.append(name)
+
+    processor = ToolCallProcessor(
+        runtime,
+        context=_Context(),
+        llm=object(),
+        preamble=preamble,
+    )
+    frames = await _drive(
+        processor,
+        f'{TOOL_OPEN}{{"name":"end_call","arguments":{{'
+        '"reason":"caller finished","closing_message":"Thank you. Goodbye."'
+        f'}}}}{TOOL_CLOSE}',
+    )
+
+    assert terminal == [
+        {
+            "accepted": True,
+            "reason": "caller finished",
+            "closing_message": "Thank you. Goodbye.",
+            "status": "closing_message_will_be_spoken_before_hangup",
+        }
+    ]
+    assert preambles == []
+    assert not any(frame.__class__.__name__ == "LLMRunFrame" for frame in frames)
+    assert isinstance(frames[-1], LLMFullResponseEndFrame)
+
+
+@pytest.mark.asyncio
+async def test_native_end_call_suppresses_the_followup_llm_generation() -> None:
+    terminal: list[dict[str, Any]] = []
+    runtime = CascadeToolRuntime(
+        policy=_Policy(),
+        caller_id="+212600000000",
+        call_id="call-1",
+        terminal_request_sink=terminal.append,
+    )
+    runtime.catalog = {END_CALL_TOOL_NAME: build_end_call_tool()}
+
+    class _LLM:
+        def __init__(self) -> None:
+            self.handlers: dict[str, Any] = {}
+
+        def register_function(self, name: str, handler: Any, **_kwargs: Any) -> None:
+            self.handlers[name] = handler
+
+    captured_properties: list[FunctionCallResultProperties | None] = []
+
+    async def result_callback(
+        _result: Any, *, properties: FunctionCallResultProperties | None = None
+    ) -> None:
+        captured_properties.append(properties)
+
+    llm = _LLM()
+    NativeToolBinding(runtime, llm, _Context()).bind()
+    await llm.handlers[END_CALL_TOOL_NAME](
+        SimpleNamespace(
+            arguments={
+                "reason": "caller finished",
+                "closing_message": "Thank you. Goodbye.",
+            },
+            result_callback=result_callback,
+        )
+    )
+
+    assert len(terminal) == 1
+    assert captured_properties == [FunctionCallResultProperties(run_llm=False)]
 
 
 # ------------------------------------------------------------------- guards

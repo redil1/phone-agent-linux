@@ -17,7 +17,7 @@ class FakeRunner:
 
 def _profile() -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "profile_id": "test-phone",
         "allowed_devices": ["device-a"],
         "allowed_models": ["Model A"],
@@ -27,6 +27,8 @@ def _profile() -> dict[str, Any]:
         "required_package": "com.phoneagent.gateway",
         "required_audio_format": "pcm_s16le_16000_mono",
         "required_protocol": "phag_v1_hmac_sha256",
+        "required_apk_source_sha256": "source-v2",
+        "required_remote_link_version": 2,
     }
 
 
@@ -68,6 +70,9 @@ def _health() -> dict[str, Any]:
         "gateway": "ready",
         "state": "IDLE",
         "link_key_provisioned": True,
+        "apk_source_sha256": "source-v2",
+        "remote_link_protocol_version": 2,
+        "remote_link_negotiated_version": 2,
         "audio": {"link_epoch": "epoch-1"},
     }
 
@@ -102,3 +107,15 @@ def test_audio_protocol_mismatch_fails_qualification() -> None:
     report = qualify_device(_runner(), profile=_profile(), health=_health(), audio=audio)
     assert report["qualified"] is False
     assert "authenticated_protocol" in report["failed_checks"]
+
+
+def test_old_apk_or_v1_remote_link_cannot_pass_v2_qualification() -> None:
+    health = _health()
+    health["apk_source_sha256"] = "stale-source"
+    health["remote_link_negotiated_version"] = 1
+
+    report = qualify_device(_runner(), profile=_profile(), health=health, audio=_audio())
+
+    assert report["qualified"] is False
+    assert "apk_source_provenance" in report["failed_checks"]
+    assert "remote_link_protocol_negotiated" in report["failed_checks"]

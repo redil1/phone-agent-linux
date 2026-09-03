@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "baseline_id": "gsm-cascade-2026-09-02",
+  "captured_at_utc": "2026-09-02T20:40:22Z",
+  "scope": "latest completed authorized GSM Cascade session and live idle runtime",
+  "contains_customer_identifiers": false,
+  "source": {
+    "legacy_repository_commit": "b6888d73fecc5da8b0547c8ab7cb224291ee43cf",
+    "legacy_remote": "https://github.com/redil1/phone-agent-linux.git",
+    "git_metadata_present": false,
+    "git_metadata_backup": "/home/Ubuntu/Desktop/phone-agent-gateway.git-metadata-backup-20260902",
+    "runtime_source_manifest": {
+      "algorithm": "sha256(sha256sum(sorted NUL-delimited regular files))",
+      "roots": ["ai_bridge", "android_service_apk", "config", "scripts"],
+      "exclusions": ["__pycache__", "*.pyc", "*.apk"],
+      "file_count": 131,
+      "sha256": "560fdcec8599928a2a48f649dedfe2ae9352b6f04bb942b2bffd00fbeeb83c81"
+    },
+    "android_source_manifest": {
+      "file_count": 33,
+      "sha256": "e6ee2b5bbbe53216989218f53e319584a224f0f3536b4f2309716d1760069289"
+    }
+  },
+  "production_container": {
+    "name": "phoneagent-core",
+    "status": "running",
+    "health": "healthy",
+    "image_tag": "phone-agent-gateway-phoneagent:latest",
+    "image_id": "sha256:082c9bfcfd3b87cfdd02ab53c3dd1ffca61d8a07fe1cb433106c93753e1c26fb",
+    "repo_digests": [],
+    "image_created_at_utc": "2026-09-02T19:33:44.825778806Z",
+    "container_started_at_utc": "2026-09-02T19:33:58.294847263Z"
+  },
+  "compute": {
+    "gpu": "NVIDIA RTX A6000",
+    "gpu_memory_mib": 49140,
+    "driver_version": "580.126.20"
+  },
+  "pipeline": {
+    "mode": "cascade",
+    "worker_configuration_current": true,
+    "desired_and_worker_configuration_match": true,
+    "stt": {
+      "provider": "whisper_turbo",
+      "configured_model": "large-v3-turbo",
+      "language": "en-US",
+      "runtime_wrapper": "ParakeetLocalSTTService",
+      "runtime_model": "large-v3-turbo",
+      "legacy_commit_source_label": "local_parakeet",
+      "huggingface_repository": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+      "snapshot_revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+      "weights_sha256": "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da"
+    },
+    "llm": {
+      "provider": "ollama",
+      "model": "hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M",
+      "ollama_digest": "50d23fa5d7502414c990a1ed33167cdb604190d9018a82a337dd81eeb56c5c9f",
+      "artifact_size_bytes": 24515132557,
+      "reported_family": "nemotron_h_moe",
+      "reported_parameter_size": "31.6B"
+    },
+    "tts": {
+      "provider": "kokoro",
+      "model": "hexgrad/Kokoro-82M",
+      "voice": "af_heart",
+      "aggregation": "sentence",
+      "snapshot_revision": "f3ff3571791e39611d31c381e3a41a3af07b4987",
+      "weights_sha256": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4"
+    },
+    "speculative_pipeline_configured": true,
+    "speculative_pipeline_effective": false,
+    "speculative_pipeline_reason": "current combination rejected as unsupported and used normal path",
+    "conversational_reflex_enabled": false,
+    "task_id": "iptv_subscription_sales",
+    "identity": {
+      "identity_id": "adam",
+      "version": 1,
+      "profile_hash": "sha256:c8bdc889399d6821e705045863fcc1ad53957fb5138a5cdc61019d6032d9ab77",
+      "evaluation_passed": true,
+      "production_ready_flag": true
+    }
+  },
+  "android": {
+    "manufacturer": "unknown",
+    "model": "TrebleDroid vanilla",
+    "device": "tdgsi_arm64_ab",
+    "android_release": "14",
+    "sdk": 34,
+    "build_type": "userdebug",
+    "build_fingerprint": "google/treble_arm64_bvS/tdgsi_arm64_ab:14/AP1A.240505.005.B1/240508:userdebug/test-keys",
+    "boot_slot": "_a",
+    "verified_boot_state": "orange",
+    "package": "com.phoneagent.gateway",
+    "version_code": 1,
+    "version_name": "1.0.0",
+    "installed_update_apk_sha256": "9fd917778f44efd46d3ac3fd1ac90d3b4773547c0614989af3d3595e12051d55",
+    "installed_update_apk_md5_legacy": "ff8da375ca4c4ac678b07ec7dbcc1adc",
+    "baked_system_apk_sha256": "51686d7325a31bc1df487c8bf31c9be82f0622d4ea41941ae5f62f10d34ee35e",
+    "package_flags": ["SYSTEM", "UPDATED_SYSTEM_APP", "PRIVILEGED"],
+    "stopped": false,
+    "dialer_role": true
+  },
+  "phone_link": {
+    "gateway": "ready",
+    "phone_connected_at_capture": true,
+    "protocol": "phag_v1_hmac_sha256",
+    "network_format": "pcm_s16le_16000_mono",
+    "link_key_provisioned": true,
+    "key_fingerprint": "9D80432F6BF9",
+    "last_rtt_ms": 306.2,
+    "capture_source": "VOICE_DOWNLINK",
+    "injection_route": "telephony_tx_modem_clock_standard_stream",
+    "injection_proof": "android_audio_policy_routed_to_telephony"
+  },
+  "latest_completed_call": {
+    "started_at_utc": "2026-09-02T19:50:25.995Z",
+    "summary_at_utc": "2026-09-02T19:51:28.941Z",
+    "direction": "outbound",
+    "channel": "gsm",
+    "customer_reference": "redacted",
+    "server_audio": {
+      "input_frames": 2548,
+      "input_bytes": 1630720,
+      "dropped_input_frames": 0,
+      "sequence_gaps": 0,
+      "stale_input_frames": 8,
+      "output_frames": 1634,
+      "output_bytes": 1045760,
+      "dropped_output_frames": 0,
+      "stale_output_frames": 0,
+      "interruptions": 0,
+      "flush_failures": 0,
+      "last_output_sequence": 1636,
+      "last_rendered_sequence_reported_to_server": 1607
+    },
+    "phone_audio_after_call": {
+      "last_accepted_sequence": 1624,
+      "last_rendered_sequence": 1608,
+      "audio_playout_frames": 1606,
+      "silence_playout_frames": 978,
+      "speech_segments": 4,
+      "end_markers_received": 3,
+      "mid_speech_starvation_events": 0,
+      "mid_speech_concealment_frames": 0,
+      "audio_track_underruns": 0,
+      "playout_acks_sent": 1608,
+      "peak_playout_queue_depth": 12,
+      "playout_queue_depth_at_capture": 0,
+      "telephony_track_start_attempts": 1,
+      "audioserver_recoveries": 1,
+      "audioserver_recovery_status": "completed",
+      "last_error": ""
+    },
+    "latency_ms": {
+      "llm_ttft_samples": [791.8, 428.5, 518.5],
+      "llm_wall_samples": [929.8, 527.7, 870.5],
+      "tts_ttfa_greeting": 226.9,
+      "tts_ttfa_turn_samples": [154.2, 169.4, 194.7],
+      "assistant_turn_latency_samples": [1438.3, 1030.8, 1374.3]
+    },
+    "nominal_media_assessment": "pass_with_stale_uplink_observation",
+    "delivery_faults_observed": 0
+  },
+  "known_risks": [
+    "Reliable Whisper wrapper and committed-turn source label still use legacy Parakeet naming.",
+    "Cascade runtime diagnostics are still prefixed Voice S2S diagnostic in legacy log plumbing.",
+    "Speculative mode is desired-state enabled but effective-state disabled for this provider combination.",
+    "Latest call rejected eight stale uplink frames even though drops, gaps, flush failures, and playout faults were zero.",
+    "Device uses a userdebug test-key GSI with orange verified-boot state.",
+    "Container has no registry RepoDigest; local immutable image ID is the available production image anchor.",
+    "No APK binary is checked into the new project; installed and baked APK hashes were captured from the device.",
+    "Crawl4AI sidecar was unhealthy at capture time; it is outside the GSM voice critical path."
+  ]
+}

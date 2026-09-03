@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "item": "M1-05",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:03:00Z",
+  "contains_customer_data": false,
+  "configuration_rejections": {
+    "s2s_chatgpt_realtime": "Explicit ConfigurationError informing user that s2s_chatgpt_realtime is deprecated and removed; instructs migration to cascade"
+  },
+  "automatic_migrations": {
+    "persisted_studio_settings": "Studio settings with pipeline_mode=s2s_chatgpt_realtime automatically migrated to cascade upon load",
+    "agent_package_runtime": "AgentPackage with runtime.pipeline_mode=s2s_chatgpt_realtime automatically migrated to cascade upon deployment dry-run/staging"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 683,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "4b5c17778f56c8c0e0ccca508031f4013cc08256958ca4d23bdf918a6a9d719b",
+    "sdist_sha256": "f9c95858e8b4bf2a4a5932d2dbb155fe143e701a08e81f797b8fbeb02d716ae5"
+  }
+}

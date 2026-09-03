@@ -1,7 +1,7 @@
 # Live Tools & MCP Control Plane
 
 PhoneAgent Studio 0.7 has a dedicated **Tools & MCP** workspace for capabilities that the
-OpenAI Realtime speech-to-speech agent can use during a telephone call. It is above the generic
+Universal Cascade agent can use during a telephone call. It is above the generic
 audio transport and does not modify GSM dialing, Android media, WhatsApp signaling, or WhatsApp
 media.
 

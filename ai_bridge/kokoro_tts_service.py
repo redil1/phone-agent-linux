@@ -133,7 +133,7 @@ def _load_engine(model: str, device: str | None = None) -> _KokoroEngine:
         if cached is not None:
             return cached
 
-        from kokoro import KPipeline
+        from ._vendor.kokoro import KPipeline
 
         logger.info("loading Kokoro-82M pipeline on device=%s repo=%s", target_device, repo)
         pipeline = KPipeline(lang_code="a", repo_id=repo, device=target_device)

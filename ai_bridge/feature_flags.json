@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "policy_owner": "platform-architecture",
+  "maximum_lifetime_days": 120,
+  "temporary_flags": [
+    {
+      "name": "PHONE_AGENT_SPECULATIVE_PIPELINE",
+      "owner": "voice-runtime",
+      "purpose": "Qualify speculative prefetch as a latency optimization inside the existing Cascade graph.",
+      "registered_on": "2026-09-02",
+      "expires_on": "2026-11-30",
+      "allowed_values": ["0", "1", "false", "no", "off", "on", "true", "yes"],
+      "default": false,
+      "pipeline_effect": "same_cascade_graph_only",
+      "rollout_plan": {
+        "stages": ["disabled", "synthetic-eval", "internal-canary", "qualified-production", "graduated-or-removed"],
+        "current_stage": "disabled",
+        "success_criteria": "Lower p95 turn latency without transcript, interruption, or semantic quality regression.",
+        "abort_criteria": "Any wrong-answer commit, stale audio, cancellation leak, or p95 regression."
+      },
+      "telemetry": ["feature_flag_evaluated", "speculation", "turn_latency_ms"],
+      "rollback": {
+        "safe_value": "false",
+        "procedure": "Set the flag false and recycle only the warm Cascade worker; normal STT to LLM to TTS processing remains available."
+      },
+      "removal_target": "M2-07",
+      "bindings": ["ai_bridge/runtime_config.py"]
+    },
+    {
+      "name": "PHONE_AGENT_CONVERSATIONAL_REFLEX",
+      "owner": "conversation-experience",
+      "purpose": "Evaluate short acknowledgement audio without allowing it to replace or contradict the model answer.",
+      "registered_on": "2026-09-02",
+      "expires_on": "2026-11-30",
+      "allowed_values": ["0", "1", "false", "no", "off", "on", "true", "yes"],
+      "default": false,
+      "pipeline_effect": "same_cascade_graph_only",
+      "rollout_plan": {
+        "stages": ["disabled", "synthetic-eval", "internal-canary", "qualified-production", "graduated-or-removed"],
+        "current_stage": "disabled",
+        "success_criteria": "Improved perceived responsiveness with no repetition, contradiction, or interruption regression.",
+        "abort_criteria": "Any scripted mirroring, semantic contradiction, double response, or barge-in regression."
+      },
+      "telemetry": ["feature_flag_evaluated", "conversational_reflex", "tts_ttfa"],
+      "rollback": {
+        "safe_value": "false",
+        "procedure": "Set the flag false; the substantive Cascade response path is unchanged."
+      },
+      "removal_target": "M4-05",
+      "bindings": ["ai_bridge/runtime_config.py"]
+    },
+    {
+      "name": "PHONE_AGENT_SUPERTONIC_FALLBACK_TO_EDGE",
+      "owner": "voice-ml",
+      "purpose": "Bound the migration fallback from local Supertonic synthesis to Edge TTS within Cascade.",
+      "registered_on": "2026-09-02",
+      "expires_on": "2026-11-30",
+      "allowed_values": ["0", "1", "false", "no", "off", "on", "true", "yes"],
+      "default": true,
+      "pipeline_effect": "cascade_provider_fallback_only",
+      "rollout_plan": {
+        "stages": ["qualified-fallback", "failure-injection", "provider-health-gated", "graduated-or-removed"],
+        "current_stage": "qualified-fallback",
+        "success_criteria": "Every fallback is observable and preserves exactly one TTS output stream.",
+        "abort_criteria": "Unannounced provider switching, duplicate audio, or privacy/residency policy violation."
+      },
+      "telemetry": ["feature_flag_evaluated", "tts_provider_selected", "tts_provider_fallback", "tts_ttfa"],
+      "rollback": {
+        "safe_value": "false",
+        "procedure": "Set the flag false so Supertonic failure fails closed instead of switching provider."
+      },
+      "removal_target": "M2-08",
+      "bindings": ["ai_bridge/runtime_config.py"]
+    },
+    {
+      "name": "PHONE_AGENT_IDENTITY_PROPOSALS_ENABLED",
+      "owner": "identity-platform",
+      "purpose": "Canary model-proposed identity memory writes behind review and conflict controls.",
+      "registered_on": "2026-09-02",
+      "expires_on": "2026-11-30",
+      "allowed_values": ["0", "1", "false", "no", "off", "on", "true", "yes"],
+      "default": false,
+      "pipeline_effect": "agent_state_only",
+      "rollout_plan": {
+        "stages": ["disabled", "offline-shadow", "operator-review", "qualified-production", "graduated-or-removed"],
+        "current_stage": "operator-review",
+        "success_criteria": "Accepted proposals are attributable, conflict-free, scoped, and reversible.",
+        "abort_criteria": "Cross-tenant leakage, unreviewed activation, identity conflict, or non-reversible write."
+      },
+      "telemetry": ["feature_flag_evaluated", "identity_proposal_created"],
+      "rollback": {
+        "safe_value": "false",
+        "procedure": "Set the flag false; existing reviewed identity data remains readable and no new proposal is written."
+      },
+      "removal_target": "M8-07",
+      "bindings": ["ai_bridge/memory/memory_writer.py"]
+    }
+  ],
+  "transition_controls": [
+    {
+      "name": "PHONE_AGENT_PIPELINE_MODE",
+      "owner": "platform-architecture",
+      "purpose": "Time-bound compatibility control while persisted S2S installations migrate to Cascade.",
+      "registered_on": "2026-09-02",
+      "expires_on": "2026-10-01",
+      "allowed_values": ["cascade", "s2s_chatgpt_realtime"],
+      "target_value": "cascade",
+      "default": "cascade",
+      "creates_alternate_pipeline": true,
+      "removal_target": "M1-05",
+      "telemetry": ["transition_control_evaluated", "voice_host_ready"],
+      "rollback": {
+        "safe_value": "cascade",
+        "procedure": "Set the control to cascade and restore the last qualified Cascade image; never re-enable S2S as a rollback strategy."
+      },
+      "bindings": ["ai_bridge/runtime_config.py"]
+    }
+  ],
+  "durable_controls": [
+    {"name": "PHONE_AGENT_ALLOW_EXTERNAL", "owner": "platform-security", "classification": "security_authorization", "reason": "Explicit authorization for a non-loopback Studio bind.", "bindings": ["ai_bridge/web_server.py"]},
+    {"name": "PHONE_AGENT_WARM_VOICE_HOST", "owner": "voice-runtime", "classification": "process_lifecycle_configuration", "reason": "Controls whether the durable Cascade worker is prewarmed or started on demand.", "bindings": ["ai_bridge/web_server.py"]},
+    {"name": "PHONE_AGENT_COMMAND_STDIN", "owner": "channel-platform", "classification": "process_protocol_configuration", "reason": "Selects the supervised command transport for the voice child process.", "bindings": ["ai_bridge/phone_voice_agent.py"]},
+    {"name": "PHONE_AGENT_REMOTE_LINK", "owner": "channel-platform", "classification": "deployment_topology", "reason": "Selects authenticated remote device transport.", "bindings": ["ai_bridge/remote_link.py"]},
+    {"name": "PHONE_AGENT_USE_ADB_FORWARD", "owner": "device-platform", "classification": "deployment_topology", "reason": "Selects local ADB forwarding for a qualified device.", "bindings": ["ai_bridge/runtime_config.py"]},
+    {"name": "PHONE_AGENT_AUTO_ANSWER", "owner": "call-policy", "classification": "operator_policy", "reason": "Controls inbound answer behavior and is not a rollout experiment.", "bindings": ["ai_bridge/runtime_config.py"]},
+    {"name": "PHONE_AGENT_RECORD_CALLS", "owner": "privacy", "classification": "legacy_recording_control", "reason": "Legacy recording request still remains subordinate to consent enforcement.", "bindings": ["ai_bridge/runtime_config.py"]},
+    {"name": "PHONE_AGENT_RECORDING_ENABLED", "owner": "privacy", "classification": "consent_enforcement", "reason": "Derived per-call recording authorization, not a release flag.", "bindings": ["ai_bridge/call_recording.py"]},
+    {"name": "PHONE_AGENT_RECORDING_CONSENT", "owner": "privacy", "classification": "consent_enforcement", "reason": "Records explicit per-call consent and must remain independently enforced.", "bindings": ["ai_bridge/call_recording.py"]},
+    {"name": "PHONE_AGENT_MEMORY_ENABLED", "owner": "identity-platform", "classification": "tenant_capability", "reason": "Customer-scoped memory capability with policy controls.", "bindings": ["ai_bridge/runtime_config.py"]},
+    {"name": "PHONE_AGENT_EVENT_STREAM", "owner": "observability", "classification": "deployment_integration", "reason": "Enables the durable event transport integration.", "bindings": ["ai_bridge/runtime_config.py"]},
+    {"name": "PHONE_AGENT_OLLAMA_PREWARM", "owner": "llm-platform", "classification": "performance_configuration", "reason": "Controls deterministic model residency behavior.", "bindings": ["ai_bridge/runtime_config.py"]},
+    {"name": "PHONE_AGENT_OLLAMA_THINK", "owner": "llm-platform", "classification": "model_behavior_configuration", "reason": "Selects a supported Ollama inference mode and is part of the provider contract.", "bindings": ["ai_bridge/runtime_config.py"]},
+    {"name": "PHONE_AGENT_CONVERSATION_REPAIR", "owner": "conversation-experience", "classification": "graduated_safety_capability", "reason": "Fail-safe repair policy is a permanent agent control, not an experiment.", "bindings": ["ai_bridge/runtime_config.py"]},
+    {"name": "PHONE_AGENT_FULL_CONTAINER_BUILD", "owner": "developer-experience", "classification": "ci_execution_control", "reason": "Separates a static Docker check from an intentionally expensive full build.", "bindings": ["ci/run-stage.sh"]},
+    {"name": "PHONE_AGENT_DEVICE_CI", "owner": "device-platform", "classification": "hardware_safety_gate", "reason": "Explicitly authorizes the self-hosted device qualification stage.", "bindings": ["ci/run-stage.sh"]}
+  ]
+}

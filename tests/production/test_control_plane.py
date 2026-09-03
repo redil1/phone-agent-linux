@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from phone_agent_gateway.ai_bridge.control_plane import ControlPlaneStore
+from phone_agent_gateway.ai_bridge.control_plane import ControlPlaneStore, RuntimeControl
 from phone_agent_gateway.ai_bridge.frappe_integration import FrappeConfigStore
 from phone_agent_gateway.ai_bridge.openwa_integration import OpenWAConfigStore
 from phone_agent_gateway.ai_bridge.personality.persona_compiler import (
@@ -31,7 +31,7 @@ def _server(tmp_path: Path) -> PhoneAgentWebServer:
     )
     return PhoneAgentWebServer(
         config=ProviderConfig(
-            pipeline_mode="s2s_chatgpt_realtime",
+            pipeline_mode="cascade",
             call_channel="gsm",
             stt_provider="parakeet_local",
             llm_provider="ollama",
@@ -156,3 +156,35 @@ async def test_control_events_are_bounded_cursor_readable_and_redacted(tmp_path:
     assert payload["events"][0]["sequence"] == 1
     assert payload["events"][0]["caller_id"].startswith("sha256:")
     assert "+33123456789" not in json.dumps(payload)
+
+
+def test_web_server_migrates_persisted_s2s_studio_settings(tmp_path: Path) -> None:
+    settings_file = tmp_path / "studio.json"
+    settings_file.write_text(json.dumps({"pipeline_mode": "s2s_chatgpt_realtime"}), encoding="utf-8")
+    persona_path = tmp_path / "persona.yaml"
+    persona_path.write_bytes(DEFAULT_PERSONA_PATH.read_bytes())
+    compiler = PersonaCompiler(persona_path=persona_path, examples_path=DEFAULT_EXAMPLES_PATH)
+    server = PhoneAgentWebServer(
+        config=ProviderConfig(pipeline_mode="cascade"),
+        persona_compiler=compiler,
+        task_engine=TaskEngine(user_contracts_dir=tmp_path / "tasks"),
+        settings_path=settings_file,
+        audit_ledger=AuditLedger(tmp_path / "audit.jsonl"),
+    )
+    assert server.config.pipeline_mode == "cascade"
+
+
+def test_runtime_candidate_migrates_s2s_agent_package_runtime(tmp_path: Path) -> None:
+    persona_path = tmp_path / "persona.yaml"
+    persona_path.write_bytes(DEFAULT_PERSONA_PATH.read_bytes())
+    compiler = PersonaCompiler(persona_path=persona_path, examples_path=DEFAULT_EXAMPLES_PATH)
+    server = PhoneAgentWebServer(
+        config=ProviderConfig(pipeline_mode="cascade"),
+        persona_compiler=compiler,
+        task_engine=TaskEngine(user_contracts_dir=tmp_path / "tasks"),
+        settings_path=tmp_path / "studio.json",
+        audit_ledger=AuditLedger(tmp_path / "audit.jsonl"),
+    )
+    rc = RuntimeControl(pipeline_mode="s2s_chatgpt_realtime")
+    candidate = server._runtime_candidate(rc)
+    assert candidate.pipeline_mode == "cascade"

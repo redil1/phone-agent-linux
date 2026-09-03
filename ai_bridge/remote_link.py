@@ -7,11 +7,13 @@ three sockets on 8766-8768 -- so the cable is only a transport, not a
 capability. Replacing it lets the runtime live anywhere.
 
 A handset on mobile data usually sits behind carrier NAT, so a server cannot
-open a connection to it. The phone therefore dials out, and this relay
-multiplexes the four ports back down that single socket. The relay then
-re-presents them on its own loopback, which is exactly the shape ``adb forward``
-produced, so the voice host needs no change at all: it still talks to
-127.0.0.1:8765-8768 and cannot tell the difference.
+open a connection to it. The phone therefore dials out. Protocol v2 keeps one
+coordinator and gives every accepted gateway connection its own outbound TCP
+tunnel, preventing capture backpressure from starving control or playout ACKs.
+The relay then re-presents the ports on its own loopback, which is exactly the
+shape ``adb forward`` produced, so the voice host needs no change at all: it
+still talks to 127.0.0.1:8765-8768 and cannot tell the difference. Installed v1
+phones retain their original multiplexed single-socket transport.
 
 The phone keeps binding its gateway ports to loopback only. The tunnel client
 runs inside the phone process and connects to them locally, so nothing on the
@@ -38,7 +40,13 @@ from typing import Any
 logger = logging.getLogger("PhoneAgentRemoteLink")
 
 MAGIC = b"PHRL"
+# ``VERSION`` remains the v1 default for callers which use the original
+# five-argument ``encode_frame`` API.  Protocol v2 is selected explicitly by
+# the handset during its HELLO, which lets an installed v1 APK keep working
+# while newer handsets move every gateway stream onto its own carrier flow.
 VERSION = 1
+VERSION_V2 = 2
+SUPPORTED_VERSIONS = frozenset((VERSION, VERSION_V2))
 AUTH_TAG_BYTES = hashlib.sha256().digest_size
 # One media frame is 640 bytes; this bounds a hostile or broken peer without
 # ever truncating legitimate traffic.
@@ -47,6 +55,12 @@ HEADER = struct.Struct("!4sBBIHI")  # magic, version, type, stream, port, length
 
 # The gateway ports, in the order the relay presents them.
 GATEWAY_PORTS: tuple[int, ...] = (8765, 8766, 8767, 8768)
+
+# Cross-platform timeout contract. Android allows an outbound data carrier up
+# to 15 seconds to connect. The relay must retain the authenticated OPEN longer
+# than that, and the local runtime must in turn wait longer than the relay.
+PHONE_STREAM_CONNECT_TIMEOUT_SECONDS = 15.0
+V2_STREAM_ATTACH_TIMEOUT_SECONDS = 20.0
 
 
 class FrameType:
@@ -69,6 +83,8 @@ def encode_frame(
     port: int,
     payload: bytes,
     key: bytes,
+    *,
+    version: int = VERSION,
 ) -> bytes:
     """Frame one message and authenticate the whole thing.
 
@@ -78,7 +94,7 @@ def encode_frame(
 
     if len(payload) > MAX_PAYLOAD_BYTES:
         raise RemoteLinkError(f"payload of {len(payload)} bytes exceeds the limit")
-    header = HEADER.pack(MAGIC, VERSION, frame_type, stream_id, port, len(payload))
+    header = HEADER.pack(MAGIC, version, frame_type, stream_id, port, len(payload))
     body = header + payload
     return body + hmac.new(key, body, hashlib.sha256).digest()
 
@@ -89,6 +105,7 @@ class Frame:
     stream_id: int
     port: int
     payload: bytes
+    version: int = VERSION
 
 
 class FrameDecoder:
@@ -109,7 +126,7 @@ class FrameDecoder:
             )
             if magic != MAGIC:
                 raise RemoteLinkError("remote link frame had a bad magic")
-            if version != VERSION:
+            if version not in SUPPORTED_VERSIONS:
                 raise RemoteLinkError(f"unsupported remote link version {version}")
             if length > MAX_PAYLOAD_BYTES:
                 raise RemoteLinkError("remote link frame exceeded the payload limit")
@@ -128,6 +145,7 @@ class FrameDecoder:
                     stream_id=stream_id,
                     port=port,
                     payload=body[HEADER.size :],
+                    version=version,
                 )
             )
 
@@ -143,6 +161,10 @@ class RelayStats:
     last_rtt_ms: float = 0.0
     reconnects: int = 0
     last_error: str = ""
+    protocol_version: int = 0
+    stream_attach_timeout_seconds: float = V2_STREAM_ATTACH_TIMEOUT_SECONDS
+    last_stream_attach_ms: float = 0.0
+    stream_attach_timeouts: int = 0
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -159,21 +181,33 @@ class RelayStats:
             "last_rtt_ms": round(self.last_rtt_ms, 1),
             "reconnects": self.reconnects,
             "last_error": self.last_error,
+            "protocol_version": self.protocol_version,
+            "stream_attach_timeout_seconds": self.stream_attach_timeout_seconds,
+            "last_stream_attach_ms": round(self.last_stream_attach_ms, 1),
+            "stream_attach_timeouts": self.stream_attach_timeouts,
         }
 
 
 @dataclass(slots=True)
 class _Stream:
+    stream_id: int
     writer: asyncio.StreamWriter
     port: int
+    protocol_version: int
+    coordinator_writer: asyncio.StreamWriter
+    challenge: bytes = b""
+    tunnel_writer: asyncio.StreamWriter | None = None
+    tunnel_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    tunnel_write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    opened_at: float = field(default_factory=time.monotonic)
 
 
 class RemoteLinkRelay:
     """Present a remote handset's gateway ports on this machine's loopback.
 
-    One phone holds one tunnel. A second phone offering a tunnel while one is
-    healthy is refused rather than silently taking over, because two handsets
-    answering the same call would be worse than a rejected connection.
+    One phone holds one coordinator plus its authenticated v2 stream tunnels.
+    A second coordinator is refused rather than silently taking over, because
+    two handsets answering the same call would be worse than a rejection.
     """
 
     def __init__(
@@ -186,9 +220,12 @@ class RemoteLinkRelay:
         ports: tuple[int, ...] | None = None,
         ping_interval: float = 5.0,
         phone_timeout: float = 20.0,
+        stream_attach_timeout: float = V2_STREAM_ATTACH_TIMEOUT_SECONDS,
     ) -> None:
         if not key:
             raise RemoteLinkError("a remote link key is required")
+        if stream_attach_timeout <= 0:
+            raise RemoteLinkError("v2 stream attach timeout must be positive")
         self._key = key
         self._listen_host = listen_host
         self._listen_port = listen_port
@@ -198,10 +235,14 @@ class RemoteLinkRelay:
         self._ports = ports if ports is not None else GATEWAY_PORTS
         self._ping_interval = ping_interval
         self._phone_timeout = phone_timeout
+        self._stream_attach_timeout = stream_attach_timeout
 
         self.stats = RelayStats()
+        self.stats.stream_attach_timeout_seconds = stream_attach_timeout
         self._phone_writer: asyncio.StreamWriter | None = None
+        self._phone_version = VERSION
         self._write_lock = asyncio.Lock()
+        self._phone_admission_lock = asyncio.Lock()
         self._streams: dict[int, _Stream] = {}
         self._next_stream = 1
         self._servers: list[asyncio.AbstractServer] = []
@@ -209,7 +250,6 @@ class RemoteLinkRelay:
         self._tasks: set[asyncio.Task[Any]] = set()
         self._last_pong = 0.0
         self._ping_sent_at: dict[int, float] = {}
-        self._pending: deque[Frame] = deque()
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -268,20 +308,13 @@ class RemoteLinkRelay:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         peer = writer.get_extra_info("peername")
-        if self._phone_writer is not None and not self._phone_writer.is_closing():
-            logger.warning("refusing a second phone tunnel from %s", peer)
-            writer.close()
-            with contextlib.suppress(Exception):
-                await writer.wait_closed()
-            return
-
         decoder = FrameDecoder(self._key)
-        self._pending.clear()
+        pending: deque[Frame] = deque()
         try:
             # The first frame must be a valid HELLO. Anything else, including a
             # port scanner, is dropped before a tunnel is recorded.
             hello = await asyncio.wait_for(
-                self._read_one(reader, decoder), timeout=10.0
+                self._read_one(reader, decoder, pending), timeout=10.0
             )
             if hello is None or hello.type != FrameType.HELLO:
                 raise RemoteLinkError("first frame was not a HELLO")
@@ -293,31 +326,68 @@ class RemoteLinkRelay:
                 await writer.wait_closed()
             return
 
-        if self.stats.streams_total or self.stats.reconnects:
-            self.stats.reconnects += 1
-        self._phone_writer = writer
-        self.stats.phone_connected = True
-        self.stats.connected_since = time.monotonic()
-        self.stats.last_error = ""
-        self._last_pong = time.monotonic()
-        logger.info("phone tunnel established from %s", peer)
-        await self._send(FrameType.READY, 0, 0, b"")
-        self._spawn(self._ping_loop(), "remote-link-ping")
+        # A v2 data tunnel authenticates exactly like the coordinator, but its
+        # HELLO names the OPEN it belongs to.  It must be classified only after
+        # authentication; otherwise an unauthenticated connection could occupy
+        # or interfere with a live stream.
+        if hello.version == VERSION_V2 and (hello.stream_id or hello.port):
+            await self._handle_v2_data_tunnel(reader, writer, decoder, pending, hello)
+            return
+
+        if hello.stream_id != 0 or hello.port != 0:
+            await self._reject_writer(
+                writer,
+                f"invalid coordinator HELLO from {peer}: "
+                f"stream={hello.stream_id} port={hello.port}",
+            )
+            return
+
+        async with self._phone_admission_lock:
+            if self._phone_writer is not None and not self._phone_writer.is_closing():
+                await self._reject_writer(writer, f"refusing a second phone tunnel from {peer}")
+                return
+            if self.stats.streams_total or self.stats.reconnects:
+                self.stats.reconnects += 1
+            self._phone_writer = writer
+            self._phone_version = hello.version
+            self.stats.phone_connected = True
+            self.stats.connected_since = time.monotonic()
+            self.stats.last_error = ""
+            self.stats.protocol_version = hello.version
+            self._last_pong = time.monotonic()
+
+        logger.info("phone v%d coordinator established from %s", hello.version, peer)
+        if not await self._send_coordinator(
+            FrameType.READY,
+            0,
+            0,
+            b"",
+            expected_writer=writer,
+            version=hello.version,
+        ):
+            await self._drop_phone("READY failed", expected_writer=writer)
+            return
+        self._spawn(self._ping_loop(writer), "remote-link-ping")
 
         try:
             while True:
-                frame = await self._read_one(reader, decoder)
+                frame = await self._read_one(reader, decoder, pending)
                 if frame is None:
                     break
-                await self._on_phone_frame(frame)
+                if frame.version != hello.version:
+                    raise RemoteLinkError("remote link changed protocol version mid-connection")
+                await self._on_phone_frame(frame, hello.version)
         except (RemoteLinkError, OSError) as exc:
             logger.warning("phone tunnel failed: %s", exc)
             self.stats.last_error = str(exc)
         finally:
-            await self._drop_phone("phone tunnel closed")
+            await self._drop_phone("phone tunnel closed", expected_writer=writer)
 
     async def _read_one(
-        self, reader: asyncio.StreamReader, decoder: FrameDecoder
+        self,
+        reader: asyncio.StreamReader,
+        decoder: FrameDecoder,
+        pending: deque[Frame],
     ) -> Frame | None:
         """Return the next whole frame, buffering any that arrived with it.
 
@@ -327,16 +397,18 @@ class RemoteLinkRelay:
         """
 
         while True:
-            if self._pending:
-                return self._pending.popleft()
+            if pending:
+                return pending.popleft()
             chunk = await reader.read(65536)
             if not chunk:
                 return None
             self.stats.bytes_from_phone += len(chunk)
-            self._pending.extend(decoder.feed(chunk))
+            pending.extend(decoder.feed(chunk))
 
-    async def _on_phone_frame(self, frame: Frame) -> None:
+    async def _on_phone_frame(self, frame: Frame, version: int) -> None:
         if frame.type == FrameType.DATA:
+            if version == VERSION_V2:
+                raise RemoteLinkError("v2 DATA is forbidden on the coordinator")
             stream = self._streams.get(frame.stream_id)
             if stream is None:
                 return
@@ -353,10 +425,103 @@ class RemoteLinkRelay:
             if sent is not None:
                 self.stats.last_rtt_ms = (time.monotonic() - sent) * 1000
 
-    async def _drop_phone(self, reason: str) -> None:
+    async def _handle_v2_data_tunnel(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        decoder: FrameDecoder,
+        pending: deque[Frame],
+        hello: Frame,
+    ) -> None:
+        """Bind one authenticated WAN connection to one pending v2 OPEN.
+
+        The coordinator never carries DATA in v2.  Consequently backpressure
+        on capture, playout, control, or acknowledgement traffic is contained
+        to that gateway connection's TCP flow instead of stalling every port.
+        """
+
+        stream = self._streams.get(hello.stream_id)
+        coordinator = self._phone_writer
+        if (
+            coordinator is None
+            or self._phone_version != VERSION_V2
+            or stream is None
+            or stream.protocol_version != VERSION_V2
+            or stream.coordinator_writer is not coordinator
+            or stream.port != hello.port
+            or stream.tunnel_writer is not None
+            or not hmac.compare_digest(stream.challenge, hello.payload)
+        ):
+            await self._reject_writer(
+                writer,
+                "refusing an unrequested or mismatched v2 data tunnel "
+                f"stream={hello.stream_id} port={hello.port}",
+            )
+            return
+
+        stream.tunnel_writer = writer
+        if not await self._send_stream(stream, FrameType.READY, b""):
+            await self._close_stream(hello.stream_id, notify_phone=False)
+            return
+        stream.tunnel_ready.set()
+        self.stats.last_stream_attach_ms = (time.monotonic() - stream.opened_at) * 1000
+        self.stats.last_error = ""
+        attach_log = (
+            logger.warning if self.stats.last_stream_attach_ms >= 2_000 else logger.debug
+        )
+        attach_log(
+            "v2 data tunnel attached stream=%d port=%d elapsed_ms=%.1f",
+            hello.stream_id,
+            hello.port,
+            self.stats.last_stream_attach_ms,
+        )
+
+        try:
+            while self._streams.get(hello.stream_id) is stream:
+                frame = await self._read_one(reader, decoder, pending)
+                if frame is None:
+                    break
+                if frame.version != VERSION_V2:
+                    raise RemoteLinkError("v2 data tunnel changed protocol version")
+                if frame.stream_id != hello.stream_id or frame.port != hello.port:
+                    raise RemoteLinkError("v2 data tunnel frame identity did not match HELLO")
+                if frame.type == FrameType.DATA:
+                    try:
+                        stream.writer.write(frame.payload)
+                        await stream.writer.drain()
+                    except OSError:
+                        break
+                elif frame.type == FrameType.CLOSE:
+                    await self._close_stream(hello.stream_id, notify_phone=False)
+                    return
+                else:
+                    raise RemoteLinkError(
+                        f"frame type {frame.type} is forbidden on a v2 data tunnel"
+                    )
+        except (RemoteLinkError, OSError) as exc:
+            logger.warning(
+                "v2 data tunnel failed stream=%d port=%d: %s",
+                hello.stream_id,
+                hello.port,
+                exc,
+            )
+            self.stats.last_error = str(exc)
+        finally:
+            if self._streams.get(hello.stream_id) is stream:
+                await self._close_stream(hello.stream_id, notify_phone=False)
+
+    async def _drop_phone(
+        self,
+        reason: str,
+        *,
+        expected_writer: asyncio.StreamWriter | None = None,
+    ) -> None:
         writer = self._phone_writer
+        if expected_writer is not None and writer is not expected_writer:
+            return
         self._phone_writer = None
         self.stats.phone_connected = False
+        self.stats.protocol_version = 0
         for stream_id in list(self._streams):
             await self._close_stream(stream_id, notify_phone=False)
         if writer is not None:
@@ -365,14 +530,35 @@ class RemoteLinkRelay:
                 await writer.wait_closed()
             logger.info("phone tunnel dropped: %s", reason)
 
-    async def _send(
-        self, frame_type: int, stream_id: int, port: int, payload: bytes
+    async def _reject_writer(self, writer: asyncio.StreamWriter, reason: str) -> None:
+        logger.warning("%s", reason)
+        self.stats.last_error = reason
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+
+    async def _write_frame(
+        self,
+        writer: asyncio.StreamWriter,
+        lock: asyncio.Lock,
+        frame_type: int,
+        stream_id: int,
+        port: int,
+        payload: bytes,
+        *,
+        version: int,
     ) -> bool:
-        writer = self._phone_writer
-        if writer is None or writer.is_closing():
+        if writer.is_closing():
             return False
-        data = encode_frame(frame_type, stream_id, port, payload, self._key)
-        async with self._write_lock:
+        data = encode_frame(
+            frame_type,
+            stream_id,
+            port,
+            payload,
+            self._key,
+            version=version,
+        )
+        async with lock:
             try:
                 writer.write(data)
                 await writer.drain()
@@ -381,22 +567,63 @@ class RemoteLinkRelay:
         self.stats.bytes_to_phone += len(data)
         return True
 
-    async def _ping_loop(self) -> None:
+    async def _send_coordinator(
+        self,
+        frame_type: int,
+        stream_id: int,
+        port: int,
+        payload: bytes,
+        *,
+        expected_writer: asyncio.StreamWriter | None = None,
+        version: int | None = None,
+    ) -> bool:
+        writer = self._phone_writer
+        if writer is None or (expected_writer is not None and writer is not expected_writer):
+            return False
+        return await self._write_frame(
+            writer,
+            self._write_lock,
+            frame_type,
+            stream_id,
+            port,
+            payload,
+            version=self._phone_version if version is None else version,
+        )
+
+    async def _send_stream(
+        self, stream: _Stream, frame_type: int, payload: bytes
+    ) -> bool:
+        writer = stream.tunnel_writer
+        if writer is None:
+            return False
+        return await self._write_frame(
+            writer,
+            stream.tunnel_write_lock,
+            frame_type,
+            stream_id=stream.stream_id,
+            port=stream.port,
+            payload=payload,
+            version=VERSION_V2,
+        )
+
+    async def _ping_loop(self, coordinator: asyncio.StreamWriter) -> None:
         """Detect a phone that vanished without closing its socket."""
 
-        while self._phone_writer is not None:
+        while self._phone_writer is coordinator:
             await asyncio.sleep(self._ping_interval)
-            if self._phone_writer is None:
+            if self._phone_writer is not coordinator:
                 return
             if time.monotonic() - self._last_pong > self._phone_timeout:
                 logger.warning("phone stopped answering pings; dropping the tunnel")
-                await self._drop_phone("ping timeout")
+                await self._drop_phone("ping timeout", expected_writer=coordinator)
                 return
             token = secrets.randbelow(2**31) or 1
             self._ping_sent_at[token] = time.monotonic()
             if len(self._ping_sent_at) > 16:
                 self._ping_sent_at.clear()
-            await self._send(FrameType.PING, token, 0, b"")
+            await self._send_coordinator(
+                FrameType.PING, token, 0, b"", expected_writer=coordinator
+            )
 
     # -------------------------------------------------------------- local side
 
@@ -411,7 +638,8 @@ class RemoteLinkRelay:
     async def _handle_local(
         self, port: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        if self._phone_writer is None:
+        coordinator = self._phone_writer
+        if coordinator is None:
             # Refusing immediately is kinder than accepting and stalling: the
             # voice host reports "gateway unreachable" instead of hanging.
             writer.close()
@@ -421,19 +649,62 @@ class RemoteLinkRelay:
 
         stream_id = self._next_stream
         self._next_stream = (self._next_stream + 1) % (2**31) or 1
-        self._streams[stream_id] = _Stream(writer=writer, port=port)
+        protocol_version = self._phone_version
+        stream = _Stream(
+            stream_id=stream_id,
+            writer=writer,
+            port=port,
+            protocol_version=protocol_version,
+            coordinator_writer=coordinator,
+            challenge=secrets.token_bytes(32) if protocol_version == VERSION_V2 else b"",
+        )
+        self._streams[stream_id] = stream
         self.stats.streams_open = len(self._streams)
         self.stats.streams_total += 1
 
-        if not await self._send(FrameType.OPEN, stream_id, port, b""):
+        if not await self._send_coordinator(
+            FrameType.OPEN,
+            stream_id,
+            port,
+            stream.challenge,
+            expected_writer=coordinator,
+            version=protocol_version,
+        ):
             await self._close_stream(stream_id, notify_phone=False)
             return
+        if protocol_version == VERSION_V2:
+            try:
+                await asyncio.wait_for(
+                    stream.tunnel_ready.wait(), timeout=self._stream_attach_timeout
+                )
+            except TimeoutError:
+                self.stats.stream_attach_timeouts += 1
+                self.stats.last_error = (
+                    f"v2 data tunnel timed out after {self._stream_attach_timeout:.1f}s "
+                    f"stream={stream_id} port={port}"
+                )
+                await self._close_stream(stream_id, notify_phone=False)
+                return
+            if self._streams.get(stream_id) is not stream or stream.tunnel_writer is None:
+                return
         try:
             while True:
                 chunk = await reader.read(MAX_PAYLOAD_BYTES)
                 if not chunk:
                     break
-                if not await self._send(FrameType.DATA, stream_id, port, chunk):
+                sent = (
+                    await self._send_stream(stream, FrameType.DATA, chunk)
+                    if protocol_version == VERSION_V2
+                    else await self._send_coordinator(
+                        FrameType.DATA,
+                        stream_id,
+                        port,
+                        chunk,
+                        expected_writer=coordinator,
+                        version=protocol_version,
+                    )
+                )
+                if not sent:
                     break
         except OSError:
             pass
@@ -445,8 +716,36 @@ class RemoteLinkRelay:
         self.stats.streams_open = len(self._streams)
         if stream is None:
             return
+        # Wake a local handler which is waiting for its v2 data connection so
+        # coordinator loss cannot strand it until the full attach timeout.
+        stream.tunnel_ready.set()
         if notify_phone:
-            await self._send(FrameType.CLOSE, stream_id, stream.port, b"")
+            if stream.protocol_version == VERSION_V2 and stream.tunnel_writer is not None:
+                await self._write_frame(
+                    stream.tunnel_writer,
+                    stream.tunnel_write_lock,
+                    FrameType.CLOSE,
+                    stream_id,
+                    stream.port,
+                    b"",
+                    version=VERSION_V2,
+                )
+            else:
+                # A v2 handset can reject an OPEN on the coordinator, and the
+                # relay mirrors that path when the local peer closes before the
+                # dedicated data tunnel finishes attaching.
+                await self._send_coordinator(
+                    FrameType.CLOSE,
+                    stream_id,
+                    stream.port,
+                    b"",
+                    expected_writer=stream.coordinator_writer,
+                    version=stream.protocol_version,
+                )
+        if stream.tunnel_writer is not None:
+            stream.tunnel_writer.close()
+            with contextlib.suppress(Exception):
+                await stream.tunnel_writer.wait_closed()
         stream.writer.close()
         with contextlib.suppress(Exception):
             await stream.writer.wait_closed()

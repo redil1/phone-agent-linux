@@ -52,7 +52,7 @@ from .openwa_integration import (
     OpenWAError,
 )
 from .pairing import build_pairing, key_fingerprint, pairing_status
-from .personality.persona_compiler import PersonaCompiler
+from .personality.persona_compiler import DEFAULT_PERSONA_PATH, PersonaCompiler
 from .production_security import AuditLedger, CallPolicy, public_destination
 from .remote_link import (
     RemoteLinkRelay,
@@ -204,7 +204,7 @@ def _sanitize_openwa(value: Any, *, depth: int = 0) -> Any:
         return [_sanitize_openwa(item, depth=depth + 1) for item in value[:64]]
     if isinstance(value, str):
         return value[:2_000]
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None or isinstance(value, bool | int | float):
         return value
     return str(value)[:500]
 
@@ -1574,6 +1574,9 @@ class PhoneAgentWebServer:
             "chatgpt_realtime_speed": self.config.chatgpt_realtime_speed,
             "task_id": self.task_id,
             "system_prompt": self.system_prompt,
+            "ollama_num_ctx": getattr(self.config, "ollama_num_ctx", 16384),
+            "ollama_think": getattr(self.config, "ollama_think", False),
+            "ollama_keep_alive": getattr(self.config, "ollama_keep_alive", "-1"),
         }
 
     def _load_saved_settings(self) -> None:
@@ -1582,6 +1585,9 @@ class PhoneAgentWebServer:
         try:
             harden_private_file(self.settings_path)
             data = json.loads(self.settings_path.read_text(encoding="utf-8"))
+            if data.get("pipeline_mode") == "s2s_chatgpt_realtime":
+                logger.info("Migrating persisted Studio pipeline_mode from 's2s_chatgpt_realtime' to 'cascade'")
+                data["pipeline_mode"] = "cascade"
             updates = {
                 key: str(value).strip()
                 for key, value in data.items()
@@ -2297,6 +2303,9 @@ class PhoneAgentWebServer:
         values = runtime.model_dump(
             exclude={"auto_answer_enabled", "system_prompt"}, mode="python"
         )
+        if values.get("pipeline_mode") == "s2s_chatgpt_realtime":
+            logger.info("Migrating AgentPackage runtime pipeline_mode from 's2s_chatgpt_realtime' to 'cascade'")
+            values["pipeline_mode"] = "cascade"
         values["chatgpt_realtime_input_languages"] = tuple(
             values["chatgpt_realtime_input_languages"]
         )
@@ -3084,7 +3093,6 @@ class PhoneAgentWebServer:
                 "PHONE_AGENT_SYSTEM_PROMPT": self.system_prompt,
                 "PHONE_AGENT_EVENT_STREAM": "true",
                 "PHONE_AGENT_AUTO_ANSWER": "true" if auto_answer else "false",
-                "PHONE_AGENT_PERSONA_PATH": str(self.persona_compiler.persona_path),
                 "PHONE_AGENT_MEMORY_PATH": str(self.memory_manager.storage_path),
                 "PHONE_AGENT_RECORDING_ENABLED": ("true" if recording_consent else "false"),
                 "PHONE_AGENT_RECORDING_CONSENT": ("true" if recording_consent else "false"),
@@ -3107,6 +3115,15 @@ class PhoneAgentWebServer:
                 "PHONE_AGENT_FRAPPE_CONFIG": str(self.frappe_config_store.path),
             }
         )
+        # When Studio is reading the packaged fallback persona, exporting that
+        # immutable path makes the call worker treat site-packages as its
+        # persistence directory and fail while creating ``identity/``. Leave
+        # the variable absent in that case: the worker reads the same packaged
+        # fallback but persists Identity Kernel state under its writable home.
+        if self.persona_compiler.persona_path == DEFAULT_PERSONA_PATH:
+            env.pop("PHONE_AGENT_PERSONA_PATH", None)
+        else:
+            env["PHONE_AGENT_PERSONA_PATH"] = str(self.persona_compiler.persona_path)
         return env
 
     @staticmethod
@@ -4103,7 +4120,27 @@ class PhoneAgentWebServer:
         await self._release_inactive_ollama_models(reload_selected=True)
         await self._start_inbound_monitor()
         self._spawn_background_task(self._campaign_autopilot_loop())
-        self._spawn_background_task(self._prewarm_gpu_models_task())
+        if _environment_bool("PHONE_AGENT_WARM_VOICE_HOST", True):
+            self._spawn_background_task(self._prewarm_gpu_models_task())
+        else:
+            # Speech weights loaded in Studio cannot warm a later voice child:
+            # CUDA/model memory is process-local. More importantly, cancelling
+            # asyncio.to_thread() cannot stop an in-flight ModelScope download,
+            # so event-loop shutdown waited forever for its default executor.
+            self._gpu_status = {
+                "status": "deferred",
+                "models": {
+                    "owner": "per-call voice host",
+                    "note": (
+                        "The resident host is disabled; each voice child owns and "
+                        "prewarms the models it actually uses."
+                    ),
+                },
+                "timestamp": time.time(),
+            }
+            logger.info(
+                "GPU Model Preloader: deferred; the per-call voice host owns speech models"
+            )
 
     async def _on_shutdown(self, app: web.Application) -> None:
         self._shutting_down = True

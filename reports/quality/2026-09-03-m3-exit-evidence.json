@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "item": "M3-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:31:00Z",
+  "contains_customer_data": false,
+  "milestone_3_deliverables": {
+    "agent_package_v1": "ai_bridge/agent_package_v1.py: AgentPackageV1, Metadata, Identity, Catalog, Tasks, Capabilities, Knowledge, Memory, Voice, Evaluations",
+    "deterministic_signing": "ai_bridge/agent_package_v1.py: compute_digest, sign, verify_signature",
+    "reference_agents": "5 distinct domains verified: sales, support, booking, triage, receptionist",
+    "roundtrip_integrity": "Verified export and import roundtrip without data drift"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 697,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "07e499380666dbcfa7aa2a50b94f104846bb6caddb7e47be35e4958551b6a722",
+    "sdist_sha256": "3ce1b55dda53aa8efc4bcdc30b21ad63ee0bfb08f94b9c4b471f66e8acdcc96d"
+  }
+}

@@ -318,7 +318,8 @@ def test_turn_shape_teaches_reacting_and_stopping() -> None:
     )
     assert "# TURN SHAPE" in instructions
     assert "A turn that ends in a statement is a good turn" in instructions
-    assert "Use their own words back" in instructions
+    assert "Reuse their terminology" in instructions
+    assert "never echo their whole" in instructions
     # Examples of the shape, not only of the wording.
     assert "Reacting, with no question at all" in instructions
     assert "Ending a turn on a statement" in instructions

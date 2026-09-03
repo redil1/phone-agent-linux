@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from itertools import pairwise
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -694,6 +695,88 @@ def test_streamed_duplicate_is_regenerated_before_any_tts(tmp_path: Any) -> None
         "What would you like me to change?",
     ]
     assert resolved == [runtime.turn_epoch]
+
+
+def test_exhausted_model_repeat_recovery_never_leaves_the_phone_silent(
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
+    """Regression from the 12:15 live GSM call.
+
+    PhoneLLM repeated the prior repair on its normal generation and its single
+    quality retry. Both drafts were correctly blocked, but the exhausted branch
+    emitted no text, so the caller heard silence. Normal wording stays model-owned;
+    only this terminal failure gets one policy-owned, observable repair.
+    """
+
+    import asyncio as _asyncio
+
+    from pipecat.frames.frames import (
+        LLMFullResponseEndFrame,
+        LLMFullResponseStartFrame,
+        LLMTextFrame,
+    )
+
+    from phone_agent_gateway.ai_bridge.agent_policy import ResponsePolicyProcessor
+
+    monkeypatch.setenv(
+        "PHONE_AGENT_PERSONA_PATH",
+        str(Path(__file__).resolve().parents[1] / "ai_bridge/personality/persona.yaml"),
+    )
+    events: list[dict[str, Any]] = []
+    runtime = AgentPolicyRuntime(
+        caller_id="anonymous",
+        task_id="iptv_subscription_sales",
+        language="en-US",
+        memory_enabled=False,
+        memory_manager=LayeredMemoryManager(storage_path=tmp_path / "memory.json"),
+        event_sink=events.append,
+    )
+    repeated = "Sorry, I didn't quite catch that. Could you say it again?"
+    remembered, _ = runtime.guard_sentence(repeated, is_first=True)
+    assert remembered == repeated
+
+    processor = ResponsePolicyProcessor(runtime)
+    forwarded: list[Any] = []
+    resolved: list[int] = []
+
+    async def capture(frame: Any, direction: Any = None) -> None:
+        forwarded.append(frame)
+
+    async def exhausted(_text: str, _epoch: int) -> bool:
+        return False
+
+    async def resolve(epoch: int) -> None:
+        resolved.append(epoch)
+
+    processor.push_frame = capture  # type: ignore[method-assign]
+    processor.bind_repetition_recovery(exhausted, resolve)
+
+    async def scenario() -> None:
+        await processor.process_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(LLMTextFrame(repeated), FrameDirection.DOWNSTREAM)
+        await processor.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
+        await runtime.playback_started()
+        await runtime.playback_stopped(delivered_frames=10)
+
+    _asyncio.run(scenario())
+
+    spoken = [frame.text for frame in forwarded if isinstance(frame, LLMTextFrame)]
+    assert len(spoken) == 1
+    assert spoken[0] != repeated
+    assert "?" in spoken[0]
+    assert resolved == [runtime.turn_epoch]
+    assistant = [event for event in events if event.get("type") == "transcript"]
+    assert len(assistant) == 1
+    assert assistant[0]["text"] == spoken[0]
+    assert assistant[0]["response_kind"] == "recovery_fallback"
+    completed = [
+        event
+        for event in events
+        if event.get("type") == "playback_status" and event.get("status") == "completed"
+    ]
+    assert len(completed) == 1
+    assert completed[0]["response_id"] == assistant[0]["response_id"]
 
 
 def test_duplicate_lead_in_is_dropped_but_new_answer_is_spoken(tmp_path: Any) -> None:

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "status": "pass",
+  "findings": 1,
+  "owned_unexpired_exceptions": 1,
+  "sbom_components": 181,
+  "locked_packages": 223,
+  "commercial_release_blockers": 0,
+  "dependency_audit_sha256": "94d0fed2f9d55179c9165fcbd9150b274d8317cd9025c35b4b0e035ef06c89d8",
+  "cyclonedx_sbom_sha256": "ac9b7496adabf530d7057ab02309bfa3f077579fedc26e7e4a764a3fa899ad4c",
+  "contains_customer_data": false
+}

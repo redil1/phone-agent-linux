@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "item": "M8-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:39:00Z",
+  "contains_customer_data": false,
+  "milestone_8_deliverables": {
+    "universal_text_normalizer": "ai_bridge/speech_delivery.py: UniversalTextNormalizer",
+    "speech_delivery_supervisor": "ai_bridge/speech_delivery.py: SpeechDeliverySupervisor (tracks generated, queued, sent, rendered, interrupted)"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 708,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "c7dbe132ce9e0d6f2f4dad7acefc2bb56034977aec7fc2bba0d52025616c58a6",
+    "sdist_sha256": "a0f2d561bf354632ec8641257addc8bfb1880a4d449e7e483a85e45a40f6a206"
+  }
+}

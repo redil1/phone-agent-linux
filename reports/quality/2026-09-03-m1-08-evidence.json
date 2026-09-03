@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "item": "M1-08",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:14:00Z",
+  "contains_customer_data": false,
+  "provider_neutrality": {
+    "identity_kernel": "Free of provider-specific S2S assumptions",
+    "tasks": "Free of provider-specific S2S assumptions",
+    "memory": "Free of provider-specific S2S assumptions",
+    "tool_control": "Free of provider-specific S2S assumptions",
+    "policy": "Free of provider-specific S2S assumptions",
+    "telemetry": "Free of provider-specific S2S assumptions",
+    "phone_voice_agent": "Cleaned residual S2S check from prewarming loop"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 683,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "79f5453fef51ad9771084cc010067c1d86d4b1f3c0a1b9b0167aa860de275b2f",
+    "sdist_sha256": "3dc6f91b6656992336b5b221a2d6e33de9f77cef8bece815579845d0186276ed"
+  }
+}

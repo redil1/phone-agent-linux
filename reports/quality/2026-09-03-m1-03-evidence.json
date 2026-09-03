@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "item": "M1-03",
+  "status": "pass",
+  "generated_at": "2026-09-03T19:40:00Z",
+  "contains_customer_data": false,
+  "deleted_backend_files": [
+    "ai_bridge/chatgpt_gizmo_manager.py",
+    "ai_bridge/chatgpt_realtime_auth.py",
+    "ai_bridge/chatgpt_realtime_pipeline.py",
+    "ai_bridge/openai_realtime_websocket_pipeline.py"
+  ],
+  "preserved_historical_copy_dir": "migration/historical_s2s",
+  "verification": {
+    "fast_unit_tests_passed": 683,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "integration_tests_passed": 218,
+    "eval_tests_passed": 159,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "eval_stage": "pass",
+    "wheel_sha256": "4937da8d50c0a1eb96a9199b2ab5c1a2773ef94b014585fbc2b64fa3e9283894",
+    "sdist_sha256": "cc1737f824ca39ccc87c3303866d54a412b628215aeced2faea663e4cac426cf"
+  }
+}

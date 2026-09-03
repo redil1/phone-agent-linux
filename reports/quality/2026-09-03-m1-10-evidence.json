@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "item": "M1-10",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:18:00Z",
+  "contains_customer_data": false,
+  "migration_and_rollback": {
+    "test_file": "tests/test_runtime_migration_rollback.py",
+    "verified_behaviors": [
+      "Automatic migration of legacy S2S studio settings to cascade upon load",
+      "Preservation of custom system prompts and tasks during upgrade",
+      "Atomic serialization to disk with pipeline_mode=cascade",
+      "Restoration of configuration snapshot without data corruption or loss"
+    ]
+  },
+  "verification": {
+    "fast_unit_tests_passed": 687,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "79f5453fef51ad9771084cc010067c1d86d4b1f3c0a1b9b0167aa860de275b2f",
+    "sdist_sha256": "9156c91d6d3b9c8682524f6a5059317446a6017bd99ee331307b3df455c2346e"
+  }
+}

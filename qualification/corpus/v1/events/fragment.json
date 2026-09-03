@@ -1,0 +1,19 @@
+{
+  "events": [
+    {
+      "at_ms": 0,
+      "type": "speech.started"
+    },
+    {
+      "at_ms": 620,
+      "type": "transcript.fragment"
+    },
+    {
+      "at_ms": 650,
+      "type": "clarification.required"
+    }
+  ],
+  "provenance": "synthetic",
+  "scenario_id": "fragment",
+  "schema_version": 1
+}

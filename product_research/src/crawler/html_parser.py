@@ -78,7 +78,7 @@ class HTMLToMarkdownParser:
         clean = clean.replace('&quot;', '"')
         clean = clean.replace('&#39;', "'")
         clean = clean.replace('&mdash;', '—')
-        clean = clean.replace('&ndash;', '–')
+        clean = clean.replace('&ndash;', '–')  # noqa: RUF001 - exact HTML entity decoding
 
         # Clean whitespace and repeated blank lines
         lines = [line.strip() for line in clean.split('\n')]

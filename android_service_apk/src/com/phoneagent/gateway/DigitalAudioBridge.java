@@ -57,6 +57,19 @@ public class DigitalAudioBridge {
     private static final int PLAYOUT_JOIN_ATTEMPTS = 4;
     private static final int PLAYOUT_JOIN_TIMEOUT_MS = 250;
     private static final byte[] SILENCE_FRAME = new byte[NETWORK_CHUNK_BYTES];
+    // phh-su authorizes commands by exact string. Keep this byte-for-byte aligned
+    // with provision_phh_su_audio_recovery.sh. A bare killall returns 1 while
+    // audioserver is already restarting and says nothing about whether Android
+    // brought the service back. This command accepts that harmless race but
+    // succeeds only after a live, different audioserver process is observed.
+    private static final String AUDIO_SERVER_RECOVERY_COMMAND =
+            "old=$(pidof audioserver || true); "
+            + "if [ -n \"$old\" ]; then killall audioserver || exit 1; fi; "
+            + "i=0; while [ \"$i\" -lt 50 ]; do "
+            + "new=$(pidof audioserver || true); "
+            + "if [ -n \"$new\" ] && [ \"$new\" != \"$old\" ]; then "
+            + "echo \"$old->$new\"; exit 0; fi; "
+            + "i=$((i + 1)); sleep 0.1; done; exit 2";
 
     private static final Object OUTPUT_LOCK = new Object();
     private static final AtomicLong downlinkBytes = new AtomicLong();
@@ -88,6 +101,7 @@ public class DigitalAudioBridge {
     private static volatile int adaptivePlayoutPrebufferFrames = PLAYOUT_PREBUFFER_FRAMES;
     private static volatile boolean cellularRouteTouched;
     private static volatile String audioServerRecoveryStatus = "not_needed";
+    private static volatile String audioServerRecoveryDetail = "";
 
     /**
      * Whether the call to bridge is a VoIP call placed by an app on this phone
@@ -644,6 +658,13 @@ public class DigitalAudioBridge {
                 try { audioTrackUnderruns = track.getUnderrunCount(); } catch (Exception ignored) {}
 
                 if (!playoutRunning.get() || !running) return;
+                // Telecom can tear the modem route down while a blocking write
+                // is in progress. Vendor AudioTrack implementations commonly
+                // return a positive short write followed by zero in that race.
+                // That is normal call teardown, not evidence that in-call
+                // playout failed. Re-check the authoritative call state before
+                // retrying or publishing a persistent media error.
+                if (!"ACTIVE".equals(CallManager.getCallState())) return;
                 if (generation.get() != writeGeneration) {
                     generationInterruptedWrite = true;
                     break;
@@ -932,6 +953,7 @@ public class DigitalAudioBridge {
 
         if (!audioServerRecoveryScheduled.compareAndSet(false, true)) return;
         audioServerRecoveryStatus = "scheduled";
+        audioServerRecoveryDetail = "waiting_for_call_media_release";
         Thread recovery = new Thread(() -> {
             try {
                 // Let streamUplink stop, join and release its Java track first.
@@ -946,25 +968,32 @@ public class DigitalAudioBridge {
                 // explicit. Without the trailing 0 this runs as the app and
                 // cannot signal audioserver even when policy allows it.
                 Process process = new ProcessBuilder(
-                        "su", "-c", "killall audioserver", "0"
+                        "su", "-c", AUDIO_SERVER_RECOVERY_COMMAND, "0"
                 )
                         .redirectErrorStream(true)
                         .start();
-                if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                if (!process.waitFor(8, TimeUnit.SECONDS)) {
                     process.destroy();
                     throw new IOException("audioserver recovery command timed out");
                 }
+                String commandOutput = readBoundedProcessOutput(process.getInputStream());
                 if (process.exitValue() != 0) {
                     throw new IOException(
                             "audioserver recovery command exited " + process.exitValue()
+                                    + (commandOutput.isEmpty() ? "" : ": " + commandOutput)
                     );
                 }
                 audioServerRecoveries.incrementAndGet();
                 cellularRouteTouched = false;
                 audioServerRecoveryStatus = "completed";
+                audioServerRecoveryDetail = commandOutput.isEmpty()
+                        ? "audioserver_restart_verified"
+                        : commandOutput;
+                clearError("Post-call audioserver recovery failed");
                 Log.i(TAG, "Restarted audioserver after cellular call to release Telephony TX tracks");
             } catch (Exception failure) {
                 audioServerRecoveryStatus = "failed:" + failure.getClass().getSimpleName();
+                audioServerRecoveryDetail = describeCause(failure);
                 recordError("Post-call audioserver recovery failed", failure);
             } finally {
                 audioServerRecoveryScheduled.set(false);
@@ -987,6 +1016,17 @@ public class DigitalAudioBridge {
             current = current.getCause();
         }
         return description.toString();
+    }
+
+    private static String readBoundedProcessOutput(InputStream input) throws IOException {
+        byte[] buffer = new byte[256];
+        StringBuilder output = new StringBuilder();
+        int count;
+        while (output.length() < 1024 && (count = input.read(buffer)) != -1) {
+            int accepted = Math.min(count, 1024 - output.length());
+            output.append(new String(buffer, 0, accepted));
+        }
+        return output.toString().trim();
     }
 
     public static long flushOutput() {
@@ -1097,6 +1137,7 @@ public class DigitalAudioBridge {
             result.put("telephony_track_start_attempts", telephonyTrackStartAttempts.get());
             result.put("audioserver_recoveries", audioServerRecoveries.get());
             result.put("audioserver_recovery_status", audioServerRecoveryStatus);
+            result.put("audioserver_recovery_detail", audioServerRecoveryDetail);
             result.put("downlink_bytes", downlinkBytes.get());
             result.put("uplink_bytes", uplinkBytes.get());
             result.put("last_error", lastError);
@@ -1127,6 +1168,10 @@ public class DigitalAudioBridge {
     private static void recordError(String prefix, Exception error) {
         lastError = prefix + ": " + error.getClass().getSimpleName() + ": " + error.getMessage();
         Log.e(TAG, lastError, error);
+    }
+
+    private static void clearError(String prefix) {
+        if (lastError.startsWith(prefix + ":")) lastError = "";
     }
 
     private static boolean isExpectedPeerDisconnect(Exception error) {

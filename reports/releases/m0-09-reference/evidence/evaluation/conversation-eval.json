@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "status": "pass",
+  "command": "./ci/run-stage.sh eval",
+  "completed_at": "2026-09-03T06:06:00Z",
+  "passed": 153,
+  "failed": 0,
+  "duration_seconds": 4.74,
+  "scope": [
+    "agent_policy",
+    "call_context",
+    "conversation_repair",
+    "evalset",
+    "personality",
+    "tool_catalog"
+  ],
+  "contains_customer_data": false
+}

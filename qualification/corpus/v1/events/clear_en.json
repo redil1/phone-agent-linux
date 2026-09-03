@@ -1,0 +1,23 @@
+{
+  "events": [
+    {
+      "at_ms": 0,
+      "type": "audio.started"
+    },
+    {
+      "at_ms": 0,
+      "type": "speech.started"
+    },
+    {
+      "at_ms": 4335,
+      "type": "transcript.final"
+    },
+    {
+      "at_ms": 4355,
+      "type": "turn.committed"
+    }
+  ],
+  "provenance": "synthetic",
+  "scenario_id": "clear_en",
+  "schema_version": 1
+}

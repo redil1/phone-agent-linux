@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 DEFAULT_PROFILE = Path(__file__).resolve().parent / "devices" / "redmi-12c-earth-gsi.json"
 DEFAULT_REPORT_DIR = Path.home() / ".local" / "share" / "phone-agent" / "qualification"
@@ -85,17 +85,17 @@ def _check(
 def _http_json(path: str, *, port: int = 8765) -> dict[str, Any]:
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=3) as response:
-            value = json.loads(response.read().decode("utf-8"))
+            value = cast(object, json.loads(response.read().decode("utf-8")))
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
         raise QualificationError(f"gateway endpoint {path} is unavailable") from exc
     if not isinstance(value, dict):
         raise QualificationError(f"gateway endpoint {path} returned invalid JSON")
-    return value
+    return cast(dict[str, Any], value)
 
 
 def load_profile(path: Path = DEFAULT_PROFILE) -> dict[str, Any]:
     try:
-        profile = json.loads(path.read_text(encoding="utf-8"))
+        profile = cast(object, json.loads(path.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError) as exc:
         raise QualificationError("device profile is unavailable or invalid") from exc
     required = {
@@ -109,10 +109,15 @@ def load_profile(path: Path = DEFAULT_PROFILE) -> dict[str, Any]:
         "required_package",
         "required_audio_format",
         "required_protocol",
+        "required_apk_source_sha256",
+        "required_remote_link_version",
     }
-    if not isinstance(profile, dict) or set(profile) != required or profile["version"] != 1:
+    if not isinstance(profile, dict):
         raise QualificationError("device profile fields or version are invalid")
-    return profile
+    profile_mapping = cast(dict[str, Any], profile)
+    if set(profile_mapping) != required or profile_mapping["version"] != 2:
+        raise QualificationError("device profile fields or version are invalid")
+    return profile_mapping
 
 
 def qualify_device(
@@ -135,7 +140,10 @@ def qualify_device(
     dialers = runner.run("shell", "cmd", "role", "get-role-holders", "android.app.role.DIALER")
     version_match = re.search(r"versionName=([^\s]+)", package_dump)
     sdk = int(sdk_text) if sdk_text.isdigit() else -1
-    audio_from_health = health.get("audio") if isinstance(health.get("audio"), dict) else {}
+    health_audio = health.get("audio")
+    audio_from_health: dict[str, Any] = (
+        cast(dict[str, Any], health_audio) if isinstance(health_audio, dict) else {}
+    )
     checks = _build_checks(
         profile=profile,
         model=model,
@@ -175,6 +183,9 @@ def qualify_device(
             "state": health.get("state"),
             "audio_format": audio.get("network_format"),
             "protocol": audio.get("protocol"),
+            "apk_source_sha256": health.get("apk_source_sha256"),
+            "remote_link_protocol_version": health.get("remote_link_protocol_version"),
+            "remote_link_negotiated_version": health.get("remote_link_negotiated_version"),
         },
         "checks": [asdict(item) for item in checks],
         "failed_checks": failed,
@@ -211,6 +222,21 @@ def _build_checks(**values: Any) -> list[Check]:
         ),
         _check("gateway_health", h.get("status") == "ok", h.get("status")),
         _check("gateway_ready", h.get("gateway") == "ready", h.get("gateway")),
+        _check(
+            "apk_source_provenance",
+            h.get("apk_source_sha256") == p["required_apk_source_sha256"],
+            h.get("apk_source_sha256", "missing"),
+        ),
+        _check(
+            "remote_link_protocol_supported",
+            h.get("remote_link_protocol_version") == p["required_remote_link_version"],
+            h.get("remote_link_protocol_version", "missing"),
+        ),
+        _check(
+            "remote_link_protocol_negotiated",
+            h.get("remote_link_negotiated_version") == p["required_remote_link_version"],
+            h.get("remote_link_negotiated_version", "missing"),
+        ),
         _check(
             "link_key_provisioned",
             h.get("link_key_provisioned") is True,
@@ -275,16 +301,23 @@ def main() -> None:
     parser.add_argument("--profile", type=Path, default=DEFAULT_PROFILE)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--ensure-forwards", action="store_true")
+    parser.add_argument(
+        "--gateway-port",
+        type=int,
+        default=8765,
+        help="Mac/Linux loopback port forwarded to the phone's gateway port 8765",
+    )
     args = parser.parse_args()
+    if not 1 <= args.gateway_port <= 65535:
+        parser.error("--gateway-port must be between 1 and 65535")
     runner = AdbRunner(args.device_id)
     if args.ensure_forwards:
-        for port in (8765, 8766, 8767, 8768):
-            runner.run("forward", f"tcp:{port}", f"tcp:{port}")
+        runner.run("forward", f"tcp:{args.gateway_port}", "tcp:8765")
     report = qualify_device(
         runner,
         profile=load_profile(args.profile),
-        health=_http_json("/health"),
-        audio=_http_json("/audio/status"),
+        health=_http_json("/health", port=args.gateway_port),
+        audio=_http_json("/audio/status", port=args.gateway_port),
     )
     output = args.output or (
         DEFAULT_REPORT_DIR / f"qualification-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.json"

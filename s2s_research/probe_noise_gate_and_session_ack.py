@@ -1,13 +1,16 @@
 import asyncio
-import json
 import fractions
+import json
+
 import av
 import numpy as np
-from aiortc import RTCPeerConnection, RTCSessionDescription, AudioStreamTrack
+from aiortc import AudioStreamTrack, RTCPeerConnection
 from curl_cffi.requests import AsyncSession
+
 from phone_agent_gateway.ai_bridge.chatgpt_realtime_auth import ChatGPTAuthManager
 from phone_agent_gateway.ai_bridge.personality.persona_compiler import PersonaCompiler
 from phone_agent_gateway.ai_bridge.tasks.task_engine import TaskEngine
+
 
 class NoiseGatedTrack(AudioStreamTrack):
     kind = "audio"

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "status": "pass",
+  "source_date_epoch": 1700000000,
+  "independent_builds": 2,
+  "wheel_byte_identical": true,
+  "sdist_byte_identical": true,
+  "wheel_sha256": "d46f7fae2c03d6ffa81ceca5d00f4af02a190222300b4afdceb3ffee093b01fe",
+  "sdist_sha256": "7705c27be3599b99c2bd76d858155e662d855432dd1b90770acf73b4fd1df55d",
+  "installed_wheel_smoke": "pass",
+  "contains_customer_data": false
+}

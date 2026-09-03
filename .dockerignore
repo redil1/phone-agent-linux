@@ -13,3 +13,5 @@ build
 *.egg-info
 .coverage
 htmlcov
+artifacts
+reports

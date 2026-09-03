@@ -316,6 +316,35 @@ class PhoneAgentOutputTransport(BaseOutputTransport):
         self._flush_handler: FlushHandler | None = None
         self._initialized = False
         self._audio_since_last_end = False
+        self._audio_end_epoch = 0
+        self._last_audio_end_identity: tuple[int, int] | None = None
+        self._audio_end_available = asyncio.Event()
+
+    @property
+    def audio_end_epoch(self) -> int:
+        return self._audio_end_epoch
+
+    async def wait_for_audio_end(
+        self,
+        after_epoch: int,
+        *,
+        timeout_secs: float = 1.0,
+    ) -> tuple[int, int] | None:
+        """Return the ordered end marker created after one speaking span."""
+
+        deadline = asyncio.get_running_loop().time() + timeout_secs
+        while self._audio_end_epoch <= after_epoch:
+            self._audio_end_available.clear()
+            if self._audio_end_epoch > after_epoch:
+                break
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return None
+            try:
+                await asyncio.wait_for(self._audio_end_available.wait(), timeout=remaining)
+            except TimeoutError:
+                return None
+        return self._last_audio_end_identity
 
     @property
     def generation_id(self) -> int:
@@ -453,6 +482,9 @@ class PhoneAgentOutputTransport(BaseOutputTransport):
         if generation_id != self._session.generation_id:
             return None
         await _invoke_callback(self._audio_end_handler, generation_id, sequence)
+        self._last_audio_end_identity = (generation_id, sequence)
+        self._audio_end_epoch += 1
+        self._audio_end_available.set()
         return generation_id, sequence
 
     def discard_audio_segment(self) -> None:
@@ -575,33 +607,6 @@ class PhoneAgentTransport(BaseTransport):
                 logger.warning("audio listener failed", exc_info=True)
         self.input().accept_audio_bytes(pcm, enqueue=True)
 
-    def feed_s2s_audio_bytes(self, pcm: bytes) -> None:
-        """Feed caller audio that arrives without the cellular framing.
-
-        The cellular link carries authenticated, sequenced MediaFrames, and
-        accept_media_frame validates that framing. A channel with no such
-        protocol has nothing to validate: WhatsApp delivers raw PCM at the same
-        rate, so it reaches the listeners directly rather than being dressed up
-        as a framed phone packet.
-        """
-
-        if not pcm:
-            return
-        for listener in self._audio_listeners:
-            try:
-                listener(pcm)
-            except Exception:
-                logger.warning("audio listener failed", exc_info=True)
-
-    def feed_s2s_phone_frame(self, frame: MediaFrame) -> None:
-        """Feed authenticated phone audio directly to S2S without an unused Pipecat queue."""
-
-        if self.input().accept_media_frame(frame, enqueue=False) and frame.payload:
-            for listener in self._audio_listeners:
-                try:
-                    listener(frame.payload)
-                except Exception:
-                    pass
 
     def set_tx_handler(self, callback: TxHandler) -> None:
         self.output().set_tx_handler(callback)

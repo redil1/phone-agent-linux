@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "item": "M19-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:59:00Z",
+  "contains_customer_data": false,
+  "milestone_19_deliverables": {
+    "metering_record": "ai_bridge/commercial_readiness.py: MeteringRecord (call_minutes, tokens, tools, edition)",
+    "commercial_readiness_manager": "ai_bridge/commercial_readiness.py: CommercialReadinessManager (usage recording and billable usage aggregation)"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 722,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "956a49f938b0a6b47132fa183c9a63eaa5ba62bd73d8f9af2e7c02e7f7d85f55",
+    "sdist_sha256": "1129adae917853b6f7c71fa688662c43f563b7c9c0099e2e553e86bdafef4df8"
+  }
+}

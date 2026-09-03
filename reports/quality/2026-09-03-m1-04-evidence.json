@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "item": "M1-04",
+  "status": "pass",
+  "generated_at": "2026-09-03T19:53:00Z",
+  "contains_customer_data": false,
+  "removed_dependency_bindings": [
+    "aiortc",
+    "curl-cffi"
+  ],
+  "retained_historical_bindings": [
+    "av",
+    "websockets"
+  ],
+  "credential_removal_summary": {
+    "chatgpt_session_json": "None present in ~/.config/phone-agent or workspace",
+    "phone_agent_gizmo_cache_json": "None present in ~/.config/phone-agent or workspace",
+    "env_credentials": "No committed S2S tokens or access tokens; documentation updated"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 683,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "f4d2c8a0d89d2250c27a3da60885df74adde99476254d100b595c50c3548a9e0",
+    "sdist_sha256": "214b5cd81e0c52840076c8927b2eb18b7b550b6ca4fd8e6f5ee8d4f95667ea09"
+  }
+}

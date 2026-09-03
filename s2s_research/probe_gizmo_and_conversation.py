@@ -1,12 +1,13 @@
 """Test Gizmo (Custom GPT) mode and Conversation ID binding with ChatGPT WebRTC."""
 
 import asyncio
+import fractions
 import json
 import logging
 import uuid
-import fractions
+
 import av
-from aiortc import RTCPeerConnection, RTCSessionDescription, AudioStreamTrack
+from aiortc import AudioStreamTrack, RTCPeerConnection
 from curl_cffi.curl import CurlMime
 from curl_cffi.requests import AsyncSession
 

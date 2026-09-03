@@ -30,7 +30,7 @@ A useful example is:
 
 - Identity: “Adam, a professional and honest IPTV sales consultant.”
 - Task: “Discover the caller's viewing needs and recommend a verified subscription.”
-- Pipeline: “OpenAI Realtime speech-to-speech.”
+- Pipeline: “Universal Cascade (STT → LLM → TTS).”
 - Channel: “Direct WhatsApp Rust media.”
 
 Changing the task should not change Adam's identity. Changing the voice should not change the
@@ -2035,7 +2035,7 @@ evaluation.
 
 **PCM:** Raw digital audio samples carried by the media pipeline.
 
-**Realtime S2S:** OpenAI Realtime speech-to-speech processing in one live session.
+**Universal Cascade:** High performance modular voice processing chain (STT → LLM → TTS).
 
 **Revision:** A candidate change that has not automatically replaced the active version.
 

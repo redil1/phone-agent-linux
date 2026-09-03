@@ -178,6 +178,15 @@ public final class ProtocolControlServer {
             JSONObject result = base(commandId);
             result.put("gateway", "ready");
             result.put("dialer_role", GatewayService.isDialerRoleHeld(appContext));
+            result.put("apk_source_sha256", BuildProvenance.ANDROID_SOURCE_SHA256);
+            result.put(
+                    "remote_link_protocol_version",
+                    BuildProvenance.REMOTE_LINK_PROTOCOL_VERSION
+            );
+            result.put(
+                    "remote_link_negotiated_version",
+                    GatewayService.remoteLinkProtocolVersion()
+            );
             result.put("audio", DigitalAudioBridge.getStatusJson());
             return ok(result);
         }

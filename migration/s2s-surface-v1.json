@@ -1,0 +1,376 @@
+{
+  "schema_version": 1,
+  "inventory_id": "m1-01-s2s-surface-2026-09-03",
+  "captured_at": "2026-09-03T07:20:00Z",
+  "detection_contract": {
+    "pattern_sha256": "6e52ee74fe4185316163a53b1440a302e9e95bde763ef4a0e84154d118ffc966",
+    "control_paths": [
+      "ci/run-stage.sh",
+      "ci/validate_cascade_characterization.py",
+      "ci/validate_s2s_inventory.py",
+      "docs/UNIVERSAL_CASCADE_PLATFORM_BACKLOG.md",
+      "migration/cascade-characterization-v1.json",
+      "migration/s2s-surface-v1.json",
+      "reports/CASCADE_EXECUTION_STATE.md",
+      "reports/quality/2026-09-03-m1-01-evidence.json",
+      "reports/quality/2026-09-03-m1-01-s2s-inventory.md",
+      "skills/phoneagent-cascade-platform/SKILL.md",
+      "tests/test_cascade_characterization.py",
+      "tests/test_ci_contract.py",
+      "tests/test_s2s_inventory.py"
+    ]
+  },
+  "groups": [
+    {
+      "id": "executable-s2s-backends",
+      "layer": "runtime",
+      "disposition": "delete",
+      "target_item": "M1-03/M1-04",
+      "rationale": "Direct WebSocket/WebRTC speech models, ChatGPT OAuth and Gizmo creation are forbidden runtime paths and credentials.",
+      "paths": [
+        "ai_bridge/chatgpt_gizmo_manager.py",
+        "ai_bridge/chatgpt_realtime_auth.py",
+        "ai_bridge/chatgpt_realtime_pipeline.py",
+        "ai_bridge/openai_realtime_websocket_pipeline.py"
+      ]
+    },
+    {
+      "id": "shared-runtime-coupling",
+      "layer": "runtime",
+      "disposition": "migrate",
+      "target_item": "M1-02/M1-03/M1-08",
+      "rationale": "Shared call, policy, tool, identity and transport behavior must be characterized then owned by provider-neutral Cascade components.",
+      "paths": [
+        "ai_bridge/agent_policy.py",
+        "ai_bridge/identity/live_eval.py",
+        "ai_bridge/mcp_broker.py",
+        "ai_bridge/personality/persona_compiler.py",
+        "ai_bridge/phone_voice_agent.py",
+        "ai_bridge/pipecat_transport.py"
+      ]
+    },
+    {
+      "id": "configuration-control-and-persistence",
+      "layer": "configuration",
+      "disposition": "migrate",
+      "target_item": "M1-04/M1-05",
+      "rationale": "The legacy mode, fields, environment variables and persisted Studio/control-plane values require explicit Cascade migration and rejection semantics.",
+      "paths": [
+        ".env.example",
+        "ai_bridge/control_plane.py",
+        "ai_bridge/feature_flags.json",
+        "ai_bridge/runtime_config.py",
+        "ai_bridge/web_server.py",
+        "run.sh"
+      ]
+    },
+    {
+      "id": "studio-s2s-controls",
+      "layer": "ui",
+      "disposition": "delete",
+      "target_item": "M1-06",
+      "rationale": "Studio exposes a second pipeline selector and fourteen direct-Realtime controls that must disappear.",
+      "paths": ["ai_bridge/web_static/index.html"]
+    },
+    {
+      "id": "direct-dependency-debt",
+      "layer": "dependency",
+      "disposition": "migrate",
+      "target_item": "M1-04",
+      "rationale": "Direct dependencies must be removed when they are S2S-only and retained only with a surviving Cascade owner.",
+      "paths": ["pyproject.toml"]
+    },
+    {
+      "id": "s2s-specific-tests",
+      "layer": "test",
+      "disposition": "delete",
+      "target_item": "M1-02/M1-07",
+      "rationale": "Extract shared behavioral assertions into Cascade tests before deleting provider-protocol tests.",
+      "paths": [
+        "tests/test_chatgpt_gizmo_manager.py",
+        "tests/test_chatgpt_realtime_audio.py",
+        "tests/test_chatgpt_realtime_auth.py",
+        "tests/test_chatgpt_realtime_pipeline.py",
+        "tests/test_openai_realtime_websocket_pipeline.py"
+      ]
+    },
+    {
+      "id": "shared-tests-with-s2s-fixtures",
+      "layer": "test",
+      "disposition": "migrate",
+      "target_item": "M1-02/M1-05/M1-06/M1-08",
+      "rationale": "Keep shared behavior coverage while replacing S2S fixtures, schema assertions and UI expectations with Cascade-only equivalents.",
+      "paths": [
+        "tests/production/test_control_plane.py",
+        "tests/production/test_identity_kernel.py",
+        "tests/production/test_web_research.py",
+        "tests/test_architecture_decisions.py",
+        "tests/test_feature_flags.py",
+        "tests/test_runtime_config.py",
+        "tests/test_voice_host_lifecycle.py",
+        "tests/test_web_server.py"
+      ]
+    },
+    {
+      "id": "active-documentation-and-skills",
+      "layer": "documentation",
+      "disposition": "rewrite",
+      "target_item": "M1-07/M1-08",
+      "rationale": "Operational guidance and developer skills must describe one Cascade path and provider-neutral shared capabilities.",
+      "paths": [
+        "BUILD_PLAN.md",
+        "README.md",
+        "docs/FEATURE_FLAG_GOVERNANCE.md",
+        "docs/IDENTITY_KERNEL.md",
+        "docs/NEW_MAC_INSTALL_GUIDE.md",
+        "docs/OPENWA_INTEGRATION.md",
+        "docs/PERSONA_AND_TASK_GUIDE.md",
+        "docs/TOOLS_AND_MCP.md",
+        "docs/WEBUI_USER_GUIDE.md",
+        "docs/WEB_RESEARCH.md",
+        "skills/phoneagent-master/SKILL.md",
+        "skills/phoneagent-master/references/architecture.md",
+        "skills/phoneagent-master/references/call-lifecycle.md",
+        "skills/phoneagent-master/references/source-map.md"
+      ]
+    },
+    {
+      "id": "architecture-records",
+      "layer": "architecture",
+      "disposition": "retain_historical",
+      "target_item": "M1-07",
+      "rationale": "Accepted ADRs retain rejected alternatives and migration history but cannot advertise an executable compatibility path.",
+      "paths": [
+        "docs/adr/0001-cascade-only-voice-runtime.md",
+        "docs/adr/0002-agent-package-contract.md",
+        "docs/adr/0007-capability-based-provider-routing.md"
+      ]
+    },
+    {
+      "id": "frozen-baseline-history",
+      "layer": "historical_evidence",
+      "disposition": "retain_historical",
+      "target_item": "M1-07",
+      "rationale": "Signed/frozen historical evidence remains immutable and is explicitly non-executable.",
+      "paths": [
+        "reports/architecture/2026-09-02-m0-06-architecture-decisions.md",
+        "reports/baselines/2026-09-02-gsm-cascade-baseline.json",
+        "reports/baselines/2026-09-02-gsm-cascade-baseline.md",
+        "reports/quality/2026-09-02-m0-03-quality-gate.md",
+        "reports/quality/2026-09-02-m0-04-static-typing.md",
+        "reports/quality/2026-09-03-m0-08-feature-flag-governance.md"
+      ]
+    },
+    {
+      "id": "exploratory-s2s-research",
+      "layer": "research",
+      "disposition": "delete",
+      "target_item": "M1-07",
+      "rationale": "Unmaintained probes execute forbidden endpoints and must not remain as a hidden experimental path.",
+      "paths": [
+        "s2s_research/check_saved.py",
+        "s2s_research/list_all_gizmos.py",
+        "s2s_research/live_persona_tester.py",
+        "s2s_research/probe_audio_gizmo.py",
+        "s2s_research/probe_audio_pipeline_pump.py",
+        "s2s_research/probe_clean_s2s_call.py",
+        "s2s_research/probe_conversation_creation.py",
+        "s2s_research/probe_conversation_history.py",
+        "s2s_research/probe_conversation_turn.py",
+        "s2s_research/probe_create_gizmo.py",
+        "s2s_research/probe_force_realtime_auth.py",
+        "s2s_research/probe_gizmo_and_conversation.py",
+        "s2s_research/probe_gizmo_crud.py",
+        "s2s_research/probe_gizmo_thread_creation.py",
+        "s2s_research/probe_gizmo_voice_endpoints.py",
+        "s2s_research/probe_gpt_realtime_ga.py",
+        "s2s_research/probe_gpt_realtime_ga2.py",
+        "s2s_research/probe_gpt_realtime_s2s.py",
+        "s2s_research/probe_greeting_prompt.py",
+        "s2s_research/probe_injection_methods.py",
+        "s2s_research/probe_language_and_noise_gate.py",
+        "s2s_research/probe_live_gizmo_voice.py",
+        "s2s_research/probe_noise_gate_and_session_ack.py",
+        "s2s_research/probe_outbound_system_messages.py",
+        "s2s_research/probe_payload_format.py",
+        "s2s_research/probe_perfect_session_update.py",
+        "s2s_research/probe_prepare_payload.py",
+        "s2s_research/probe_realtime_calls.py",
+        "s2s_research/probe_realtime_calls_model.py",
+        "s2s_research/probe_realtime_calls_sdp.py",
+        "s2s_research/probe_remote_audio_format.py",
+        "s2s_research/probe_response_create.py",
+        "s2s_research/probe_schema_fields.py",
+        "s2s_research/probe_session_created.py",
+        "s2s_research/probe_session_payload_fields.py",
+        "s2s_research/probe_session_update.py",
+        "s2s_research/probe_system_prompt_size.py",
+        "s2s_research/probe_update_system_messages.py",
+        "s2s_research/probe_user_system_messages.py",
+        "s2s_research/probe_webrtc_developer.py",
+        "s2s_research/test_e2e_realtime_barge_in.py",
+        "s2s_research/test_e2e_realtime_s2s_call.py"
+      ]
+    }
+  ],
+  "configuration_keys": [
+    "CHATGPT_ACCESS_TOKEN",
+    "OPENAI_API_KEY",
+    "PHONE_AGENT_CHATGPT_IDLE_TIMEOUT_MS",
+    "PHONE_AGENT_CHATGPT_INPUT_LANGUAGES",
+    "PHONE_AGENT_CHATGPT_MODEL",
+    "PHONE_AGENT_CHATGPT_NOISE_REDUCTION",
+    "PHONE_AGENT_CHATGPT_REASONING_EFFORT",
+    "PHONE_AGENT_CHATGPT_SPEED",
+    "PHONE_AGENT_CHATGPT_TRANSCRIPTION_MODEL",
+    "PHONE_AGENT_CHATGPT_TRANSPORT",
+    "PHONE_AGENT_CHATGPT_VAD_EAGERNESS",
+    "PHONE_AGENT_CHATGPT_VAD_MODE",
+    "PHONE_AGENT_CHATGPT_VAD_PREFIX_MS",
+    "PHONE_AGENT_CHATGPT_VAD_SILENCE_MS",
+    "PHONE_AGENT_CHATGPT_VAD_THRESHOLD",
+    "PHONE_AGENT_CHATGPT_VOICE",
+    "PHONE_AGENT_PIPELINE_MODE",
+    "s2s_chatgpt_realtime"
+  ],
+  "dependency_bindings": [
+    {
+      "package": "aiortc",
+      "usage": "Direct WebRTC media transport; no surviving Cascade import.",
+      "disposition": "remove direct dependency after S2S deletion",
+      "target_item": "M1-04"
+    },
+    {
+      "package": "av",
+      "usage": "Direct S2S resampling plus Pipecat transitive audio runtime.",
+      "disposition": "remove direct declaration only after dependency graph proves the Cascade owner",
+      "target_item": "M1-04"
+    },
+    {
+      "package": "curl-cffi",
+      "usage": "ChatGPT OAuth/Gizmo/WebRTC HTTP fingerprinting; no surviving Cascade import.",
+      "disposition": "remove",
+      "target_item": "M1-04"
+    },
+    {
+      "package": "websockets",
+      "usage": "S2S WebSocket and current identity evaluation adapter.",
+      "disposition": "retain only if provider-neutral evaluation still owns it after M1-08",
+      "target_item": "M1-04"
+    }
+  ],
+  "persisted_surfaces": [
+    {
+      "path": "~/.config/phone-agent/studio.json",
+      "data": "pipeline_mode and chatgpt_realtime_* fields",
+      "target_item": "M1-05"
+    },
+    {
+      "path": "~/.config/phone-agent/control.json",
+      "data": "staged/active ProviderSelection snapshots containing S2S values",
+      "target_item": "M1-05"
+    },
+    {
+      "path": "~/.config/phone-agent/chatgpt_session.json",
+      "data": "access/refresh token cache",
+      "target_item": "M1-04"
+    },
+    {
+      "path": "~/.cache/phone_agent_gizmo_cache.json",
+      "data": "Custom GPT signature-to-id cache",
+      "target_item": "M1-04"
+    },
+    {
+      "path": ".session_cache.json",
+      "data": "legacy local ChatGPT session token cache",
+      "target_item": "M1-04"
+    }
+  ],
+  "runtime_branches": [
+    "PhoneVoiceAgent._await_realtime_preconnect",
+    "PhoneVoiceAgent._begin_realtime_preconnect",
+    "PhoneVoiceAgent._close_runtime",
+    "PhoneVoiceAgent._new_runtime",
+    "PhoneVoiceAgent._preload_realtime_pipeline",
+    "PhoneVoiceAgent._prepare_provider_services",
+    "PhoneVoiceAgent._prewarm_primary_llm",
+    "PhoneVoiceAgent._start_call",
+    "PhoneVoiceAgent.run"
+  ],
+  "event_contracts": [
+    {
+      "id": "platform-shared",
+      "disposition": "migrate to Cascade-neutral event ownership",
+      "target_item": "M1-02/M1-08",
+      "events": [
+        "ai_end_call_requested",
+        "call_completion",
+        "call_error",
+        "call_notice",
+        "caller_audio_quality",
+        "caller_idle",
+        "caller_turn_suppressed",
+        "frappe_reload_failed",
+        "frappe_tools_reloaded",
+        "mcp_tools_ready",
+        "openwa_reload_failed",
+        "openwa_tools_reloaded",
+        "realtime_latency",
+        "realtime_reconnected",
+        "realtime_reconnecting",
+        "realtime_response_status",
+        "tool_arguments_grounded",
+        "tool_call",
+        "tools_reload_failed",
+        "tools_reloaded",
+        "transcript",
+        "transcript_delta",
+        "web_research_reload_failed",
+        "web_research_tools_reloaded"
+      ]
+    },
+    {
+      "id": "provider-protocol",
+      "disposition": "delete with S2S adapters",
+      "target_item": "M1-03",
+      "events": [
+        "conversation.item.create",
+        "conversation.item.delete",
+        "conversation.item.input_audio_transcription.completed",
+        "conversation.item.input_audio_transcription.failed",
+        "conversation.item.truncate",
+        "input_audio_buffer.append",
+        "input_audio_buffer.committed",
+        "input_audio_buffer.speech_started",
+        "input_audio_buffer.speech_stopped",
+        "input_audio_buffer.timeout_triggered",
+        "output_audio_buffer.clear",
+        "rate_limits.updated",
+        "response.cancel",
+        "response.create",
+        "response.created",
+        "response.done",
+        "response.output_audio.delta",
+        "response.output_audio.done",
+        "response.output_audio_transcript.delta",
+        "response.output_audio_transcript.done",
+        "session.created",
+        "session.update",
+        "session.updated"
+      ]
+    }
+  ],
+  "shared_behavior_contracts": [
+    {"id": "call_state", "source": ["ai_bridge/phone_voice_agent.py", "tests/test_voice_host_lifecycle.py"], "cascade_owner": "PhoneVoiceAgent plus Cascade session lifecycle", "target_item": "M1-02"},
+    {"id": "end_call", "source": ["ai_bridge/openai_realtime_websocket_pipeline.py", "ai_bridge/chatgpt_realtime_pipeline.py"], "cascade_owner": "typed tool result and terminal playout completion", "target_item": "M1-02"},
+    {"id": "evaluation", "source": ["ai_bridge/identity/live_eval.py", "tests/production/test_identity_kernel.py"], "cascade_owner": "provider-neutral text evaluation adapter", "target_item": "M1-02"},
+    {"id": "interruption", "source": ["ai_bridge/openai_realtime_websocket_pipeline.py", "ai_bridge/pipecat_transport.py"], "cascade_owner": "authoritative generation flush and Pipecat interruption frames", "target_item": "M1-02"},
+    {"id": "memory", "source": ["ai_bridge/openai_realtime_websocket_pipeline.py", "ai_bridge/chatgpt_realtime_pipeline.py"], "cascade_owner": "final-turn-only CallContext and memory writer", "target_item": "M1-02"},
+    {"id": "opening", "source": ["ai_bridge/phone_voice_agent.py", "ai_bridge/openai_realtime_websocket_pipeline.py"], "cascade_owner": "Cascade opening directive and verified first playout", "target_item": "M1-02"},
+    {"id": "recovery", "source": ["ai_bridge/openai_realtime_websocket_pipeline.py", "tests/test_voice_host_lifecycle.py"], "cascade_owner": "Cascade worker/link recovery without duplicate mouth ownership", "target_item": "M1-02"},
+    {"id": "tools", "source": ["ai_bridge/mcp_broker.py", "ai_bridge/openai_realtime_websocket_pipeline.py"], "cascade_owner": "provider-neutral tool catalog, policy and verified execution", "target_item": "M1-02"},
+    {"id": "transcript", "source": ["ai_bridge/openai_realtime_websocket_pipeline.py", "ai_bridge/chatgpt_realtime_pipeline.py"], "cascade_owner": "authoritative final STT and delivered assistant transcript", "target_item": "M1-02"},
+    {"id": "verified_playout", "source": ["ai_bridge/pipecat_transport.py", "ai_bridge/openai_realtime_websocket_pipeline.py"], "cascade_owner": "Android credit/ACK and generation-scoped playout completion", "target_item": "M1-02"}
+  ],
+  "contains_customer_data": false
+}

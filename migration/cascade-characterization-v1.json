@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "suite_id": "cascade-shared-behavior-v1",
+  "pipeline": "cascade",
+  "source_inventory_id": "m1-01-s2s-surface-2026-09-03",
+  "contains_customer_data": false,
+  "contracts": [
+    {
+      "id": "call_state",
+      "owner_modules": ["ai_bridge/phone_voice_agent.py", "ai_bridge/session.py"],
+      "guarantees": ["effective Cascade state is observable", "invalid commands cannot stop the resident host", "a new dial clears prior-call identity"],
+      "success_nodeids": ["tests/test_voice_host_lifecycle.py::test_a_dial_command_clears_the_previous_call_identity", "tests/test_voice_host_lifecycle.py::test_voice_host_ready_reports_effective_parsed_configuration"],
+      "failure_nodeids": ["tests/test_voice_host_lifecycle.py::test_unusable_commands_never_take_the_host_down"]
+    },
+    {
+      "id": "end_call",
+      "owner_modules": ["ai_bridge/agent_policy.py", "ai_bridge/cascade_tools.py", "ai_bridge/production_pipeline.py"],
+      "guarantees": ["the model selects one bounded closing through a typed tool", "the tool protocol is never spoken", "hangup occurs exactly once and only after verified closing playout"],
+      "success_nodeids": ["tests/test_agent_policy.py::test_terminal_completion_requires_verified_completed_playout", "tests/test_cascade_tools.py::test_end_call_is_handed_to_terminal_delivery_and_not_requeued", "tests/test_cascade_tools.py::test_native_end_call_suppresses_the_followup_llm_generation", "tests/test_voice_host_lifecycle.py::test_cascade_pipeline_receives_the_same_call_completion_callback"],
+      "failure_nodeids": ["tests/test_agent_policy.py::test_cascade_playback_never_claims_completion_without_android_ack"]
+    },
+    {
+      "id": "evaluation",
+      "owner_modules": ["ai_bridge/agent_policy.py", "ai_bridge/guardrails/personality_judge.py"],
+      "guarantees": ["every finalized Cascade response emits an evaluation", "unsafe completion claims are blocked before TTS", "direct customer questions outrank stale discovery"],
+      "success_nodeids": ["tests/test_agent_policy.py::test_failed_sales_call_replay_advances_and_answers_from_facts", "tests/test_agent_policy.py::test_policy_compiles_context_evaluates_and_remembers"],
+      "failure_nodeids": ["tests/test_agent_policy.py::test_unverified_action_claim_is_never_spoken"]
+    },
+    {
+      "id": "interruption",
+      "owner_modules": ["ai_bridge/pipecat_transport.py", "ai_bridge/session.py"],
+      "guarantees": ["barge-in atomically advances the generation and flushes Android", "stale in-flight audio is cancellation rather than delivery failure", "interrupted speech is never reported completed"],
+      "success_nodeids": ["tests/test_audio_loopback.py::test_interruption_flushes_and_advances_generation", "tests/test_pipecat_pipeline_loopback.py::test_pipeline_worker_routes_framed_duplex_and_interruption"],
+      "failure_nodeids": ["tests/test_audio_loopback.py::test_inflight_old_generation_write_is_normal_cancellation", "tests/test_agent_policy.py::test_zero_frame_barge_in_is_reported_as_interrupted_not_audio_failure"]
+    },
+    {
+      "id": "memory",
+      "owner_modules": ["ai_bridge/agent_policy.py", "ai_bridge/memory/memory_writer.py"],
+      "guarantees": ["trusted final caller turns are persisted off the speech-critical path", "untrusted acoustic hypotheses never change task state or durable memory", "call summaries are closed exactly once"],
+      "success_nodeids": ["tests/test_agent_policy.py::test_policy_compiles_context_evaluates_and_remembers"],
+      "failure_nodeids": ["tests/test_agent_policy.py::test_untrusted_transcript_never_enters_task_state_or_durable_memory"]
+    },
+    {
+      "id": "opening",
+      "owner_modules": ["ai_bridge/production_pipeline.py", "ai_bridge/phone_voice_agent.py"],
+      "guarantees": ["the Agent Package opening is queued once", "concurrent greeting requests cannot duplicate speech", "link recovery never replays an attempted opening"],
+      "success_nodeids": ["tests/test_voice_host_lifecycle.py::test_sales_task_uses_oxzoon_outbound_opening_once"],
+      "failure_nodeids": ["tests/test_agent_policy.py::test_reconnect_cannot_reuse_a_stale_playout_ack", "tests/test_voice_host_lifecycle.py::test_voice_host_never_replays_opening_across_pipeline_recovery"]
+    },
+    {
+      "id": "recovery",
+      "owner_modules": ["ai_bridge/phone_voice_agent.py", "mac_client/framed_link.py"],
+      "guarantees": ["authenticated link recovery preserves the same call session", "the Cascade pipeline remains the single mouth", "recovery cannot duplicate the opening"],
+      "success_nodeids": ["tests/test_voice_host_lifecycle.py::test_same_call_link_recovery_preserves_runtime_and_pipeline"],
+      "failure_nodeids": ["tests/test_voice_host_lifecycle.py::test_voice_host_never_replays_opening_across_pipeline_recovery"]
+    },
+    {
+      "id": "tools",
+      "owner_modules": ["ai_bridge/cascade_tools.py", "ai_bridge/tasks/tool_catalog.py"],
+      "guarantees": ["native and emitted protocols share one guarded catalog", "tool syntax and results are never spoken", "ungrounded caller data is rejected before execution"],
+      "success_nodeids": ["tests/test_cascade_tools.py::test_a_tool_block_is_executed_and_never_spoken", "tests/test_cascade_tools.py::test_the_persona_is_rebuilt_once_the_tools_are_known"],
+      "failure_nodeids": ["tests/test_cascade_tools.py::test_execute_blocks_arguments_the_caller_never_said", "tests/test_cascade_tools.py::test_the_tool_loop_is_bounded"]
+    },
+    {
+      "id": "transcript",
+      "owner_modules": ["ai_bridge/agent_policy.py"],
+      "guarantees": ["acoustic trust metadata survives STT framing", "one streamed assistant turn produces one correlated transcript", "low-confidence caller text is visibly marked and excluded from authoritative state"],
+      "success_nodeids": ["tests/test_agent_policy.py::test_sentences_are_spoken_before_the_model_finishes", "tests/test_agent_policy.py::test_transcription_evidence_preserves_acoustic_trust"],
+      "failure_nodeids": ["tests/test_agent_policy.py::test_untrusted_transcript_never_enters_task_state_or_durable_memory"]
+    },
+    {
+      "id": "verified_playout",
+      "owner_modules": ["ai_bridge/agent_policy.py", "ai_bridge/pipecat_transport.py", "ai_bridge/remote_link.py", "ai_bridge/session.py", "android_service_apk/src/com/phoneagent/gateway/RemoteLinkService.java", "mac_client/framed_link.py"],
+      "guarantees": ["an ordered segment marker follows the final PCM frame", "completion waits for Android render acknowledgement of that marker", "missing acknowledgement is a failure and cannot trigger hangup", "capture congestion cannot block the independent playout acknowledgement or control channels"],
+      "success_nodeids": ["tests/test_agent_policy.py::test_cascade_playback_waits_for_android_end_marker_ack", "tests/test_audio_loopback.py::test_audio_end_marker_follows_the_last_pcm_sequence", "tests/test_remote_link_v2.py::test_blocked_capture_carrier_does_not_block_ack_or_control_stream"],
+      "failure_nodeids": ["tests/test_agent_policy.py::test_cascade_playback_never_claims_completion_without_android_ack", "tests/test_agent_policy.py::test_playback_reports_not_delivered_when_no_audio_reached_the_phone", "tests/test_remote_link_v2.py::test_v2_wrong_challenge_cannot_bind_or_drop_the_coordinator"]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "item": "M4-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:32:00Z",
+  "contains_customer_data": false,
+  "milestone_4_deliverables": {
+    "compiler_engine": "ai_bridge/agent_compiler.py: compile_agent_package",
+    "contradiction_detection": "ai_bridge/agent_compiler.py: CompilerContradictionError for undeclared capabilities or conflicts",
+    "prompt_ir_generation": "ai_bridge/agent_compiler.py: PromptIR structuring system prompt, identity prefix, and allowed tools",
+    "capability_planning": "ai_bridge/agent_compiler.py: CapabilityPlan sorting tools by risk and approval requirement",
+    "atomic_activation": "ai_bridge/agent_compiler.py: AgentActivationManager assuring call immutability"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 700,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "06b0f36255688af3da276c0846b503b9591ad6362ef64202db312ac4d1bc1a89",
+    "sdist_sha256": "8d632b0dac6f92a979f1da042ae08f036b0cb31f6304df8373abf19b63b4c9ba"
+  }
+}

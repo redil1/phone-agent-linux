@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "milestone_item": "M0-07",
+  "status": "pass",
+  "generated_at": "2026-09-02T22:49:00Z",
+  "image": {
+    "tag": "phoneagent-cascade:m0-07-candidate",
+    "id": "sha256:4ff4350b3c252ac182240d9f57a87544ecf139bae9890ba9be4c4bed7a86a386",
+    "size_bytes": 9072579170,
+    "user": "phoneagent",
+    "python": "3.11.13",
+    "torch": "2.13.0+cu129",
+    "cuda_runtime": "12.9",
+    "gpu": "NVIDIA RTX A6000"
+  },
+  "runtime": {
+    "defaults": {
+      "stt_provider": "whisper_turbo",
+      "stt_model": "large-v3-turbo",
+      "tts_provider": "kokoro"
+    },
+    "blocked_packages_present": [],
+    "tts": {
+      "cold_artifact_and_warmup_ms": 15672.9,
+      "warm_render_ms": 145.2,
+      "text_chars": 60,
+      "pcm_bytes": 137600,
+      "audio_ms": 4300.0
+    },
+    "stt": {
+      "cold_artifact_and_load_ms": 6993.4,
+      "inference_ms": 1033.4,
+      "language": "en",
+      "language_probability": 0.998,
+      "transcript": "Hello, I would like a simple and reliable service for my family."
+    },
+    "control_plane": {
+      "status": "ok",
+      "call_state": "IDLE",
+      "clients_connected": 0,
+      "identity_id": "adam",
+      "identity_evaluation_passed": true,
+      "identity_production_ready": true
+    }
+  },
+  "quality": {
+    "ruff": "pass",
+    "pyright_diagnostics": 0,
+    "frozen_whatsapp": "pass",
+    "focused_tests_passed": 24,
+    "full_tests_passed": 856,
+    "full_tests_skipped": 40,
+    "device_tests_deselected": 4,
+    "full_suite_seconds": 52.33
+  },
+  "security": {
+    "audited_registry_distributions": 180,
+    "finding_count": 1,
+    "exception_count": 1,
+    "finding": "PYSEC-2026-3740",
+    "alias": "CVE-2026-81726",
+    "package": "nltk==3.10.3",
+    "exception_expires": "2026-12-01",
+    "validation": "pass"
+  },
+  "licences": {
+    "inventory_count": 177,
+    "reviewed_unknowns": [
+      "cuda-toolkit==12.9.1",
+      "google-crc32c==1.8.0"
+    ],
+    "reviewed_family_count": 1,
+    "reviewed_family_component_count": 15,
+    "commercial_release_blockers": [],
+    "validation": "pass"
+  },
+  "sbom": {
+    "format": "CycloneDX 1.5",
+    "component_count": 181,
+    "dependency_node_count": 182,
+    "validation": "pass"
+  },
+  "safety": {
+    "production_restarted": false,
+    "phone_or_apk_changed": false,
+    "live_call_placed": false
+  }
+}

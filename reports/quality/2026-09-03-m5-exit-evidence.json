@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "item": "M5-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:34:00Z",
+  "contains_customer_data": false,
+  "milestone_5_deliverables": {
+    "turn_input": "ai_bridge/universal_runtime.py: TurnInput (text, confidence, language, epoch, channel)",
+    "structured_agent_output": "ai_bridge/universal_runtime.py: AgentOutput (spoken_text, intent, state_updates, tool_requests, completion_decision)",
+    "semantic_novelty_tracker": "ai_bridge/universal_runtime.py: SemanticNoveltyTracker (prevents robotic loops & mirroring)",
+    "answer_first_planning": "ai_bridge/universal_runtime.py: plan_turn_response"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 702,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "106e846097007e55d79c0d803257fa5b0958b6f8d5c6b35c7b0b2fb3a7da7b73",
+    "sdist_sha256": "f25148e0a1b79d7d6ad07a16c902bc530050a5b9316a389dded0ad1e926b6193"
+  }
+}

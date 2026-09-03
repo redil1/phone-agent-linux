@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "backlog_id": "M0-09",
+  "status": "pass",
+  "verified_at": "2026-09-03T06:16:05Z",
+  "release_evidence": {
+    "schema_version": 1,
+    "categories": 8,
+    "profiles": 5,
+    "reference_profile": "development",
+    "reference_gates_passed": 3,
+    "reference_gates_not_applicable": 5,
+    "reference_artifacts": 3,
+    "reference_manifest_sha256": "ff2d7cd6f71c1c51407905064625a1019d2207a2e2830b5af1b6711510c1dc08"
+  },
+  "verification": {
+    "ruff": "pass",
+    "pyright_errors": 0,
+    "pyright_warnings": 0,
+    "frozen_whatsapp": "pass",
+    "focused_tests_passed": 13,
+    "evaluation_tests_passed": 153,
+    "full_tests_passed": 833,
+    "full_tests_skipped": 39,
+    "device_tests_deselected": 4,
+    "full_test_duration_seconds": 50.20,
+    "package": "pass",
+    "wheel_runtime_smoke": "pass",
+    "security_policy": "pass",
+    "security_findings": 1,
+    "security_exceptions": 1
+  },
+  "artifacts": [
+    {
+      "path": "release/evidence.schema.json",
+      "sha256": "06067f83e662db309658b0a0fd61330a39dd29fc6d705c25f06ebbf9eadbe397"
+    },
+    {
+      "path": "release/evidence-policy.json",
+      "sha256": "93413c3d25c18978dd8c4b37b8993c60ba848d8e3286076a1e27fcd7f830712f"
+    },
+    {
+      "path": "release/evidence.py",
+      "sha256": "592b90777772788e19266f2582ce3670bcb33a7e6f3ad31f66106c607dd7f4d1"
+    },
+    {
+      "path": "artifacts/ci-m0-09-final/quality/release-evidence-validation.json",
+      "sha256": "649306c65b3671a111767bd5c269f02a367f186a96e498aaba93ed7a36d8d022"
+    },
+    {
+      "path": "artifacts/ci-m0-09-final/package/phone_agent_gateway-0.7.0-py3-none-any.whl",
+      "sha256": "db9f413bba096b365b3931d1a94df064e5e575a6db755754531f1fdbf8731143"
+    },
+    {
+      "path": "artifacts/ci-m0-09-final/security/dependency-audit.json",
+      "sha256": "aa42327020bb47fe3e008f5dfb7fd4d67728fa61e4abea85eaf08cab9f2ee776"
+    }
+  ],
+  "deployment_changed": false,
+  "android_or_gsm_changed": false
+}

@@ -162,6 +162,15 @@ public class HttpServerEngine {
             result.put("dialer_role", GatewayService.isDialerRoleHeld(context));
             result.put("production_protocol_port", ProtocolControlServer.PORT);
             result.put("link_key_provisioned", LinkKeyStore.isProvisioned(context));
+            result.put("apk_source_sha256", BuildProvenance.ANDROID_SOURCE_SHA256);
+            result.put(
+                    "remote_link_protocol_version",
+                    BuildProvenance.REMOTE_LINK_PROTOCOL_VERSION
+            );
+            result.put(
+                    "remote_link_negotiated_version",
+                    GatewayService.remoteLinkProtocolVersion()
+            );
             result.put("audio", DigitalAudioBridge.getStatusJson());
             return ok(result);
         }

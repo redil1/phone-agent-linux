@@ -748,7 +748,7 @@ class AntigravityLiveSTTService(STTService):
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, (CancelFrame, EndFrame)):
+        if isinstance(frame, CancelFrame | EndFrame):
             await self._close_session()
 
     async def _send_chunk(self, data: bytes, seq: int) -> None:

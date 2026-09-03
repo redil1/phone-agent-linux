@@ -1,7 +1,7 @@
 import asyncio
-import json
-import uuid
+
 from curl_cffi.requests import AsyncSession
+
 from phone_agent_gateway.ai_bridge.chatgpt_realtime_auth import ChatGPTAuthManager
 
 GIZMO_ID = "g-6a8f59bfdfc8819191e85d3cfa8fd722"

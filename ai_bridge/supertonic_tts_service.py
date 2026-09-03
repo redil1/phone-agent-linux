@@ -22,14 +22,18 @@ from pipecat.services.settings import TTSSettings
 try:
     from pipecat.services.settings import assert_given  # type: ignore[attr-defined]
 except ImportError:
+
     def assert_given(value: Any) -> Any:
         try:
             from pipecat.services.settings import NOT_GIVEN, is_given
+
             if not is_given(value) or value is NOT_GIVEN:
                 return ""
         except Exception:
             pass
         return value if value is not None else ""
+
+
 from pipecat.services.tts_service import TextAggregationMode, TTSService
 from pipecat.transcriptions.language import Language, resolve_language
 from pipecat.utils.tracing.service_decorators import traced_tts
@@ -264,16 +268,25 @@ class PhoneAgentSupertonicTTSService(TTSService):
             pcm = await self._primary_pcm(phrase)
             if not pcm:
                 raise RuntimeError("Supertonic completed without audio")
+            logger.info(
+                "tts_provider_selected provider=%s fallback=false",
+                self._engine.backend.model_name,
+            )
             return pcm, self._engine.backend.model_name
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             if self._fallback_renderer is None:
                 raise
-            logger.warning("Supertonic synthesis failed; using Edge fallback: %s", exc)
+            logger.warning(
+                "tts_provider_fallback primary=%s fallback=edge_tts reason=%s",
+                self._engine.backend.model_name,
+                type(exc).__name__,
+            )
             pcm = await self._fallback_renderer.synthesize_pcm(phrase)
             if not pcm:
                 raise RuntimeError("Supertonic and Edge fallback both returned no audio") from exc
+            logger.info("tts_provider_selected provider=edge_tts fallback=true")
             return pcm, "edge_tts_fallback"
 
     async def prefetch_text(self, text: str) -> None:

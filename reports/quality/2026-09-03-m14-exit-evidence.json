@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "item": "M14-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:49:00Z",
+  "contains_customer_data": false,
+  "milestone_14_deliverables": {
+    "evaluation_scenario": "ai_bridge/eval_gates.py: EvaluationScenario (scenario_id, expected_substrings, forbidden_substrings, max_latency_ms)",
+    "evaluation_result": "ai_bridge/eval_gates.py: EvaluationResult & evaluate_agent_turn"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 715,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "c1a863b128f59ca20f58532235b90f074f7e717b27037c0eb2de61db5ce62da0",
+    "sdist_sha256": "05af44aeb3c906924a8fc7cc0f364130d7300c05051fdb8a8616c4caa15e9371"
+  }
+}

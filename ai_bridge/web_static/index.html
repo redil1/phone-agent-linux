@@ -1637,74 +1637,12 @@
         </div>
         <div class="form-group">
           <label class="form-label">Voice Pipeline Architecture</label>
-          <select id="pipeline-mode" class="form-select" onchange="handlePipelineModeChange()">
-            <option value="cascade" selected>Standard Cascade (STT → LLM → TTS)</option>
-            <option value="s2s_chatgpt_realtime">OpenAI Realtime S2S (Speech-to-Speech)</option>
+          <select id="pipeline-mode" class="form-select" disabled>
+            <option value="cascade" selected>Universal Cascade (STT → LLM → TTS)</option>
           </select>
           <div style="font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.45;">
-            <b>Cascade</b> gives full modularity across local and cloud STT, LLM, and TTS providers.
-            It now runs the <b>same Tools &amp; MCP, CRM/ERP, WhatsApp and web-research catalog as S2S</b>.
-            Models with native function calling (Ollama, OpenAI, OpenRouter, LM Studio, Gemini) use it directly;
-            Antigravity and the CLI bridges use an equivalent guarded text protocol.<br>
-            <b>Speech-to-Speech (S2S)</b> streams PCM audio directly to OpenAI's Realtime model over a server-to-server WebSocket, bypassing a separate STT → LLM → TTS chain.
-          </div>
-        </div>
-
-        <div id="chatgpt-realtime-options" style="display:none;">
-          <div class="form-group">
-            <label class="form-label">Realtime Model</label>
-            <select id="chatgpt-realtime-model" class="form-select">
-              <option value="auto" selected>Auto — gpt-realtime-2.1</option>
-              <option value="gpt-realtime-2.1">gpt-realtime-2.1</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">S2S Transport</label>
-            <select id="chatgpt-realtime-transport" class="form-select">
-              <option value="websocket" selected>WebSocket PCM (recommended)</option>
-              <option value="webrtc">WebRTC compatibility fallback</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Realtime Reasoning Effort</label>
-            <select id="chatgpt-realtime-reasoning" class="form-select">
-              <option value="minimal">Minimal (lowest latency)</option>
-              <option value="low" selected>Low (recommended)</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Phone Turn Detection</label>
-            <select id="chatgpt-realtime-vad-mode" class="form-select">
-              <option value="server_vad" selected>Deterministic Server VAD — 450 ms silence (recommended)</option>
-              <option value="semantic_vad">Semantic VAD — adaptive, potentially slower</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">ChatGPT Realtime Voice</label>
-            <select id="chatgpt-realtime-voice" class="form-select">
-              <option value="alloy">Alloy (Neutral, versatile)</option>
-              <option value="ash">Ash (Soft, conversational)</option>
-              <option value="ballad">Ballad (Lyrical, calm)</option>
-              <option value="cedar">Cedar (Natural, grounded)</option>
-              <option value="coral">Coral (Warm, friendly)</option>
-              <option value="echo">Echo (Balanced male)</option>
-              <option value="marin" selected>Marin (Natural, expressive — recommended)</option>
-              <option value="sage">Sage (Thoughtful, smooth)</option>
-              <option value="shimmer">Shimmer (Clear, upbeat)</option>
-              <option value="verse">Verse (Dynamic, expressive)</option>
-            </select>
-          </div>
-          <div style="background: rgba(7, 10, 16, 0.6); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--card-border); font-size: 12px; line-height: 1.5; margin-bottom: 16px;">
-            <div style="font-weight: 700; color: #fff; margin-bottom: 4px;">S2S Realtime Features:</div>
-            <ul style="margin-left: 18px; color: var(--text-muted);">
-              <li>Stateful 16 kHz ↔ 24 kHz PCM resampling with no Opus/RTP round trip</li>
-              <li>Deterministic 450 ms server VAD creates responses; transcription never gates speech</li>
-              <li>Automatic WebSocket recovery prevents prolonged silence after a network drop</li>
-              <li>Android render acknowledgements drive exact barge-in truncation</li>
-              <li>Clean-call persona and task context with no caller or account memory</li>
-            </ul>
+            <b>Universal Cascade</b> powers all calls with modular local/cloud STT, LLM, and TTS providers.
+            Full tools, MCP, CRM/ERP, WhatsApp, identity kernel, and conversation repair are active.
           </div>
         </div>
 
@@ -1717,6 +1655,8 @@
           <label class="form-label">TTS Provider</label>
           <select id="tts-provider" class="form-select" onchange="handleTtsProviderChange()">
             <option value="kokoro" selected>Kokoro-82M Studio Local (CUDA Tensor Core) [Default]</option>
+            <option value="faster_qwen3_06b">Faster-Qwen3-TTS 0.6B (CUDA Graph Ultra-Fast)</option>
+            <option value="faster_qwen3_17b">Faster-Qwen3-TTS 1.7B (CUDA Graph Expressive)</option>
             <option value="supertonic">Supertonic Local</option>
             <option value="edge_tts">Microsoft Edge Neural</option>
             <option value="google_genai">Google Gemini TTS</option>
@@ -1731,6 +1671,22 @@
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px;">
             <span id="edge-voice-status" style="font-size: 11px; color: var(--text-muted);">Loading voice catalog…</span>
             <button type="button" class="preset-chip" onclick="refreshEdgeVoices()">Refresh voices</button>
+          </div>
+        </div>
+        <div id="faster-qwen3-options" style="display:none;">
+          <div class="form-group">
+            <label class="form-label">Qwen3-TTS Speaker</label>
+            <select id="faster-qwen3-voice" class="form-select">
+              <option value="ryan" selected>Ryan (English / Multilingual Male)</option>
+              <option value="aiden">Aiden (Expressive Male)</option>
+              <option value="dylan">Dylan (Conversational Male)</option>
+              <option value="eric">Eric (Warm Male)</option>
+              <option value="serena">Serena (Clear Female)</option>
+              <option value="vivian">Vivian (Warm Female)</option>
+              <option value="ono_anna">Ono Anna (Japanese / Multilingual)</option>
+              <option value="sohee">Sohee (Korean / Multilingual)</option>
+              <option value="uncle_fu">Uncle Fu (Deep Mature Male)</option>
+            </select>
           </div>
         </div>
         <div id="kokoro-options">
@@ -4488,6 +4444,7 @@
       document.getElementById('google-tts-options').style.display = provider === 'google_genai' ? 'block' : 'none';
       document.getElementById('vibevoice-options').style.display = provider === 'vibevoice' ? 'block' : 'none';
       document.getElementById('kokoro-options').style.display = provider === 'kokoro' ? 'block' : 'none';
+      document.getElementById('faster-qwen3-options').style.display = (provider === 'faster_qwen3_06b' || provider === 'faster_qwen3_17b') ? 'block' : 'none';
     }
 
     async function loadEdgeVoices(forceRefresh = false) {
@@ -4547,11 +4504,7 @@
     }
 
     function handlePipelineModeChange() {
-      const mode = document.getElementById('pipeline-mode').value;
-      const realtimeOptions = document.getElementById('chatgpt-realtime-options');
-      if (realtimeOptions) {
-        realtimeOptions.style.display = (mode === 's2s_chatgpt_realtime') ? 'block' : 'none';
-      }
+      // S2S mode removed in M1-06; pipeline is always cascade
     }
 
     async function saveConfiguration() {
@@ -4561,6 +4514,8 @@
         edge_tts: configuredEdgeVoice,
         google_genai: document.getElementById('google-tts-voice').value,
         kokoro: document.getElementById('kokoro-voice').value,
+        faster_qwen3_06b: document.getElementById('faster-qwen3-voice').value,
+        faster_qwen3_17b: document.getElementById('faster-qwen3-voice').value,
         vibevoice: document.getElementById('vibevoice-voice').value,
       };
       const modelDefaults = {
@@ -4568,16 +4523,14 @@
         google_genai: document.getElementById('google-tts-model').value,
         edge_tts: 'edge-online-neural',
         kokoro: document.getElementById('kokoro-model').value,
+        faster_qwen3_06b: 'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
+        faster_qwen3_17b: 'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice',
         vibevoice: 'mlx-community/VibeVoice-Realtime-0.5B-8bit',
       };
       const config = {
         pipeline_mode: document.getElementById('pipeline-mode').value,
-        chatgpt_realtime_voice: document.getElementById('chatgpt-realtime-voice').value,
-        chatgpt_realtime_model: document.getElementById('chatgpt-realtime-model').value,
-        chatgpt_realtime_transport: document.getElementById('chatgpt-realtime-transport').value,
-        chatgpt_realtime_reasoning_effort: document.getElementById('chatgpt-realtime-reasoning').value,
-        chatgpt_realtime_vad_mode: document.getElementById('chatgpt-realtime-vad-mode').value,
-        tts_provider: ttsProvider,
+        // S2S options removed in M1-06
+        tts_provider: (ttsProvider === "faster_qwen3_06b" || ttsProvider === "faster_qwen3_17b") ? "faster_qwen3" : ttsProvider,
         tts_model: modelDefaults[ttsProvider],
         tts_voice_id: voiceDefaults[ttsProvider],
         tts_aggregation: ttsProvider === 'edge_tts' ? 'phrase' : 'sentence',
@@ -4609,11 +4562,7 @@
 
     function applyConfiguration(config) {
       if (config.pipeline_mode) document.getElementById('pipeline-mode').value = config.pipeline_mode;
-      if (config.chatgpt_realtime_voice) document.getElementById('chatgpt-realtime-voice').value = config.chatgpt_realtime_voice;
-      if (config.chatgpt_realtime_model) document.getElementById('chatgpt-realtime-model').value = config.chatgpt_realtime_model;
-      if (config.chatgpt_realtime_transport) document.getElementById('chatgpt-realtime-transport').value = config.chatgpt_realtime_transport;
-      if (config.chatgpt_realtime_reasoning_effort) document.getElementById('chatgpt-realtime-reasoning').value = config.chatgpt_realtime_reasoning_effort;
-      if (config.chatgpt_realtime_vad_mode) document.getElementById('chatgpt-realtime-vad-mode').value = config.chatgpt_realtime_vad_mode;
+      // S2S options removed in M1-06
       if (config.tts_provider) document.getElementById('tts-provider').value = config.tts_provider;
       if (config.tts_provider === 'google_genai' && config.tts_voice_id) {
         document.getElementById('google-tts-voice').value = config.tts_voice_id;
@@ -4640,6 +4589,18 @@
       }
       if (config.tts_provider === 'kokoro' && config.tts_voice_id) {
         document.getElementById('kokoro-voice').value = config.tts_voice_id;
+      }
+      if (config.tts_provider === 'faster_qwen3') {
+        const provEl = document.getElementById('tts-provider');
+        if (config.tts_model && config.tts_model.includes('1.7B')) {
+          provEl.value = 'faster_qwen3_17b';
+        } else {
+          provEl.value = 'faster_qwen3_06b';
+        }
+        if (config.tts_voice_id) {
+          document.getElementById('faster-qwen3-voice').value = config.tts_voice_id;
+        }
+        handleTtsProviderChange();
       }
       if (config.tts_provider === 'vibevoice' && config.tts_voice_id) {
         document.getElementById('vibevoice-voice').value = config.tts_voice_id;

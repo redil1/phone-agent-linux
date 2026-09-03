@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "item": "M6-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:36:00Z",
+  "contains_customer_data": false,
+  "milestone_6_deliverables": {
+    "turn_controller": "ai_bridge/turn_intelligence.py: UnifiedTurnController",
+    "fragment_assembly": "ai_bridge/turn_intelligence.py: process_fragment",
+    "echo_rejection": "ai_bridge/turn_intelligence.py: register_agent_speech, is_echo",
+    "epoch_tracking": "ai_bridge/turn_intelligence.py: TurnHypothesis.epoch"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 704,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "35884095a1066bc52ddd6c8953cad1f877462d7c526915b978b87c94f8d51450",
+    "sdist_sha256": "01d57194b4a5faf883ee790c2afb6d66e93dd35bca7ecbc49228a6276be7cf60"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "events": [
+    {
+      "at_ms": 0,
+      "details": {
+        "generation": 1
+      },
+      "type": "assistant.playback.started"
+    },
+    {
+      "at_ms": 750,
+      "type": "caller.speech.started"
+    },
+    {
+      "at_ms": 760,
+      "details": {
+        "obsolete_generation": 1
+      },
+      "type": "playback.flush.requested"
+    },
+    {
+      "at_ms": 840,
+      "details": {
+        "obsolete_generation": 1
+      },
+      "type": "playback.flush.acknowledged"
+    },
+    {
+      "at_ms": 4335,
+      "type": "transcript.final"
+    },
+    {
+      "at_ms": 4355,
+      "type": "turn.committed"
+    }
+  ],
+  "provenance": "synthetic",
+  "scenario_id": "interruption",
+  "schema_version": 1
+}

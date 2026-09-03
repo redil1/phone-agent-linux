@@ -2,35 +2,31 @@
 Automated Test Suite for the 7-Pillar Product Knowledge & Sales Agent Pipeline.
 """
 
-import asyncio
 import os
-import shutil
+
 import pytest
 import yaml
-
-from src.schemas.product_schema import (
-    ProductKnowledgeBase,
-    CoreSpecsCapabilities,
-    CommercialsPricing,
-    ValuePropROI,
-    CompetitiveIntelligence,
-    ImplementationSupport,
-    SecurityCompliance,
-    GuardrailsDisqualifiers,
-    FeatureItem,
-    PlanTier,
-    DiscountRule,
-    PersonaMessaging,
-    PainPointSolution,
-    CompetitorBattlecard
-)
-from src.schemas.sales_skills_schema import SalesPlaybook
-from src.sales_skills.sales_psychology import get_core_sales_playbook
-from src.sales_skills.gtm_playbooks import enrich_playbook_with_product_context
+from src.compiler.compiler import AgentCompiler
 from src.crawler.html_parser import HTMLToMarkdownParser
 from src.extractor.extractor import ProductExtractor
-from src.extractor.llm_client import LLMClient
-from src.compiler.compiler import AgentCompiler
+from src.sales_skills.gtm_playbooks import enrich_playbook_with_product_context
+from src.sales_skills.sales_psychology import get_core_sales_playbook
+from src.schemas.product_schema import (
+    CommercialsPricing,
+    CompetitiveIntelligence,
+    CompetitorBattlecard,
+    CoreSpecsCapabilities,
+    DiscountRule,
+    FeatureItem,
+    GuardrailsDisqualifiers,
+    ImplementationSupport,
+    PainPointSolution,
+    PersonaMessaging,
+    PlanTier,
+    ProductKnowledgeBase,
+    SecurityCompliance,
+    ValuePropROI,
+)
 
 
 @pytest.fixture
@@ -194,7 +190,7 @@ def test_3tier_compiler(sample_kb, tmp_path):
 
     # 1. Check Tier 1 Hot YAML
     assert os.path.exists(compiled["tier1_hot_yaml"])
-    with open(compiled["tier1_hot_yaml"], "r") as f:
+    with open(compiled["tier1_hot_yaml"]) as f:
         hot_yaml_content = f.read()
         loaded = yaml.safe_load(hot_yaml_content)
         assert loaded["product"]["name"] == "VocalisAI"
@@ -203,7 +199,7 @@ def test_3tier_compiler(sample_kb, tmp_path):
 
     # 2. Check Tier 2 Fast JSON
     assert os.path.exists(compiled["tier2_fast_json"])
-    with open(compiled["tier2_fast_json"], "r") as f:
+    with open(compiled["tier2_fast_json"]) as f:
         import json
         fast_json = json.load(f)
         assert "sub-300ms_voice_pipeline" in fast_json["features"]
@@ -211,14 +207,14 @@ def test_3tier_compiler(sample_kb, tmp_path):
 
     # 3. Check Tier 3 Edge Case MD
     assert os.path.exists(compiled["tier3_edge_md"])
-    with open(compiled["tier3_edge_md"], "r") as f:
+    with open(compiled["tier3_edge_md"]) as f:
         edge_md = f.read()
         assert "SOC 2 Type II" in edge_md
         assert "category: security_compliance" in edge_md
 
     # 4. Check Master Voice Agent Prompt
     assert os.path.exists(compiled["voice_agent_prompt"])
-    with open(compiled["voice_agent_prompt"], "r") as f:
+    with open(compiled["voice_agent_prompt"]) as f:
         prompt_text = f.read()
         assert "AUTONOMOUS PHONE SALES AGENT" in prompt_text
         assert "VocalisAI" in prompt_text

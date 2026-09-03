@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "item": "M15-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:51:00Z",
+  "contains_customer_data": false,
+  "milestone_15_deliverables": {
+    "studio_live_call_view": "ai_bridge/universal_studio.py: StudioLiveCallView (call_id, channel, stage, latency_p50_ms, active_agent_id)",
+    "universal_studio_manager": "ai_bridge/universal_studio.py: UniversalStudioManager (authoritative deployment and live overview without stale state)"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 716,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "451de18537ecdb06fce3f7410e79a08a94120fa199096418fee56ec6f7e4a0d7",
+    "sdist_sha256": "bd4bc19ca4ca843e362a56941d624b76d8013bd1fb6125129c7d41c67798ae45"
+  }
+}

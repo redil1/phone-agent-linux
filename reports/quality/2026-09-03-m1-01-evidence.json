@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "item": "M1-01",
+  "status": "pass",
+  "generated_at": "2026-09-03T07:25:32Z",
+  "contains_customer_data": false,
+  "inventory": {
+    "manifest_sha256": "ff33cb40e509fc102a152ca178589c5f03785754551b645dfd90f1dcf2a16858",
+    "validator_sha256": "657f23720280406dc0aa5191e6712642e9d889ef6f5b8eda1611a692fa1531ee",
+    "test_sha256": "ec1bfe832c63ae606bb5a88cb293f1fdca097cb0e0e8be3c8ee304e0b912714d",
+    "result_sha256": "66b24ed14c44a2b92f07ccea2ede5393b084a31dcbfcb8b6a7cae659cc13db99",
+    "surface_count": 96,
+    "surface_path_sha256": "e713482a3855772dfda14a57f654220d28b9704c783bffe24e1d60533980ce2a",
+    "group_count": 11,
+    "configuration_key_count": 18,
+    "persisted_surface_count": 5,
+    "dependency_binding_count": 4,
+    "runtime_branch_count": 9,
+    "event_contract_count": 2,
+    "event_name_count": 47,
+    "shared_behavior_count": 10
+  },
+  "dispositions": {
+    "delete": 52,
+    "migrate": 21,
+    "rewrite": 14,
+    "retain_historical": 9
+  },
+  "verification": {
+    "focused_tests_passed": 2,
+    "full_tests_passed": 902,
+    "full_tests_skipped": 40,
+    "device_tests_deselected": 4,
+    "full_test_duration_seconds": 53.74,
+    "ruff": "pass",
+    "pyright_errors": 0,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "wheel_sha256": "a26d924829f24dc0c34006c5c5e2edcdf88e6a95f80b6930a83996a0f9354d74",
+    "normalized_sdist_sha256": "88185eeba53f2c4c6d51da7bdf637c0c7df13595867b35db793b5e8ac037929d",
+    "dependency_security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "live_runtime_mutated": false,
+    "live_pipeline_mode": "cascade",
+    "phone_connected_after_checks": true
+  }
+}

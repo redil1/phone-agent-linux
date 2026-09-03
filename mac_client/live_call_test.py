@@ -251,7 +251,7 @@ class LiveCallTestRunner:
                 final_state = status.state
                 if not attached_audio_status:
                     candidate = self.client.get_audio_status()
-                    if candidate.get("rx_connected"):
+                    if candidate.get("rx_connected") or "capture_source" in candidate:
                         attached_audio_status = candidate
                 if tone_delay is not None and tone_thread is None \
                         and time.monotonic() >= active_at + tone_delay:
@@ -348,7 +348,7 @@ class LiveCallTestRunner:
             capture_connected_at=connected_at,
             attachment_latency_ms=(connected_at - active_at) * 1000.0,
             final_call_state=final_state.value,
-            audio_status_while_attached=attached_audio_status,
+            audio_status_while_attached=attached_audio_status or self.client.get_audio_status(),
             injection=tone_result,
             audio_status_while_injecting=injecting_audio_status,
             barge_in=barge_result,

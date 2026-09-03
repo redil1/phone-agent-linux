@@ -32,8 +32,12 @@ def _pcm(milliseconds: int, amplitude: int) -> bytes:
     return struct.pack(f"<{count}h", *([amplitude] * count))
 
 
-LOUD = lambda ms: _pcm(ms, 8000)
-SILENT = lambda ms: _pcm(ms, 0)
+def LOUD(milliseconds: int) -> bytes:
+    return _pcm(milliseconds, 8000)
+
+
+def SILENT(milliseconds: int) -> bytes:
+    return _pcm(milliseconds, 0)
 
 
 class _Harness:

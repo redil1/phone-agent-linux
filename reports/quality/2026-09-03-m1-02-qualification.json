@@ -1,0 +1,172 @@
+{
+  "checks": [
+    {
+      "evidence": "tdgsi_arm64_ab",
+      "name": "device_profile",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "TrebleDroid vanilla",
+      "name": "model_profile",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "34",
+      "name": "android_sdk",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "google/treble_arm64_bvS/tdgsi_arm64_ab:14/AP1A.240505.005.B1/240508:userdebug/test-keys",
+      "name": "build_fingerprint",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "arm64-v8a",
+      "name": "cpu_abi",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "uid=0(root) gid=0(root) groups=0(root) context=u:r:phhsu_daemon:s0",
+      "name": "root_available",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "package:/data/app/~~tHhSTXdzowp54WnpmRCHXw==/com.phoneagent.gateway-4n8hGbestvTx4NBV3tkEXQ==/base.apk",
+      "name": "gateway_package",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "SYSTEM/PRIVILEGED flags",
+      "name": "gateway_privileged",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "com.phoneagent.gateway",
+      "name": "dialer_role",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "ok",
+      "name": "gateway_health",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "ready",
+      "name": "gateway_ready",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "01427d6f2ef58fce1e4e0b453ce2fce0c1dd04c77dfeb4a67a17106e651f1831",
+      "name": "apk_source_provenance",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "2",
+      "name": "remote_link_protocol_supported",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "2",
+      "name": "remote_link_protocol_negotiated",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "True",
+      "name": "link_key_provisioned",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "True",
+      "name": "capture_permission",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "True",
+      "name": "telephony_output",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "pcm_s16le_16000_mono",
+      "name": "network_audio_format",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "phag_v1_hmac_sha256",
+      "name": "authenticated_protocol",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "ok",
+      "name": "audio_service",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "none",
+      "name": "audio_last_error",
+      "required": true,
+      "status": "pass"
+    },
+    {
+      "evidence": "0",
+      "name": "historical_playout_underruns",
+      "required": false,
+      "status": "pass"
+    },
+    {
+      "evidence": "0",
+      "name": "historical_mid_speech_starvation",
+      "required": false,
+      "status": "pass"
+    },
+    {
+      "evidence": "",
+      "name": "health_audio_consistency",
+      "required": true,
+      "status": "pass"
+    }
+  ],
+  "device": {
+    "abi": "arm64-v8a",
+    "device": "tdgsi_arm64_ab",
+    "fingerprint": "google/treble_arm64_bvS/tdgsi_arm64_ab:14/AP1A.240505.005.B1/240508:userdebug/test-keys",
+    "gateway_version": "1.0.0",
+    "model": "TrebleDroid vanilla",
+    "sdk": 34,
+    "serial_hash": "sha256:e0e6fa1a7bd98dbd"
+  },
+  "failed_checks": [],
+  "gateway": {
+    "apk_source_sha256": "01427d6f2ef58fce1e4e0b453ce2fce0c1dd04c77dfeb4a67a17106e651f1831",
+    "audio_format": "pcm_s16le_16000_mono",
+    "protocol": "phag_v1_hmac_sha256",
+    "remote_link_negotiated_version": 2,
+    "remote_link_protocol_version": 2,
+    "state": "IDLE"
+  },
+  "generated_unix": 1788459012,
+  "profile_id": "redmi-12c-earth-trebledroid-android14",
+  "qualified": true,
+  "report_sha256": "ab360c21a2859f3e99e91ea9ba25feae3f6fb70720f802f3bd7c42ff0286ce8b",
+  "version": 1,
+  "warnings": []
+}

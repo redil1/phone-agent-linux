@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "status": "pass",
+  "locked_packages": 223,
+  "ruff": "pass",
+  "pyright_errors": 0,
+  "pyright_warnings": 0,
+  "tests_passed": 900,
+  "tests_skipped": 40,
+  "device_tests_deselected": 4,
+  "duration_seconds": 51.36,
+  "contains_customer_data": false
+}

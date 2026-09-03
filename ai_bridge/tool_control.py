@@ -877,7 +877,7 @@ class ManagedToolRuntime:
         if isinstance(selected, list):
             selected = selected[: connection.max_results]
         safe = _sanitize(selected)
-        found = bool(selected) if isinstance(selected, (list, dict, str)) else selected is not None
+        found = bool(selected) if isinstance(selected, list | dict | str) else selected is not None
         return {
             "ok": True,
             "found": found,

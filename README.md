@@ -203,3 +203,7 @@ monitoring and rollback, see
 
 For agents performing engineering, configuration, diagnosis or operations on the framework itself,
 use the reusable [`phoneagent-master` skill](skills/phoneagent-master/SKILL.md).
+
+The Cascade-only universal-platform transformation is governed by the versioned
+[`end-to-end backlog`](docs/UNIVERSAL_CASCADE_PLATFORM_BACKLOG.md) and executed with the
+[`phoneagent-cascade-platform` skill](skills/phoneagent-cascade-platform/SKILL.md).

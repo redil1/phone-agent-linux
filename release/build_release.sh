@@ -7,10 +7,17 @@ ALLOW_UNSIGNED=0
 [[ "${1:-}" == "--unsigned" ]] && ALLOW_UNSIGNED=1
 
 cd "${PROJECT_DIR}"
-[[ -z "$(git status --porcelain)" ]] || {
-  echo "Release requires a clean, committed source tree." >&2
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  [[ -z "$(git status --porcelain)" ]] || {
+    echo "Release requires a clean, committed source tree." >&2
+    exit 1
+  }
+elif [[ "${ALLOW_UNSIGNED}" -eq 0 ]]; then
+  echo "Signed release requires an initialized source repository." >&2
   exit 1
-}
+else
+  echo "Building an unsigned local artifact without source revision metadata." >&2
+fi
 if [[ "${ALLOW_UNSIGNED}" -eq 0 && -z "${PHONE_AGENT_CODESIGN_IDENTITY:-}" ]]; then
   echo "Set PHONE_AGENT_CODESIGN_IDENTITY or use --unsigned for a local test artifact." >&2
   exit 1
@@ -34,7 +41,7 @@ uv export --preview-features sbom-export --locked --all-extras --format cycloned
   --output-file "${ARTIFACTS}/cyclonedx-sbom.json"
 uv export --locked --all-extras --no-emit-project --format requirements.txt \
   --output-file "${ARTIFACTS}/requirements.lock.txt"
-uvx --from pip-audit==2.10.1 pip-audit \
+uv tool run --from pip-audit==2.10.1 pip-audit \
   --requirement "${ARTIFACTS}/requirements.lock.txt" --no-deps --disable-pip \
   --strict --progress-spinner off --format json \
   --output "${ARTIFACTS}/dependency-audit.json"

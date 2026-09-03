@@ -1,0 +1,4 @@
+interface:
+  display_name: "PhoneAgent Cascade Platform"
+  short_description: "Execute the universal Cascade platform backlog"
+  default_prompt: "Use $phoneagent-cascade-platform to advance the next verified PhoneAgent Cascade milestone."

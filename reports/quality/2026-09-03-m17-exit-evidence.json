@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "item": "M17-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:54:00Z",
+  "contains_customer_data": false,
+  "milestone_17_deliverables": {
+    "worker_lease": "ai_bridge/release_orchestration.py: WorkerLease (worker_id, host, status, active_calls, max_concurrency)",
+    "worker_orchestration_cluster": "ai_bridge/release_orchestration.py: WorkerOrchestrationCluster (assign_call_to_worker, drain_worker, release_call)"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 718,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "b36aa6c30f081aa62e67c0a17a622874709d5e0e67cbe4c44a8272cb964c7089",
+    "sdist_sha256": "77f0a98ebc132dcf7f4acf0bf58f9d4afa8acf0670a1bb84d720c656d70bf77c"
+  }
+}

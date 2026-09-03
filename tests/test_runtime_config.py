@@ -18,6 +18,7 @@ from phone_agent_gateway.ai_bridge.ollama_native import OllamaNativeLLMService
 from phone_agent_gateway.ai_bridge.production_pipeline import (
     create_llm_service,
     create_provider_services,
+    ollama_runtime_options,
 )
 from phone_agent_gateway.ai_bridge.runtime_config import (
     ConfigurationError,
@@ -34,7 +35,7 @@ def test_antigravity_gemini_is_zero_credential_default(monkeypatch: pytest.Monke
 
     assert config.llm_provider == "antigravity_gemini"
     assert config.llm_model == "gemini-3.1-flash-lite"
-    assert config.speculative_pipeline_enabled is True
+    assert config.speculative_pipeline_enabled is False
     assert config.conversational_reflex_enabled is False
 
 
@@ -110,6 +111,28 @@ def test_ollama_provider_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.ollama_min_p == 0.0
     assert config.ollama_presence_penalty == 0.0
     assert config.ollama_num_ctx == 16384
+
+
+def test_ollama_warmup_and_live_turns_share_the_exact_runner_shape() -> None:
+    config = ProviderConfig(
+        llm_provider="ollama",
+        llm_model="hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M",
+        ollama_num_ctx=16384,
+        ollama_num_predict=96,
+        ollama_temperature=0.7,
+    )
+
+    options = ollama_runtime_options(config, config.llm_model)
+
+    assert options == {
+        "temperature": 0.0,
+        "top_p": 0.8,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "num_predict": 96,
+        "num_ctx": 16384,
+    }
 
 
 def test_each_hosted_provider_requires_only_its_selected_llm_key() -> None:
@@ -208,34 +231,15 @@ def test_realtime_defaults_are_bilingual_and_carrier_safe(
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("PHONE_AGENT_PIPELINE_MODE", "s2s_chatgpt_realtime")
-
-    config = ProviderConfig.from_env(require_credentials=False)
-
-    assert config.chatgpt_realtime_transcription_model == "gpt-live-transcribe"
-    assert config.chatgpt_realtime_input_languages == ("en", "fr")
-    assert config.chatgpt_realtime_noise_reduction == "off"
-    assert config.chatgpt_realtime_vad_mode == "server_vad"
-    assert config.chatgpt_realtime_vad_threshold == 0.5
-    assert config.chatgpt_realtime_vad_prefix_ms == 300
-    assert config.chatgpt_realtime_vad_silence_ms == 700
-    # Playback rate only; 1.05 measured ~189 wpm on marin, inside the confident
-    # sales range. 1.0 measured 157-174, which reads as unhurried rather than expert.
-    assert config.chatgpt_realtime_speed == 1.05
-    assert config.chatgpt_realtime_vad_eagerness == "medium"
-    assert config.chatgpt_realtime_transport == "websocket"
-    assert config.chatgpt_realtime_reasoning_effort == "low"
+    with pytest.raises(ConfigurationError, match="is deprecated and removed; please migrate to 'cascade'"):
+        ProviderConfig.from_env(require_credentials=False)
 
 
-def test_realtime_rejects_unknown_transport_and_reasoning() -> None:
-    with pytest.raises(ConfigurationError, match="TRANSPORT"):
+def test_realtime_rejects_legacy_pipeline_mode_with_migration_guidance() -> None:
+    with pytest.raises(ConfigurationError, match="is deprecated and removed; please migrate to 'cascade'"):
         ProviderConfig(
             pipeline_mode="s2s_chatgpt_realtime",
             chatgpt_realtime_transport="carrier-pigeon",
-        ).validate(require_credentials=False)
-    with pytest.raises(ConfigurationError, match="REASONING_EFFORT"):
-        ProviderConfig(
-            pipeline_mode="s2s_chatgpt_realtime",
-            chatgpt_realtime_reasoning_effort="infinite",
         ).validate(require_credentials=False)
 
 

@@ -1,38 +1,35 @@
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "phone-agent-gateway"
 version = "0.7.0"
 description = "Rooted Android cellular gateway and low-latency Pipecat voice runtime"
-requires-python = ">=3.11,<3.14"
+license = "LicenseRef-Proprietary"
+requires-python = ">=3.11,<3.12"
 dependencies = [
-    "aiohttp>=3.12,<4",
+    "aiohttp==3.14.3",
     # Used by the bundled product research engine in product_research/, which
     # runs as a subprocess against this same interpreter.
-    "click>=8,<9",
-    "httpx>=0.25",
-    "pydantic>=2.5,<3",
-    "python-socketio[asyncio_client]>=5.14,<6",
-    "rich>=13",
-    "aiortc>=1.9.0",
-    "av>=11.0.0",
-    "curl-cffi>=0.7.0",
-    "edge-tts>=7.2.8,<8",
-    "google-genai>=2.19,<3",
-    "loguru>=0.7,<1",
-    "mcp>=1.12.4,<2",
-    "numpy>=1.26,<3",
+    "click==8.4.2",
+    "httpx==0.28.1",
+    "pydantic==2.13.4",
+    "python-socketio[asyncio_client]==5.16.4",
+    "rich==15.0.0",
+    "av==17.1.0",
+    "edge-tts==7.2.8",
+    "google-genai==2.19.0",
+    "loguru==0.7.3",
+    "mcp==1.29.1",
+    "numpy==1.26.4",
     "pipecat-ai==1.7.0",
-    "pyyaml>=6,<7",
-    "soxr>=1.0,<2",
-    "supertonic>=1.3.1,<2",
-    "trafilatura>=2.2,<3",
-    "websockets>=16,<17",
-    "segno>=1.6,<2",
-    "funasr>=1.1.0",
-    "modelscope>=1.16.0",
+    "pyyaml==6.0.3",
+    "soxr==1.0.0",
+    "supertonic==1.3.1",
+    "trafilatura==2.2.0",
+    "websockets==16.1.1",
+    "segno==1.6.6",
 ]
 
 [project.scripts]
@@ -45,20 +42,31 @@ phone-agent-qualify = "phone_agent_gateway.qualification.device_qualification:ma
 [project.optional-dependencies]
 cloud = [
     "pipecat-ai[cartesia,deepgram,google,openai,openrouter]==1.7.0",
-    "python-dotenv>=1.0,<2",
+    "python-dotenv==1.2.3",
 ]
 local = [
-    "kokoro>=0.9.4",
-    "torch>=2.4.0",
-    "torchaudio>=2.4.0",
-    # Kokoro's grapheme-to-phoneme front end.
-    "misaki[en]>=0.9.4,<1",
-    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    "faster-whisper==1.2.1",
+    "huggingface-hub==1.28.0",
+    "misaki==0.9.4",
+    "num2words==0.5.14",
+    "spacy==3.8.16",
+    "torch==2.13.0+cu129",
+    "transformers==5.16.0",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85",
 ]
+
+[dependency-groups]
 dev = [
-    "pytest>=8.3,<10",
-    "pytest-asyncio>=0.24,<2",
-    "ruff>=0.12,<1",
+    "pyright[nodejs]==1.1.411",
+    "pytest==8.4.2",
+    "pytest-asyncio==1.2.0",
+    "ruff==0.12.12",
+]
+sensevoice-evaluation = [
+    # SenseVoice is retained only for research until its evaluation-only
+    # kaldiio transitive dependency is replaced or commercially licensed.
+    "funasr==1.4.13",
+    "modelscope==1.39.1",
 ]
 
 [tool.setuptools]
@@ -68,27 +76,34 @@ packages = [
     "phone_agent_gateway.ai_bridge.guardrails",
     "phone_agent_gateway.ai_bridge.identity",
     "phone_agent_gateway.ai_bridge.identity.builtin_skills",
+    "phone_agent_gateway.ai_bridge._vendor",
+    "phone_agent_gateway.ai_bridge._vendor.kokoro",
     "phone_agent_gateway.ai_bridge.memory",
     "phone_agent_gateway.ai_bridge.personality",
     "phone_agent_gateway.ai_bridge.tasks",
     "phone_agent_gateway.ai_bridge.tasks.contracts",
     "phone_agent_gateway.ai_bridge.tasks.evalsets",
     "phone_agent_gateway.ai_bridge.web_static",
+    "phone_agent_gateway.ci",
     "phone_agent_gateway.mac_client",
     "phone_agent_gateway.qualification",
     "phone_agent_gateway.qualification.devices",
+    "phone_agent_gateway.release",
 ]
 
 [tool.setuptools.package-dir]
 phone_agent_gateway = "."
 
 [tool.setuptools.package-data]
+"phone_agent_gateway.ai_bridge" = ["feature_flags.json"]
 "phone_agent_gateway.ai_bridge.personality" = ["*.yaml", "*.jsonl"]
+"phone_agent_gateway.ai_bridge._vendor.kokoro" = ["LICENSE", "PROVENANCE.md"]
 "phone_agent_gateway.ai_bridge.tasks.contracts" = ["*.yaml"]
 "phone_agent_gateway.ai_bridge.tasks.evalsets" = ["*.json"]
 "phone_agent_gateway.ai_bridge.web_static" = ["*.html"]
 "phone_agent_gateway.ai_bridge.identity" = ["builtin_skills/*/SKILL.md"]
-"phone_agent_gateway.qualification" = ["devices/*.json"]
+"phone_agent_gateway.qualification" = ["devices/*.json", "performance/*.json"]
+"phone_agent_gateway.release" = ["*.json", "trust/*.pem"]
 
 [tool.pytest.ini_options]
 addopts = "-m 'not device_integration'"
@@ -97,12 +112,49 @@ markers = [
     "device_integration: requires the connected phone and may change live call state",
 ]
 
+[tool.pyright]
+include = [
+    "ai_bridge/control_plane.py",
+    "ai_bridge/feature_flags.py",
+    "ai_bridge/runtime_config.py",
+    "ci/*.py",
+    "qualification/device_qualification.py",
+    "qualification/initial_baseline_rollback.py",
+    "qualification/performance_harness.py",
+    "release/evidence.py",
+    "release/report_signature.py",
+    "scripts/generate_baseline_corpus.py",
+]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+# Historical S2S experiments are forbidden production code and are removed in
+# Milestone 1. Quarantine them from the maintained-code gate until deletion;
+# do not spend migration effort modernizing a pipeline that cannot survive.
+extend-exclude = [
+    "s2s_research",
+    # Audited Apache-2.0 Kokoro 0.9.4 sources. PhoneAgent's maintained process
+    # boundary lives in espeak_subprocess.py and is linted explicitly below.
+    "ai_bridge/_vendor/kokoro/custom_stft.py",
+    "ai_bridge/_vendor/kokoro/istftnet.py",
+    "ai_bridge/_vendor/kokoro/model.py",
+    "ai_bridge/_vendor/kokoro/modules.py",
+    "ai_bridge/_vendor/kokoro/pipeline.py",
+    # These qualified files are immutable and guarded byte-for-byte by
+    # tests/production/test_frozen_whatsapp.py plus release/frozen-whatsapp.sha256.
+    "whatsapp_channel/native_caller.py",
+    "whatsapp_channel/whatsapp_caller.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
+# Ruff's formatter intentionally does not wrap long strings, prompts, schemas,
+# or embedded JavaScript. Keep correctness linting strict without making those
+# data literals fail the quality gate solely because of their source width.
+ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 # package-dir maps this package to the repository root, so ruff would otherwise
@@ -114,3 +166,11 @@ known-first-party = ["phone_agent_gateway"]
 [tool.uv]
 # google-api-core 2.35.0 was yanked for a path_template.expand regression.
 constraint-dependencies = ["google-api-core!=2.35.0"]
+
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu129" }

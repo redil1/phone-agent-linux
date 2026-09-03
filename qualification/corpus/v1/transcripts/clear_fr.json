@@ -1,0 +1,16 @@
+{
+  "language": "fr-FR",
+  "provenance": "synthetic",
+  "scenario_id": "clear_fr",
+  "schema_version": 1,
+  "turns": [
+    {
+      "end_ms": 3711,
+      "finalized": true,
+      "language": "fr-FR",
+      "role": "caller",
+      "start_ms": 0,
+      "text": "Bonjour, je cherche un service simple et fiable pour ma famille."
+    }
+  ]
+}

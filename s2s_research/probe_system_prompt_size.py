@@ -1,10 +1,13 @@
 import asyncio
 import json
-from aiortc import RTCPeerConnection, AudioStreamTrack
+
+from aiortc import AudioStreamTrack, RTCPeerConnection
 from curl_cffi.requests import AsyncSession
+
 from phone_agent_gateway.ai_bridge.chatgpt_realtime_auth import ChatGPTAuthManager
 from phone_agent_gateway.ai_bridge.personality.persona_compiler import PersonaCompiler
 from phone_agent_gateway.ai_bridge.tasks.task_engine import TaskEngine
+
 
 class DummyTrack(AudioStreamTrack):
     kind = "audio"

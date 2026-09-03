@@ -122,6 +122,8 @@ async def test_audio_end_marker_follows_the_last_pcm_sequence() -> None:
     await transport.output().write_transport_frame(PhoneAudioEndFrame())
 
     assert sent == [("audio", 1, 0), ("end", 1, 1)]
+    assert transport.output().audio_end_epoch == 1
+    assert await transport.output().wait_for_audio_end(0) == (1, 1)
 
 
 @pytest.mark.asyncio
@@ -203,31 +205,3 @@ def test_framed_input_rejects_wrong_call_and_stale_generation() -> None:
 
     assert list(transport.input()._pending) == [current.payload]
     assert transport.session.metrics.stale_input_frames == 2
-
-
-def test_s2s_framed_input_bypasses_unused_pipecat_queue_without_false_drops() -> None:
-    transport = active_transport()
-    received: list[bytes] = []
-    transport.add_audio_listener(received.append)
-
-    for sequence in range(100):
-        payload = sequence.to_bytes(2, "little") * 320
-        transport.feed_s2s_phone_frame(
-            MediaFrame(
-                kind=FrameKind.AUDIO,
-                direction=FrameDirection.PHONE_TO_MAC,
-                call_id=transport.session.call_id,
-                generation_id=transport.session.generation_id,
-                sequence=sequence,
-                monotonic_ns=time.monotonic_ns(),
-                payload=payload,
-                sample_rate=16_000,
-                channels=1,
-                sample_width=2,
-            )
-        )
-
-    assert len(received) == 100
-    assert list(transport.input()._pending) == []
-    assert transport.session.metrics.input_frames == 100
-    assert transport.session.metrics.dropped_input_frames == 0

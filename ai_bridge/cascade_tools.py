@@ -36,6 +36,7 @@ from typing import Any
 
 from pipecat.frames.frames import (
     Frame,
+    FunctionCallResultProperties,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
@@ -60,6 +61,7 @@ from .web_research import WebResearchConfigStore, WebResearchToolRuntime
 logger = logging.getLogger("PhoneAgentCascadeTools")
 
 EventSink = Callable[[dict[str, Any]], Awaitable[None] | None]
+TerminalRequestSink = Callable[[dict[str, Any]], Awaitable[None] | None]
 
 # The emitted protocol's delimiters. They are deliberately not markdown fences:
 # a model that writes code examples uses those, and one confusable token would
@@ -102,12 +104,14 @@ class CascadeToolRuntime:
         call_id: str,
         system_prompt: str = "",
         event_sink: EventSink | None = None,
+        terminal_request_sink: TerminalRequestSink | None = None,
     ) -> None:
         self.policy = policy
         self.caller_id = caller_id
         self.call_id = call_id
         self.system_prompt = system_prompt
         self._event_sink = event_sink
+        self._terminal_request_sink = terminal_request_sink
         self.catalog: dict[str, RealtimeTool] = {}
 
         self._contract_allowed_tools: set[str] = set()
@@ -363,6 +367,19 @@ class CascadeToolRuntime:
                 "pipeline": "cascade",
             }
         )
+        if name == END_CALL_TOOL_NAME:
+            try:
+                terminal = json.loads(output)
+            except json.JSONDecodeError:
+                terminal = None
+            if (
+                isinstance(terminal, dict)
+                and terminal.get("accepted") is True
+                and self._terminal_request_sink is not None
+            ):
+                result = self._terminal_request_sink(terminal)
+                if asyncio.iscoroutine(result):
+                    await result
         return output
 
     def _missing_required(self, name: str, raw_arguments: str) -> list[str]:
@@ -434,7 +451,15 @@ class NativeToolBinding:
                 result = json.loads(output)
             except json.JSONDecodeError:
                 result = {"result": output}
-            await params.result_callback(result)
+            properties = (
+                FunctionCallResultProperties(run_llm=False)
+                if name == END_CALL_TOOL_NAME and result.get("accepted") is True
+                else None
+            )
+            if properties is None:
+                await params.result_callback(result)
+            else:
+                await params.result_callback(result, properties=properties)
 
         return handler
 
@@ -644,7 +669,7 @@ class ToolCallProcessor(FrameProcessor):
         if name not in self.runtime.catalog:
             output = json.dumps({"error": f"unknown tool {name}"})
         else:
-            if self._preamble is not None:
+            if self._preamble is not None and name != END_CALL_TOOL_NAME:
                 with contextlib.suppress(Exception):
                     await self._preamble(name)
             output = await self.runtime.execute(
@@ -658,6 +683,17 @@ class ToolCallProcessor(FrameProcessor):
         self._iterations += 1
         self._buffer = ""
         self._suppressed = False
+        try:
+            result = json.loads(output)
+        except json.JSONDecodeError:
+            result = {}
+        if name == END_CALL_TOOL_NAME and result.get("accepted") is True:
+            # Close the empty tool-only response lifecycle. The accepted sink
+            # has queued the exact closing sentence directly to TTS, so a
+            # second LLM inference would duplicate or paraphrase it.
+            self._collecting = False
+            await self.push_frame(LLMFullResponseEndFrame(), direction)
+            return True
         await self._requeue()
         return True
 

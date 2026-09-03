@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "item": "M12-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:46:00Z",
+  "contains_customer_data": false,
+  "milestone_12_deliverables": {
+    "durable_workflow_engine": "ai_bridge/durable_workflows.py: DurableWorkflowEngine (asynchronous execution, context persistence)",
+    "human_handoff": "ai_bridge/durable_workflows.py: initiate_human_handoff (structured context transfer, summary generation)"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 713,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "444ff224b633ca652bcfe25a14cd6d850c10573083766facb4339c5ab1ca1dcf",
+    "sdist_sha256": "0bf2de41f8f045280e28defd462ea03a51f298597a57049160686ee69c70d24a"
+  }
+}

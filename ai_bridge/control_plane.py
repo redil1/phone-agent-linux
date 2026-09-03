@@ -13,7 +13,7 @@ import re
 import secrets
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -39,10 +39,22 @@ class StrictControlModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
+def _empty_skill_drafts() -> list[SkillDraft]:
+    return []
+
+
+def _empty_memory_blocks() -> list[MemoryBlock]:
+    return []
+
+
+def _empty_checks() -> list[dict[str, Any]]:
+    return []
+
+
 class RuntimeControl(StrictControlModel):
     """Call-quality and provider parameters safe to change between calls."""
 
-    pipeline_mode: Literal["cascade", "s2s_chatgpt_realtime"] = "s2s_chatgpt_realtime"
+    pipeline_mode: Literal["cascade", "s2s_chatgpt_realtime"] = "cascade"
     call_channel: Literal["gsm", "whatsapp_phone", "whatsapp"] = "gsm"
     stt_provider: str = Field(default="parakeet_local", min_length=1, max_length=100)
     stt_model: str = Field(default="mlx-community/parakeet-tdt-0.6b-v3", max_length=240)
@@ -55,7 +67,7 @@ class RuntimeControl(StrictControlModel):
     tts_aggregation: Literal["phrase", "sentence", "token"] = "sentence"
     google_tts_scene: str = Field(default="", max_length=4_000)
     google_tts_sample_context: str = Field(default="", max_length=4_000)
-    speculative_pipeline_enabled: bool = True
+    speculative_pipeline_enabled: bool = False
     conversational_reflex_enabled: bool = False
     auto_answer_enabled: bool = True
     whatsapp_country_code: str = Field(default="212", pattern=r"^[0-9]{1,4}$")
@@ -96,8 +108,8 @@ class AgentPackage(StrictControlModel):
     identity: IdentityProfile
     task: dict[str, Any]
     runtime: RuntimeControl
-    skills: list[SkillDraft] = Field(default_factory=list, max_length=64)
-    memory_blocks: list[MemoryBlock] = Field(default_factory=list, max_length=32)
+    skills: list[SkillDraft] = Field(default_factory=_empty_skill_drafts, max_length=64)
+    memory_blocks: list[MemoryBlock] = Field(default_factory=_empty_memory_blocks, max_length=32)
     tools: dict[str, Any]
     openwa: dict[str, Any]
     web_research: dict[str, Any]
@@ -147,7 +159,7 @@ class PackageValidation(StrictControlModel):
     valid: bool
     package_hash: str
     effective_state_hash: str
-    checks: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    checks: list[dict[str, Any]] = Field(default_factory=_empty_checks, max_length=100)
     warnings: list[str] = Field(default_factory=list, max_length=100)
 
 
@@ -293,9 +305,10 @@ def state_hash(payload: dict[str, Any]) -> str:
 
     def normalize(value: Any) -> Any:
         if isinstance(value, dict):
+            mapping = cast(dict[str, Any], value)
             return {
                 key: normalize(item)
-                for key, item in sorted(value.items())
+                for key, item in sorted(mapping.items())
                 if key
                 not in {
                     "revision",
@@ -308,7 +321,8 @@ def state_hash(payload: dict[str, Any]) -> str:
                 }
             }
         if isinstance(value, list):
-            return [normalize(item) for item in value]
+            sequence = cast(list[Any], value)
+            return [normalize(item) for item in sequence]
         return value
 
     return _hash(normalize(payload))

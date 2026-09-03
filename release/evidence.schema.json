@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phoneagent.local/schemas/release-evidence-v1.json",
+  "title": "PhoneAgent Release Evidence Bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "release", "environment", "subjects", "gates", "attestation"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "release": {"$ref": "#/$defs/release"},
+    "environment": {"$ref": "#/$defs/environment"},
+    "subjects": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/subject"}
+    },
+    "gates": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {"$ref": "#/$defs/gate"}
+    },
+    "attestation": {"$ref": "#/$defs/attestation"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_id", "product", "version", "profile", "source_revision", "source_tree_sha256", "created_at"],
+      "properties": {
+        "release_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,119}$"},
+        "product": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "profile": {
+          "enum": ["development", "candidate", "production-runtime", "production-android", "production-combined"]
+        },
+        "source_revision": {"type": "string", "minLength": 1},
+        "source_tree_sha256": {"$ref": "#/$defs/sha256"},
+        "created_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile_id", "os", "architecture", "python"],
+      "properties": {
+        "profile_id": {"type": "string", "minLength": 1},
+        "os": {"type": "string", "minLength": 1},
+        "architecture": {"type": "string", "minLength": 1},
+        "python": {"type": "string", "minLength": 1},
+        "gpu": {"type": ["string", "null"]},
+        "device_profile": {"type": ["string", "null"]}
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "identifier", "digest"],
+      "properties": {
+        "kind": {"enum": ["source", "container_image", "android_apk", "model"]},
+        "identifier": {"type": "string", "minLength": 1},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes", "media_type", "contains_customer_data"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^evidence/(test|evaluation|benchmark|security|migration|apk|image|rollback)/.+$"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 1},
+        "media_type": {"type": "string", "minLength": 1},
+        "contains_customer_data": {"const": false}
+      }
+    },
+    "metricValue": {"type": ["string", "number", "integer", "boolean"]},
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gate_id", "category", "required", "status", "started_at", "finished_at", "executor", "summary", "metrics", "artifacts"],
+      "properties": {
+        "gate_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,119}$"},
+        "category": {"enum": ["test", "evaluation", "benchmark", "security", "migration", "apk", "image", "rollback"]},
+        "required": {"type": "boolean"},
+        "status": {"enum": ["pass", "fail", "not_applicable"]},
+        "started_at": {"$ref": "#/$defs/timestamp"},
+        "finished_at": {"$ref": "#/$defs/timestamp"},
+        "executor": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1},
+        "metrics": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/metricValue"}
+        },
+        "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+        "not_applicable_reason": {"type": "string", "minLength": 12}
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generated_by", "generator_version", "generated_at", "command", "contains_secrets", "contains_customer_data"],
+      "properties": {
+        "generated_by": {"type": "string", "minLength": 1},
+        "generator_version": {"const": "release-evidence-v1"},
+        "generated_at": {"$ref": "#/$defs/timestamp"},
+        "command": {"type": "string", "minLength": 1},
+        "contains_secrets": {"const": false},
+        "contains_customer_data": {"const": false}
+      }
+    }
+  }
+}

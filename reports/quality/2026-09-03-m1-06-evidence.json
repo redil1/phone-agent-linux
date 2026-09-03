@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "item": "M1-06",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:06:00Z",
+  "contains_customer_data": false,
+  "studio_ui_updates": {
+    "removed_elements": [
+      "#chatgpt-realtime-options",
+      "#chatgpt-realtime-model",
+      "#chatgpt-realtime-transport",
+      "#chatgpt-realtime-reasoning",
+      "#chatgpt-realtime-vad-mode",
+      "#chatgpt-realtime-voice",
+      "s2s_chatgpt_realtime option under #pipeline-mode"
+    ],
+    "displayed_controls": [
+      "Voice Pipeline Architecture (Cascade)",
+      "STT Provider, Model & Language",
+      "LLM Provider & Model",
+      "TTS Provider, Voice & Speech settings",
+      "Turn and telephony runtime controls"
+    ]
+  },
+  "verification": {
+    "fast_unit_tests_passed": 683,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "6f919d9b9f42fc64a39c32f49b302c48b3b60ceabaf9fa1ea5289f29399672e0",
+    "sdist_sha256": "aac4bff3044c1c3bf6ccd43817c8a46394a9975287207e81e8c969bce0c1c20b"
+  }
+}

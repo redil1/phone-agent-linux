@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "status": "pass",
+  "command": ".venv/bin/pytest -q tests",
+  "completed_at": "2026-09-03T06:14:00Z",
+  "passed": 833,
+  "skipped": 39,
+  "device_tests_deselected": 4,
+  "duration_seconds": 50.20,
+  "contains_customer_data": false
+}

@@ -3,11 +3,17 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ANDROID_JAR="/Users/aziz/Library/Android/sdk/platforms/android-34/android.jar"
+SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+ANDROID_JAR="${PHONE_AGENT_ANDROID_JAR:-${SDK:+$SDK/platforms/android-34/android.jar}}"
 TEST_CLASSES="$DIR/build/test-classes"
 
+if [[ -z "$ANDROID_JAR" || ! -f "$ANDROID_JAR" ]]; then
+    echo "Android 34 android.jar not found; set ANDROID_HOME or PHONE_AGENT_ANDROID_JAR." >&2
+    exit 2
+fi
+
 mkdir -p "$TEST_CLASSES"
-javac -encoding UTF-8 \
+javac --release 17 -encoding UTF-8 \
     -cp "$ANDROID_JAR:$DIR/build/classes" \
     -d "$TEST_CLASSES" \
     "$DIR/testsrc/com/phoneagent/gateway/ProtocolCodecInteropTest.java"

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "status": "pass",
+  "validated_at": "2026-09-03T06:03:15.101308+00:00",
+  "finding_count": 1,
+  "exception_count": 1,
+  "exception_policy": "security/dependency-audit-allowlist.json",
+  "contains_customer_data": false
+}

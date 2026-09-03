@@ -133,6 +133,7 @@ async def call_antigravity(
     """Extract using the Google account already signed in to Antigravity."""
 
     import aiohttp
+
     from phone_agent_gateway.ai_bridge.antigravity_gemini_llm import (
         MODEL_MAP,
         AntigravityGeminiLLMService,

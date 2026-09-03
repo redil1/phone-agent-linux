@@ -14,10 +14,24 @@ the single thing most likely to waste an afternoon.
 ./android_service_apk/build_and_install.sh --build-only
 ```
 
-Produces `android_service_apk/PhoneAgentGateway.apk`, signed with a debug
-keystore the script generates on first run. The same command works on Linux and
-macOS; set `ANDROID_HOME` or `ANDROID_SDK_ROOT` when the SDK is not in the
-platform's default location.
+Produces `android_service_apk/PhoneAgentGateway.apk`. By default, development
+builds use the local debug keystore that the script generates on first run. An
+upgrade of an installed privileged app must use the exact same signing key as
+the APK already on the phone:
+
+```bash
+PHONE_AGENT_SIGNING_KEYSTORE=/secure/path/phoneagent.keystore \
+PHONE_AGENT_SIGNING_ALIAS=debug \
+PHONE_AGENT_SIGNING_STORE_PASSWORD='...' \
+PHONE_AGENT_SIGNING_KEY_PASSWORD='...' \
+./android_service_apk/build_and_install.sh --device-id SERIAL
+```
+
+The installer compares certificate digests before changing Android and fails
+closed on a mismatch. The same command works on Linux and macOS; set
+`ANDROID_HOME` or `ANDROID_SDK_ROOT` when the SDK is not in the platform's
+default location. Keep the signing keystore outside source control and backups
+under access control; losing it makes in-place upgrades impossible.
 
 Omit `--build-only` and it also runs `adb install -r -g`. This is a production
 update only when the same package is already baked into the system image as a

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "item": "M1-09",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:16:00Z",
+  "contains_customer_data": false,
+  "one_pipeline_invariant_test": {
+    "test_file": "tests/test_one_pipeline_invariant.py",
+    "enforcements": [
+      "Strict rejection of legacy speech-to-speech runtime modes in ProviderConfig",
+      "Verification of zero speech-to-speech selectors or options in Studio index.html",
+      "Assertion that no legacy S2S runtime files exist in ai_bridge/"
+    ]
+  },
+  "verification": {
+    "fast_unit_tests_passed": 686,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "79f5453fef51ad9771084cc010067c1d86d4b1f3c0a1b9b0167aa860de275b2f",
+    "sdist_sha256": "83fc20aee5a866c2f452342bca28a95198016b66e64408bceeb616356bb050e5"
+  }
+}

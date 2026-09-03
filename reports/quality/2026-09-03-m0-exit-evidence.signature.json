@@ -1,0 +1,9 @@
+{
+  "algorithm": "Ed25519",
+  "contains_customer_data": false,
+  "contains_secrets": false,
+  "public_key_sha256": "986a9254d801eff14a82bfb62595cea1d8002f4c4dc55273da35c46188cbe86a",
+  "report_sha256": "2e53f42723d83f876064d51cfa45da11f0c0b2bd8d2d4e994684ee932c6845ca",
+  "schema_version": 1,
+  "signature_base64": "9rKOFC83jtjO8WZAKMlpIX9e8Ux08bazg3kRVUrvVQDKUFJrYJ7l3awimNjwAegAsqG1HaEqpqqvuv8gTlpGBQ=="
+}

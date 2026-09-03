@@ -1,0 +1,23 @@
+{
+  "events": [
+    {
+      "at_ms": 2779,
+      "type": "transcript.final"
+    },
+    {
+      "at_ms": 2799,
+      "type": "turn.committed"
+    },
+    {
+      "at_ms": 2809,
+      "details": {
+        "authorization": "required",
+        "tool": "callback_schedule"
+      },
+      "type": "tool.proposed"
+    }
+  ],
+  "provenance": "synthetic",
+  "scenario_id": "tool_call",
+  "schema_version": 1
+}

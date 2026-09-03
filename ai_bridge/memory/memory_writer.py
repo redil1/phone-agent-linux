@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..feature_flags import feature_flag_enabled
 from ..identity.memory import AsyncIdentityMemory, LocalEpisodeStore, scope_hash
 from ..identity.models import MemoryBlock, MemorySource
 from ..identity.store import DEFAULT_IDENTITY_ROOT, IdentityStore
@@ -32,6 +33,9 @@ class ValidatedMemoryWriter:
     ) -> None:
         self.memory_manager = memory_manager or LayeredMemoryManager()
         self._identity_memory = identity_memory
+        self._identity_proposals_enabled = feature_flag_enabled(
+            "PHONE_AGENT_IDENTITY_PROPOSALS_ENABLED", default=False
+        )
 
     def _long_term_memory(self) -> AsyncIdentityMemory:
         if self._identity_memory is None:
@@ -140,17 +144,12 @@ class ValidatedMemoryWriter:
                 logger.info(
                     "Committed validated preferences for %s: %s", phone_number, extracted_prefs
                 )
-                if os.getenv("PHONE_AGENT_IDENTITY_PROPOSALS_ENABLED", "false").lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                    "on",
-                }:
+                if self._identity_proposals_enabled:
                     root = Path(
                         os.getenv("PHONE_AGENT_IDENTITY_ROOT", "").strip() or DEFAULT_IDENTITY_ROOT
                     ).expanduser()
                     language = str(extracted_prefs["preferred_language"])
-                    IdentityStore(root).create_memory_proposal(
+                    proposal = IdentityStore(root).create_memory_proposal(
                         MemoryBlock(
                             block_id=f"caller_language_{scope_hash(phone_number)[7:23]}",
                             kind="human",
@@ -163,6 +162,11 @@ class ValidatedMemoryWriter:
                             caller_scope_hash=scope_hash(phone_number),
                         ),
                         evidence=f"Explicit caller statement: {caller_text[:500]}",
+                    )
+                    logger.info(
+                        "identity_proposal_created proposal_id=%s scope=%s",
+                        proposal.proposal_id,
+                        proposal.block.caller_scope_hash,
                     )
 
         except Exception as exc:

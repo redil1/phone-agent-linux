@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "item": "M9-EXIT-GATE",
+  "status": "pass",
+  "generated_at": "2026-09-03T20:40:00Z",
+  "contains_customer_data": false,
+  "milestone_9_deliverables": {
+    "tool_definition": "ai_bridge/universal_tools.py: ToolDefinition (risk classification, approval requirement, idempotency)",
+    "universal_tool_plane": "ai_bridge/universal_tools.py: UniversalToolPlane (centralized authorization & dispatch)",
+    "approval_workflow": "ai_bridge/universal_tools.py: ApprovalRequest & decide_approval"
+  },
+  "verification": {
+    "fast_unit_tests_passed": 710,
+    "fast_unit_tests_skipped": 39,
+    "fast_unit_tests_deselected": 1,
+    "quality_stage": "pass",
+    "package_stage": "pass",
+    "security_stage": "pass_with_one_owned_exception",
+    "licence_sbom_stage": "pass",
+    "wheel_sha256": "5d9df504bbb4f50149a2514aad1503341458175c2c9646aaa1f5a3b1a14d81fb",
+    "sdist_sha256": "a026841f913c779923d8869c66801a34de0c8dcc4b4f3038b40e11bd2ee46607"
+  }
+}

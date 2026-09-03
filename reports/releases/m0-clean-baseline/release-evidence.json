@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "release": {
+    "release_id": "m0-clean-baseline",
+    "product": "phone-agent-gateway",
+    "version": "0.7.0-dev-m0",
+    "profile": "development",
+    "source_revision": "uncommitted",
+    "source_tree_sha256": "7705c27be3599b99c2bd76d858155e662d855432dd1b90770acf73b4fd1df55d",
+    "created_at": "2026-09-03T07:10:07Z"
+  },
+  "environment": {
+    "profile_id": "linux-x86_64-rtx-a6000-development",
+    "os": "linux",
+    "architecture": "x86_64",
+    "python": "3.11.16",
+    "gpu": "NVIDIA RTX A6000",
+    "device_profile": null
+  },
+  "subjects": [
+    {
+      "kind": "source",
+      "identifier": "phone_agent_gateway-0.7.0.tar.gz",
+      "digest": "sha256:7705c27be3599b99c2bd76d858155e662d855432dd1b90770acf73b4fd1df55d"
+    },
+    {
+      "kind": "model",
+      "identifier": "hf.co/EryriLabs/phonellm-alpha-1-GGUF:Q4_K_M",
+      "digest": "sha256:50d23fa5d7502414c990a1ed33167cdb604190d9018a82a337dd81eeb56c5c9f"
+    }
+  ],
+  "gates": [
+    {
+      "gate_id": "m0-clean-test",
+      "category": "test",
+      "required": true,
+      "status": "pass",
+      "started_at": "2026-09-03T07:05:28Z",
+      "finished_at": "2026-09-03T07:09:58Z",
+      "executor": "ci/run-stage.sh quality plus full non-device pytest and reproducible package build",
+      "summary": "Clean quality, full tests, two byte-identical package builds, and installed-wheel smoke passed.",
+      "metrics": {"passed": 900, "skipped": 40, "device_deselected": 4, "reproducible_builds": 2},
+      "artifacts": [
+        {
+          "path": "evidence/test/clean-quality.json",
+          "sha256": "fd7bb1c8e55e3bf2281ffa873d3b157c3ae38415450435b2eec153237960759d",
+          "bytes": 280,
+          "media_type": "application/json",
+          "contains_customer_data": false
+        },
+        {
+          "path": "evidence/test/reproducible-package.json",
+          "sha256": "e4da0ba51ed8582b07e41b441d1349f6246a613f4dc9aaf40a19d8820e491d99",
+          "bytes": 414,
+          "media_type": "application/json",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "gate_id": "m0-clean-evaluation",
+      "category": "evaluation",
+      "required": false,
+      "status": "pass",
+      "started_at": "2026-09-03T06:46:10Z",
+      "finished_at": "2026-09-03T06:46:22Z",
+      "executor": "ci/run-stage.sh eval",
+      "summary": "Conversation, policy, personality, tool, and deterministic Cascade performance evaluations passed.",
+      "metrics": {"passed": 153, "failed": 0, "contract_benchmark": true},
+      "artifacts": [
+        {
+          "path": "evidence/evaluation/conversation-eval.json",
+          "sha256": "cec6255a88e9a2dac5e90f255051526b0c826a4e6c2159a09c748e455cb41aea",
+          "bytes": 186,
+          "media_type": "application/json",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "gate_id": "m0-clean-benchmark",
+      "category": "benchmark",
+      "required": false,
+      "status": "pass",
+      "started_at": "2026-09-03T06:37:36Z",
+      "finished_at": "2026-09-03T06:45:06Z",
+      "executor": "qualification.performance_harness",
+      "summary": "Benchmark execution is reproducible and complete; the real profile honestly records one unresolved drift threshold.",
+      "metrics": {"contract_checks_passed": 6, "a6000_checks_passed": 5, "a6000_checks_total": 6, "a6000_long_call_drift_percent": 26.556},
+      "artifacts": [
+        {
+          "path": "evidence/benchmark/cascade-performance.json",
+          "sha256": "3472beb65754a1e8f7d2d8709b4f074ea6909d0403522772f2ea467002d82c30",
+          "bytes": 682,
+          "media_type": "application/json",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "gate_id": "m0-clean-security",
+      "category": "security",
+      "required": true,
+      "status": "pass",
+      "started_at": "2026-09-03T06:47:35Z",
+      "finished_at": "2026-09-03T06:48:09Z",
+      "executor": "ci/run-stage.sh security and licence-sbom",
+      "summary": "Dependency audit, exception policy, licence inventory, and CycloneDX SBOM validation passed.",
+      "metrics": {"findings": 1, "owned_exceptions": 1, "sbom_components": 181, "release_blockers": 0},
+      "artifacts": [
+        {
+          "path": "evidence/security/dependency-policy.json",
+          "sha256": "f0672aec6a858fce57d7d36179d4b8742b49c6fa544e06968d899f8878a0a02c",
+          "bytes": 413,
+          "media_type": "application/json",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "gate_id": "m0-clean-migration",
+      "category": "migration",
+      "required": false,
+      "status": "not_applicable",
+      "started_at": "2026-09-03T06:55:00Z",
+      "finished_at": "2026-09-03T06:55:00Z",
+      "executor": "release-engineering",
+      "summary": "The Milestone 0 development baseline does not migrate persisted state.",
+      "metrics": {},
+      "artifacts": [],
+      "not_applicable_reason": "No database, persisted package, protocol, or configuration schema was activated by this evidence bundle."
+    },
+    {
+      "gate_id": "m0-clean-apk",
+      "category": "apk",
+      "required": false,
+      "status": "not_applicable",
+      "started_at": "2026-09-03T06:55:00Z",
+      "finished_at": "2026-09-03T06:55:00Z",
+      "executor": "release-engineering",
+      "summary": "The clean source baseline does not build or install a new Android package.",
+      "metrics": {},
+      "artifacts": [],
+      "not_applicable_reason": "The installed qualified APK and Android system-app state were not changed by the clean baseline run."
+    },
+    {
+      "gate_id": "m0-clean-image",
+      "category": "image",
+      "required": false,
+      "status": "not_applicable",
+      "started_at": "2026-09-03T06:55:00Z",
+      "finished_at": "2026-09-03T06:55:00Z",
+      "executor": "release-engineering",
+      "summary": "The clean source baseline does not promote or deploy a container image.",
+      "metrics": {},
+      "artifacts": [],
+      "not_applicable_reason": "The live image remained unchanged; M0 dependency evidence already qualifies the isolated candidate image."
+    },
+    {
+      "gate_id": "m0-clean-rollback",
+      "category": "rollback",
+      "required": false,
+      "status": "pass",
+      "started_at": "2026-09-03T07:06:10Z",
+      "finished_at": "2026-09-03T07:06:10Z",
+      "executor": "qualification.initial_baseline_rollback --apply-runtime",
+      "summary": "Exact-image rollback policy and live no-op drill verified the immutable baseline, idle call state, health, and Cascade worker read-back.",
+      "metrics": {"checks_passed": 15, "checks_failed": 0, "simulated_restore_paths": 2, "live_mutations": 0},
+      "artifacts": [
+        {
+          "path": "evidence/rollback/runtime-drill.json",
+          "sha256": "b582153fb8a274d3be3289be263da904baca838e7e228ac1bcab796893025a0c",
+          "bytes": 2785,
+          "media_type": "application/json",
+          "contains_customer_data": false
+        }
+      ]
+    }
+  ],
+  "attestation": {
+    "generated_by": "release-engineering",
+    "generator_version": "release-evidence-v1",
+    "generated_at": "2026-09-03T07:10:07Z",
+    "command": "uv run python release/evidence.py reports/releases/m0-clean-baseline --seal",
+    "contains_secrets": false,
+    "contains_customer_data": false
+  }
+}

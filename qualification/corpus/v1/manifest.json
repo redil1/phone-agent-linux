@@ -1,0 +1,252 @@
+{
+  "corpus_id": "phoneagent-cascade-baseline-v1",
+  "coverage": [
+    "clear_speech",
+    "noise",
+    "interruption",
+    "silence",
+    "fragment",
+    "english",
+    "french",
+    "tool_call",
+    "long_turn",
+    "call_teardown"
+  ],
+  "created_at_utc": "2026-09-02T00:00:00Z",
+  "provenance": {
+    "contains_customer_data": false,
+    "fixture_license": "CC0-1.0",
+    "generator": "scripts/generate_baseline_corpus.py",
+    "generator_dependencies": {
+      "espeak_ng": "eSpeak NG text-to-speech: 1.50  Data at: /usr/lib/x86_64-linux-gnu/espeak-ng-data",
+      "ffmpeg": "ffmpeg version 4.4.2-0ubuntu0.22.04.1 Copyright (c) 2000-2021 the FFmpeg developers"
+    },
+    "synthetic_only": true
+  },
+  "scenarios": [
+    {
+      "audio": {
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "path": "audio/clear_en.wav",
+        "sample_rate_hz": 16000,
+        "sha256": "b0e01989b4d35490fe3f6a172cd913076217bea0e36a54850240a613123833bb"
+      },
+      "categories": [
+        "clear_speech",
+        "english"
+      ],
+      "description": "Clear synthetic English telephone speech.",
+      "duration_ms": 4355,
+      "events": {
+        "path": "events/clear_en.json",
+        "sha256": "4f63db752a6edef7589fec3ec36b34876d69ba14e6fb61d9a6bbb8110f7433bb"
+      },
+      "id": "clear_en",
+      "language": "en-US",
+      "transcript": {
+        "path": "transcripts/clear_en.json",
+        "sha256": "c4128c0f2bc4e6721f50d64c4e7f3c3b3c6fd25dd519ff0148ea25e4c3b65f65"
+      }
+    },
+    {
+      "audio": {
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "path": "audio/clear_fr.wav",
+        "sample_rate_hz": 16000,
+        "sha256": "3edc142c234b6e0c96e4f6c900a2151d93ead7162b044babb8265cccee3b6402"
+      },
+      "categories": [
+        "clear_speech",
+        "french"
+      ],
+      "description": "Clear synthetic French telephone speech.",
+      "duration_ms": 3711,
+      "events": {
+        "path": "events/clear_fr.json",
+        "sha256": "598b0ba8e0bc6aa1375ec1c3c5700d2cef30671d8f6c8c481f39af2bd6afd648"
+      },
+      "id": "clear_fr",
+      "language": "fr-FR",
+      "transcript": {
+        "path": "transcripts/clear_fr.json",
+        "sha256": "083cd01d3de9567a1bb6edd1b650eaad17ab2c7b4eabc0a2bef196f828ab2e80"
+      }
+    },
+    {
+      "audio": {
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "path": "audio/noise_only.wav",
+        "sample_rate_hz": 16000,
+        "sha256": "78a5e0442b6fa0ad4e673b09767db6c70c273defbda9d7e09e619ab316b49c46"
+      },
+      "categories": [
+        "noise"
+      ],
+      "description": "Seeded low-amplitude noise that must not become a caller turn.",
+      "duration_ms": 3000,
+      "events": {
+        "path": "events/noise_only.json",
+        "sha256": "489914ea05aa152bd2431d021b8c7e40865bbb8a76f02e57c25d6f07796a1795"
+      },
+      "id": "noise_only",
+      "language": "und",
+      "transcript": {
+        "path": "transcripts/noise_only.json",
+        "sha256": "cae44bbe18681942a1aba27acca352de157de31840a2f7259cf5d0c155ca69a9"
+      }
+    },
+    {
+      "audio": {
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "path": "audio/interruption.wav",
+        "sample_rate_hz": 16000,
+        "sha256": "2b04dff6d5fa9d30903ce0c4e00d7170c53a61bab2fb76b52b0f44cddc79d1b0"
+      },
+      "categories": [
+        "interruption",
+        "english"
+      ],
+      "description": "Overlapping speech with an acknowledged obsolete-audio flush.",
+      "duration_ms": 4355,
+      "events": {
+        "path": "events/interruption.json",
+        "sha256": "56204855972e49ee0bee743269e37ebd564a06c191d5611ecea9c7a87797c025"
+      },
+      "id": "interruption",
+      "language": "en-US",
+      "transcript": {
+        "path": "transcripts/interruption.json",
+        "sha256": "a12020aa9c301a0a0b8e4314f3aaaf6436a97671bac7fed8208042389c27821b"
+      }
+    },
+    {
+      "audio": {
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "path": "audio/silence.wav",
+        "sample_rate_hz": 16000,
+        "sha256": "20eaebffe1816e0ffa6f7f854f5ef4ea80d5349faaf0ce1fec1b713e7fde58fa"
+      },
+      "categories": [
+        "silence"
+      ],
+      "description": "Two seconds of digital silence.",
+      "duration_ms": 2000,
+      "events": {
+        "path": "events/silence.json",
+        "sha256": "bda250181fdf80714440fdac0184f7998950f2413082c328b5e1e0ad3f3e9992"
+      },
+      "id": "silence",
+      "language": "und",
+      "transcript": {
+        "path": "transcripts/silence.json",
+        "sha256": "be3aa75c06d52269ed080e567a9204137ac9d6fc718e28d7e89f0ef480d45bdb"
+      }
+    },
+    {
+      "audio": {
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "path": "audio/fragment.wav",
+        "sample_rate_hz": 16000,
+        "sha256": "7bd465be591987e226db5a0a8436f8c29ecf79ddfb0ce4882ad1294444802e25"
+      },
+      "categories": [
+        "fragment",
+        "english"
+      ],
+      "description": "A deliberately truncated caller utterance.",
+      "duration_ms": 650,
+      "events": {
+        "path": "events/fragment.json",
+        "sha256": "8c4c893508c2fbd6490b8b8ed77a2c472a348133188c3c85cf76326144e245e1"
+      },
+      "id": "fragment",
+      "language": "en-US",
+      "transcript": {
+        "path": "transcripts/fragment.json",
+        "sha256": "539df757dc1a4dba1d50a003bebb2a020fc8e7fdd32aa5d33461093e9e2c82be"
+      }
+    },
+    {
+      "audio": {
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "path": "audio/tool_call.wav",
+        "sample_rate_hz": 16000,
+        "sha256": "45634be0f8b71a650657316b0ed43241497bdab32be3bf8cb1288ac3b8be33c8"
+      },
+      "categories": [
+        "tool_call",
+        "english"
+      ],
+      "description": "A caller request that should propose, but not execute, a typed tool.",
+      "duration_ms": 2799,
+      "events": {
+        "path": "events/tool_call.json",
+        "sha256": "0ba9761aa6a068ef017e4f322e74b789abbf66dc602deb0cbd6a1f49dd4d57df"
+      },
+      "id": "tool_call",
+      "language": "en-US",
+      "transcript": {
+        "path": "transcripts/tool_call.json",
+        "sha256": "bd57533db08b1200da81e9aa03227cfeb8769806c92414e7efdaa8ed052b93bf"
+      }
+    },
+    {
+      "audio": {
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "path": "audio/long_turn.wav",
+        "sample_rate_hz": 16000,
+        "sha256": "71d3fdedae9a294fce166a0e914ec71a6260fbd1d94fad70036d4334d720d906"
+      },
+      "categories": [
+        "long_turn",
+        "english"
+      ],
+      "description": "A multi-sentence caller turn for duration and context tests.",
+      "duration_ms": 17878,
+      "events": {
+        "path": "events/long_turn.json",
+        "sha256": "6e897026a7f55eb2ea25f93682d813ae4ba83134eff5b36e920724c63cb94bca"
+      },
+      "id": "long_turn",
+      "language": "en-US",
+      "transcript": {
+        "path": "transcripts/long_turn.json",
+        "sha256": "be01500d767ca7f15804a1a92309e6fe14e4f75ab30fab83e932b688fdca572f"
+      }
+    },
+    {
+      "audio": {
+        "channels": 1,
+        "encoding": "pcm_s16le",
+        "path": "audio/call_teardown.wav",
+        "sample_rate_hz": 16000,
+        "sha256": "21c1090a29546bf6e940f3778e776cf8ce28a944af081f121ef1ee352444eadc"
+      },
+      "categories": [
+        "call_teardown",
+        "english"
+      ],
+      "description": "A clean goodbye and authenticated-link teardown sequence.",
+      "duration_ms": 4546,
+      "events": {
+        "path": "events/call_teardown.json",
+        "sha256": "6095d3afdd5f4e65312b3ba6f996f3b50a6689a39307e02645ba09eabf7a04ab"
+      },
+      "id": "call_teardown",
+      "language": "en-US",
+      "transcript": {
+        "path": "transcripts/call_teardown.json",
+        "sha256": "d392e79693ffbc4c4be9504eda0b7a6a3cde8f9b1e4124765316af2e6a08c3a8"
+      }
+    }
+  ],
+  "schema_version": 1
+}

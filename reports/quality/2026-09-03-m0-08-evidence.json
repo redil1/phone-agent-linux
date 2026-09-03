@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "backlog_id": "M0-08",
+  "status": "pass",
+  "verified_at": "2026-09-03T06:03:29Z",
+  "registry": {
+    "path": "ai_bridge/feature_flags.json",
+    "sha256": "54b9d0485ef2993b88d644d066728291da8588ad3bd43d8813ff4ab689c6f1a3",
+    "temporary_flags": 4,
+    "transition_controls": 1,
+    "durable_controls": 16,
+    "alternate_pipeline_flags": 0
+  },
+  "verification": {
+    "ruff": "pass",
+    "pyright_errors": 0,
+    "pyright_warnings": 0,
+    "frozen_whatsapp": "pass",
+    "tests_passed": 825,
+    "tests_skipped": 39,
+    "device_tests_deselected": 4,
+    "test_duration_seconds": 49.46,
+    "package": "pass",
+    "wheel_runtime_registry_smoke": "pass",
+    "security_policy": "pass",
+    "security_findings": 1,
+    "security_exceptions": 1
+  },
+  "artifacts": [
+    {
+      "path": "artifacts/ci-m0-08-final/quality/feature-flag-validation.json",
+      "sha256": "0386d358b1568674d7b85a502cc19641fe359066ee97e27db9cc25e37fa364dc"
+    },
+    {
+      "path": "artifacts/ci-m0-08-final/package/phone_agent_gateway-0.7.0-py3-none-any.whl",
+      "sha256": "5ef2c473c51d579da25f1162addf6a57ba61de630a2ebfb4399cf2138da844d1"
+    },
+    {
+      "path": "artifacts/ci-m0-08-final/package/release-manifest.json",
+      "sha256": "ea404b0b1f289e117feab3ff4e9dd3f69ba7bb91f7bd41df51955a81c1552d0d"
+    },
+    {
+      "path": "artifacts/ci-m0-08-final/security/dependency-audit.json",
+      "sha256": "aa42327020bb47fe3e008f5dfb7fd4d67728fa61e4abea85eaf08cab9f2ee776"
+    }
+  ],
+  "deployment_changed": false,
+  "android_or_gsm_changed": false
+}

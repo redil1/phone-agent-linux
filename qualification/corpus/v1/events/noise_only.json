@@ -1,0 +1,26 @@
+{
+  "events": [
+    {
+      "at_ms": 0,
+      "type": "audio.started"
+    },
+    {
+      "at_ms": 250,
+      "type": "noise.detected"
+    },
+    {
+      "at_ms": 2900,
+      "details": {
+        "reason": "no_authoritative_speech"
+      },
+      "type": "turn.suppressed"
+    },
+    {
+      "at_ms": 3000,
+      "type": "audio.ended"
+    }
+  ],
+  "provenance": "synthetic",
+  "scenario_id": "noise_only",
+  "schema_version": 1
+}

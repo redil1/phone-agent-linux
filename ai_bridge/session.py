@@ -139,6 +139,8 @@ class CallSessionState:
             self._link_epoch = uuid4()
             self._input_sequence = -1
             self._output_sequence = -1
+            self.metrics.last_output_sequence = -1
+            self.metrics.last_rendered_sequence = -1
             return self._link_epoch
 
     def resynchronize_generation(self, minimum_generation: int) -> int:
@@ -157,6 +159,8 @@ class CallSessionState:
                 self._generation_id = minimum_generation
                 self._input_sequence = -1
                 self._output_sequence = -1
+                self.metrics.last_output_sequence = -1
+                self.metrics.last_rendered_sequence = -1
             return self._generation_id
 
     def next_output_identity(self) -> tuple[int, int]:
@@ -214,6 +218,26 @@ class CallSessionState:
                 self.metrics.last_rendered_sequence, sequence
             )
             return True
+
+    async def wait_until_rendered(
+        self,
+        generation_id: int,
+        sequence: int,
+        *,
+        timeout_secs: float = 6.0,
+        poll_interval_secs: float = 0.01,
+    ) -> str:
+        """Wait for Android's ordered playout ACK, interruption, or timeout."""
+
+        deadline = asyncio.get_running_loop().time() + timeout_secs
+        while asyncio.get_running_loop().time() < deadline:
+            with self._lock:
+                if generation_id != self._generation_id:
+                    return "interrupted"
+                if self.metrics.last_rendered_sequence >= sequence:
+                    return "completed"
+            await asyncio.sleep(poll_interval_secs)
+        return "timeout"
 
     def interrupt(self, reason: str) -> GenerationAdvance:
         with self._lock:

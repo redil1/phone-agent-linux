@@ -1,10 +1,13 @@
 import asyncio
-import json
 import fractions
+import json
+
 import av
-from aiortc import RTCPeerConnection, RTCSessionDescription, AudioStreamTrack
+from aiortc import AudioStreamTrack, RTCPeerConnection, RTCSessionDescription
 from curl_cffi.requests import AsyncSession
+
 from phone_agent_gateway.ai_bridge.chatgpt_realtime_auth import ChatGPTAuthManager
+
 
 class StableTrack(AudioStreamTrack):
     kind = "audio"
