@@ -158,21 +158,6 @@ class FasterQwen3TTSService(TTSService):
     def can_generate_metrics(self) -> bool:
         return True
 
-    def _generate_audio_chunks(
-        self, text: str, voice: str, language: str
-    ) -> list[np.ndarray]:
-        engine = self._ensure_engine()
-        chunks: list[np.ndarray] = []
-        for chunk, _sr, _ in engine.model.generate_custom_voice_streaming(
-            text=text,
-            speaker=voice,
-            language=language,
-            chunk_size=self._chunk_size,
-        ):
-            if chunk is not None and len(chunk) > 0:
-                chunks.append(chunk)
-        return chunks
-
     @traced_tts
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
         clean_text = " ".join(text.strip().split())
@@ -187,46 +172,64 @@ class FasterQwen3TTSService(TTSService):
 
         loop = asyncio.get_running_loop()
         started = loop.time()
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+
+        def _producer() -> None:
+            try:
+                for chunk, _sr, _ in engine.model.generate_custom_voice_streaming(
+                    text=clean_text,
+                    speaker=voice,
+                    language=language,
+                    chunk_size=self._chunk_size,
+                ):
+                    if chunk is not None and len(chunk) > 0:
+                        loop.call_soon_threadsafe(queue.put_nowait, ("chunk", chunk))
+                loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+            except Exception as err:
+                loop.call_soon_threadsafe(queue.put_nowait, ("error", err))
+
+        engine.executor.submit(_producer)
+
         first_audio = True
-
         try:
-            chunks = await loop.run_in_executor(
-                engine.executor,
-                lambda: self._generate_audio_chunks(clean_text, voice, language),
-            )
+            while True:
+                kind, data = await queue.get()
+                if kind == "chunk":
+                    if first_audio:
+                        first_audio = False
+                        ttfa_ms = (loop.time() - started) * 1000
+                        await self.stop_ttfb_metrics()
+                        if self._latency_sink is not None:
+                            res = self._latency_sink(
+                                {
+                                    "type": "latency_metric",
+                                    "stage": "tts_ttfa",
+                                    "provider": "faster_qwen3_tts",
+                                    "model": self._model_id,
+                                    "milliseconds": round(ttfa_ms, 1),
+                                    "text_chars": len(clean_text),
+                                }
+                            )
+                            if asyncio.iscoroutine(res):
+                                await res
 
-            for chunk in chunks:
-                if first_audio:
-                    first_audio = False
-                    ttfa_ms = (loop.time() - started) * 1000
-                    await self.stop_ttfb_metrics()
-                    if self._latency_sink is not None:
-                        res = self._latency_sink(
-                            {
-                                "type": "latency_metric",
-                                "stage": "tts_ttfa",
-                                "provider": "faster_qwen3_tts",
-                                "model": self._model_id,
-                                "milliseconds": round(ttfa_ms, 1),
-                                "text_chars": len(clean_text),
-                            }
-                        )
-                        if asyncio.iscoroutine(res):
-                            await res
-
-                resampled = soxr.resample(
-                    chunk,
-                    in_rate=QWEN3_SAMPLE_RATE,
-                    out_rate=self._target_sample_rate,
-                    quality="soxr_qq",
-                )
-                pcm16 = (np.clip(resampled, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
-                yield TTSAudioRawFrame(
-                    audio=pcm16,
-                    sample_rate=self._target_sample_rate,
-                    num_channels=1,
-                    context_id=context_id,
-                )
+                    resampled = soxr.resample(
+                        data,
+                        in_rate=QWEN3_SAMPLE_RATE,
+                        out_rate=self._target_sample_rate,
+                        quality="soxr_qq",
+                    )
+                    pcm16 = (np.clip(resampled, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+                    yield TTSAudioRawFrame(
+                        audio=pcm16,
+                        sample_rate=self._target_sample_rate,
+                        num_channels=1,
+                        context_id=context_id,
+                    )
+                elif kind == "done":
+                    break
+                elif kind == "error":
+                    raise data
 
         except Exception as exc:
             logger.exception("FasterQwen3TTS generation error text=%r", clean_text)
