@@ -172,22 +172,45 @@ def create_provider_services(config: ProviderConfig, sample_rate: int) -> Provid
         context_bias = config.antigravity_live_context_bias
         if not context_bias:
             context_bias = _default_stt_context(config.stt_language)
-        stt = AntigravityLiveSTTService(
-            sample_rate=sample_rate,
-            language=config.stt_language,
-            chunk_duration_ms=config.antigravity_live_chunk_ms,
-            context_bias=context_bias,
-            silence_endpoint_ms=config.antigravity_live_endpoint_ms,
-            incomplete_endpoint_ms=config.antigravity_live_incomplete_endpoint_ms,
-            transcript_stability_ms=config.antigravity_live_stability_ms,
-            fallback_endpoint_ms=config.antigravity_live_fallback_endpoint_ms,
-            speculative_pipeline_enabled=config.speculative_pipeline_enabled,
-            speculative_prefetch_silence_ms=config.speculative_prefetch_silence_ms,
-            speculative_prefetch_stability_ms=config.speculative_prefetch_stability_ms,
-            speculative_fast_endpoint_ms=config.speculative_fast_endpoint_ms,
-            speculative_ambiguous_endpoint_ms=config.speculative_ambiguous_endpoint_ms,
-            speculative_incomplete_endpoint_ms=config.speculative_incomplete_endpoint_ms,
-        )
+
+        try:
+            test_svc = AntigravityLiveSTTService(
+                sample_rate=sample_rate,
+                language=config.stt_language,
+                chunk_duration_ms=config.antigravity_live_chunk_ms,
+                context_bias=context_bias,
+                silence_endpoint_ms=config.antigravity_live_endpoint_ms,
+                incomplete_endpoint_ms=config.antigravity_live_incomplete_endpoint_ms,
+                transcript_stability_ms=config.antigravity_live_stability_ms,
+                fallback_endpoint_ms=config.antigravity_live_fallback_endpoint_ms,
+                speculative_pipeline_enabled=config.speculative_pipeline_enabled,
+                speculative_prefetch_silence_ms=config.speculative_prefetch_silence_ms,
+                speculative_prefetch_stability_ms=config.speculative_prefetch_stability_ms,
+                speculative_fast_endpoint_ms=config.speculative_fast_endpoint_ms,
+                speculative_ambiguous_endpoint_ms=config.speculative_ambiguous_endpoint_ms,
+                speculative_incomplete_endpoint_ms=config.speculative_incomplete_endpoint_ms,
+            )
+            test_svc._discover_bridge()
+            stt = test_svc
+        except Exception as bridge_err:
+            logger.warning(
+                "Google Gemini Live STT (Antigravity bridge) is unavailable (%s); "
+                "falling back to fast local Whisper-Turbo",
+                bridge_err,
+            )
+            from .parakeet_local_stt import ParakeetLocalSTTService
+
+            stt = ParakeetLocalSTTService(
+                sample_rate=sample_rate,
+                language=config.stt_language,
+                model="large-v3-turbo",
+                endpoint_ms=config.parakeet_endpoint_ms,
+                incomplete_endpoint_ms=config.parakeet_incomplete_endpoint_ms,
+                prefetch_silence_ms=config.speculative_prefetch_silence_ms,
+                energy_threshold_dbfs=config.parakeet_energy_threshold_dbfs,
+                echo_guard_db=12.0,
+                speculative_pipeline_enabled=config.speculative_pipeline_enabled,
+            )
     elif config.stt_provider in {"sensevoice", "sensevoice_small"}:
         if not config.stt_language.lower().startswith("en"):
             from .parakeet_local_stt import ParakeetLocalSTTService
@@ -592,13 +615,20 @@ async def prewarm_speech_models(config: ProviderConfig) -> dict[str, float]:
         "sensevoice",
         "sensevoice_small",
     } and not config.stt_language.lower().startswith("en")
-    if config.stt_provider in LOCAL_WHISPER_PROVIDERS or sensevoice_language_fallback:
+    needs_whisper = (
+        config.stt_provider in LOCAL_WHISPER_PROVIDERS
+        or config.stt_provider == "antigravity_live"
+        or sensevoice_language_fallback
+    )
+    if needs_whisper:
         try:
             from .parakeet_local_stt import prewarm_parakeet
 
             timings["whisper_ms"] = await asyncio.to_thread(
                 prewarm_parakeet,
-                "large-v3-turbo" if sensevoice_language_fallback else _local_whisper_model(config),
+                "large-v3-turbo"
+                if (sensevoice_language_fallback or config.stt_provider == "antigravity_live")
+                else _local_whisper_model(config),
             )
         except Exception as exc:
             logger.warning("Whisper CUDA prewarm notice: %s", exc)
