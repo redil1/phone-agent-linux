@@ -964,24 +964,46 @@ public class DigitalAudioBridge {
                     return;
                 }
 
-                // phh-su keeps the caller's uid unless the target uid is
-                // explicit. Without the trailing 0 this runs as the app and
-                // cannot signal audioserver even when policy allows it.
-                Process process = new ProcessBuilder(
-                        "su", "-c", AUDIO_SERVER_RECOVERY_COMMAND, "0"
-                )
-                        .redirectErrorStream(true)
-                        .start();
-                if (!process.waitFor(8, TimeUnit.SECONDS)) {
-                    process.destroy();
-                    throw new IOException("audioserver recovery command timed out");
+                // Execute audioserver restart with resilient multi-binary fallback
+                // 1) phh-su with explicit target uid 0
+                // 2) standard su -c
+                // 3) explicit root binary paths (/system/bin/su, /system/xbin/su)
+                String[][] candidates = new String[][] {
+                        new String[] { "su", "-c", AUDIO_SERVER_RECOVERY_COMMAND, "0" },
+                        new String[] { "su", "-c", AUDIO_SERVER_RECOVERY_COMMAND },
+                        new String[] { "/system/bin/su", "-c", AUDIO_SERVER_RECOVERY_COMMAND },
+                        new String[] { "/system/xbin/su", "-c", AUDIO_SERVER_RECOVERY_COMMAND }
+                };
+
+                Process process = null;
+                String commandOutput = "";
+                IOException lastError = null;
+
+                for (String[] cmd : candidates) {
+                    try {
+                        process = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+                        if (!process.waitFor(8, TimeUnit.SECONDS)) {
+                            process.destroy();
+                            lastError = new IOException("audioserver recovery command timed out");
+                            continue;
+                        }
+                        commandOutput = readBoundedProcessOutput(process.getInputStream());
+                        if (process.exitValue() == 0) {
+                            lastError = null;
+                            break;
+                        } else {
+                            lastError = new IOException(
+                                    "command exited " + process.exitValue()
+                                            + (commandOutput.isEmpty() ? "" : ": " + commandOutput)
+                            );
+                        }
+                    } catch (IOException ioExc) {
+                        lastError = ioExc;
+                    }
                 }
-                String commandOutput = readBoundedProcessOutput(process.getInputStream());
-                if (process.exitValue() != 0) {
-                    throw new IOException(
-                            "audioserver recovery command exited " + process.exitValue()
-                                    + (commandOutput.isEmpty() ? "" : ": " + commandOutput)
-                    );
+
+                if (lastError != null) {
+                    throw lastError;
                 }
                 audioServerRecoveries.incrementAndGet();
                 cellularRouteTouched = false;

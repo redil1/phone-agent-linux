@@ -70,7 +70,19 @@ def load_faster_qwen3_model(
         )
         logger.info("Running CUDA graph warmup for %s...", model_id)
         model.warmup()
-        logger.info("CUDA graph warmup complete for %s", model_id)
+        # Prime speech generation with dummy sentence so all CUDA streaming kernels are resident in VRAM
+        try:
+            logger.info("Priming live streaming speech generation for zero-latency TTFA...")
+            for _c, _sr, _ in model.generate_custom_voice_streaming(
+                text="Hello",
+                speaker=DEFAULT_SPEAKER,
+                language="english",
+                chunk_size=4
+            ):
+                pass
+            logger.info("FasterQwen3TTS permanently warm and locked in VRAM!")
+        except Exception as prime_err:
+            logger.warning("Initial dummy generation error: %s", prime_err)
 
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="FasterQwen3TTS")
         engine = _Qwen3Engine(

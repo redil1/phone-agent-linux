@@ -196,6 +196,13 @@ public final class ProtocolControlServer {
             result.put("audio", DigitalAudioBridge.getStatusJson());
             return ok(result);
         }
+        if ("audio.reset".equals(type)) {
+            DigitalAudioBridge.onCellularCallEnded();
+            JSONObject result = base(commandId);
+            result.put("action", "audio_reset_scheduled");
+            result.put("audio", DigitalAudioBridge.getStatusJson());
+            return ok(result);
+        }
         if ("audio.flush".equals(type)) {
             long requested = payload.optLong("next_generation", 0);
             if (requested < 1) return error("next_generation must be >= 1", commandId);

@@ -337,10 +337,18 @@ class PhoneVoiceAgent:
         await asyncio.sleep(0.4)
 
         try:
-            # One call gets one physical Telephony-TX route attempt. The MTK
-            # audio policy can orphan a restored INCALL_MUSIC track after a
-            # failed setPreferredDevice(), so retrying here consumes additional
-            # native mixer slots without making the route more likely to work.
+            # If previous call left an error or saturated mixer, trigger proactive audio reset
+            try:
+                status_rep = await asyncio.to_thread(runtime.client.get_audio_status)
+                audio_stat = status_rep.get("audio", status_rep)
+                if "Permission denied" in str(audio_stat.get("last_error", "")) or audio_stat.get("stale_uplink_frames", 0) > 20:
+                    logger.info("Triggering proactive audio reset before call attach...")
+                    await asyncio.to_thread(runtime.client.link.request, "audio.reset")
+                    await asyncio.sleep(0.5)
+            except Exception:
+                pass
+
+            # One call gets one physical Telephony-TX route attempt.
             await asyncio.to_thread(runtime.client.connect_media)
             if self.config.call_channel != "whatsapp":
                 await self._require_live_injection_route(runtime)
@@ -604,7 +612,7 @@ class PhoneVoiceAgent:
         session = CallSessionState()
         transport = PhoneAgentTransport(
             PhoneAgentTransportParams(audio_out_sample_rate=self.config.sample_rate),
-            session,
+            session=session,
         )
         client = AuthenticatedPhoneAgentClient(
             session,
