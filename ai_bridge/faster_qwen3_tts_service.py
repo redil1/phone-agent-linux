@@ -13,7 +13,7 @@ import threading
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -101,8 +101,19 @@ def prewarm_faster_qwen3(model_id: str = DEFAULT_06B_MODEL) -> float:
     return (time.perf_counter() - started) * 1000
 
 
+@dataclass
+class FasterQwen3Settings(TTSSettings):
+    """Runtime settings for FasterQwen3TTS model."""
+    voice: str = DEFAULT_SPEAKER
+    speed: float = 1.0
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
 class FasterQwen3TTSService(TTSService):
     """Pipecat TTS service backed by FasterQwen3TTS on CUDA with streaming."""
+
+    Settings = FasterQwen3Settings
+    _settings: FasterQwen3Settings
 
     def __init__(
         self,
@@ -115,23 +126,37 @@ class FasterQwen3TTSService(TTSService):
         latency_sink: LatencySink | None = None,
         **kwargs: Any,
     ) -> None:
+        resolved_voice = voice if voice in VALID_SPEAKERS else DEFAULT_SPEAKER
+        settings = self.Settings(
+            model=model,
+            voice=resolved_voice,
+            language=None,
+        )
         super().__init__(
             sample_rate=sample_rate,
-            settings=TTSSettings(voice=voice),
+            push_start_frame=True,
+            push_stop_frames=True,
+            settings=settings,
             **kwargs,
         )
         self._model_id = model
-        self._voice = voice if voice in VALID_SPEAKERS else DEFAULT_SPEAKER
+        self._voice = resolved_voice
         self._target_sample_rate = sample_rate
         self._language = language.lower()
         self._chunk_size = chunk_size
         self._latency_sink = latency_sink
         self._engine: _Qwen3Engine | None = None
 
+    def set_latency_sink(self, sink: LatencySink | None) -> None:
+        self._latency_sink = sink
+
     def _ensure_engine(self) -> _Qwen3Engine:
         if self._engine is None:
             self._engine = load_faster_qwen3_model(self._model_id)
         return self._engine
+
+    def can_generate_metrics(self) -> bool:
+        return True
 
     def _generate_audio_chunks(
         self, text: str, voice: str, language: str
@@ -148,14 +173,16 @@ class FasterQwen3TTSService(TTSService):
                 chunks.append(chunk)
         return chunks
 
-    @traced_tts()
-    async def run_tts(self, text: str) -> AsyncGenerator[Frame, None]:
+    @traced_tts
+    async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
         clean_text = " ".join(text.strip().split())
         if not clean_text:
             return
 
         engine = self._ensure_engine()
-        voice = self._voice or DEFAULT_SPEAKER
+        voice = getattr(self._settings, "voice", self._voice) or self._voice or DEFAULT_SPEAKER
+        if voice not in VALID_SPEAKERS:
+            voice = DEFAULT_SPEAKER
         language = "french" if self._language.startswith("fr") else "english"
 
         loop = asyncio.get_running_loop()
@@ -198,8 +225,11 @@ class FasterQwen3TTSService(TTSService):
                     audio=pcm16,
                     sample_rate=self._target_sample_rate,
                     num_channels=1,
+                    context_id=context_id,
                 )
 
         except Exception as exc:
             logger.exception("FasterQwen3TTS generation error text=%r", clean_text)
             yield ErrorFrame(error=f"FasterQwen3TTS error: {exc}")
+        finally:
+            await self.stop_ttfb_metrics()

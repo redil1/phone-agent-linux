@@ -263,7 +263,7 @@ class PhoneVoiceAgent:
             await asyncio.sleep(1.0)
 
     async def _require_live_injection_route(
-        self, runtime: ActiveCallRuntime, timeout_secs: float = 5.0
+        self, runtime: ActiveCallRuntime, timeout_secs: float = 12.0
     ) -> None:
         """Wait for Android to establish the Telephony TX route and confirm live media."""
         start_time = asyncio.get_running_loop().time()

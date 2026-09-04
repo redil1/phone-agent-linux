@@ -272,6 +272,9 @@ class ProviderConfig:
             "google_genai": "gemini-3.1-flash-tts-preview",
             "supertonic": "supertonic-2",
             "vibevoice": "mlx-community/VibeVoice-Realtime-0.5B-8bit",
+            "faster_qwen3": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+            "faster_qwen3_tts": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+            "qwen3_tts": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
         }
         tts_voice_defaults = {
             "cartesia": "248be419-c632-4f23-add1-001000000000",
@@ -282,6 +285,9 @@ class ProviderConfig:
             "google_genai": "Algenib",
             "supertonic": "M1",
             "vibevoice": "en-Emma_woman",
+            "faster_qwen3": "ryan",
+            "faster_qwen3_tts": "ryan",
+            "qwen3_tts": "ryan",
         }
         tts_model = os.getenv("PHONE_AGENT_TTS_MODEL", "").strip() or tts_model_defaults.get(
             tts_provider, ""
@@ -562,6 +568,9 @@ class ProviderConfig:
                     "kokoro",
                     "supertonic",
                     "vibevoice",
+                    "faster_qwen3",
+                    "faster_qwen3_tts",
+                    "qwen3_tts",
                 },
             ),
         }

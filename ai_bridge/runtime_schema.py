@@ -152,7 +152,7 @@ class CompileValidationError(ValueError):
 SUPPORTED_PROVIDERS = {
     "stt": {"parakeet_local", "sensevoice", "sensevoice_small", "antigravity_live", "deepgram_flux", "whisper_mlx", "whisper_cuda", "whisper_turbo", "distil_whisper", "whisper_local"},
     "llm": {"antigravity_gemini", "ollama", "openai", "openrouter", "lm_studio"},
-    "tts": {"supertonic", "kokoro", "edge_tts", "google_genai", "vibevoice"},
+    "tts": {"supertonic", "kokoro", "edge_tts", "google_genai", "vibevoice", "faster_qwen3", "faster_qwen3_tts", "qwen3_tts"},
 }
 
 

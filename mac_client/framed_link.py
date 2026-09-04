@@ -82,8 +82,8 @@ class FramedGatewayLink:
     bound to the same call ID and link epoch by the first authenticated frame.
     """
 
-    UPLINK_WINDOW_FRAMES = 30
-    UPLINK_ACK_TIMEOUT_SECS = 6.0
+    UPLINK_WINDOW_FRAMES = 60
+    UPLINK_ACK_TIMEOUT_SECS = 15.0
 
     def __init__(
         self,
@@ -402,7 +402,7 @@ class FramedGatewayLink:
                         identifier,
                     )
             except (OSError, TimeoutError, MediaProtocolError) as exc:
-                if not urgent and command_type not in {"call.status", "gateway.health", "audio.flush"}:
+                if not urgent and command_type not in {"call.status", "gateway.health", "audio.flush", "audio.status", "audio.reset"}:
                     self._mark_disconnected(exc)
                 raise LinkDisconnected(f"control command {command_type} failed") from exc
             finally:

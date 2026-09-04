@@ -112,7 +112,7 @@ class CallSessionState:
     def set_phase(self, phase: SessionPhase) -> None:
         with self._lock:
             allowed = {
-                SessionPhase.CREATED: {SessionPhase.CONNECTING, SessionPhase.CLOSED},
+                SessionPhase.CREATED: {SessionPhase.CONNECTING, SessionPhase.ACTIVE, SessionPhase.CLOSED},
                 SessionPhase.CONNECTING: {SessionPhase.ACTIVE, SessionPhase.ENDING},
                 SessionPhase.ACTIVE: {SessionPhase.ENDING},
                 SessionPhase.ENDING: {SessionPhase.CLOSED},
